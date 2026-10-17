@@ -89,6 +89,7 @@ func (s *Server) assistantTriggersJSON(c *gin.Context, owner string) {
 			"timezone":     trigger.Timezone,
 			"task":         trigger.Task,
 			"model":        trigger.Model,
+			"effort":       trigger.Effort,
 			"once":         trigger.Once,
 			"state":        view.State,
 			"open":         view.Open,
@@ -256,15 +257,18 @@ func (s *Server) assistantTriggerNew(c *gin.Context) {
 		// the form's empty entry names: the owner's Triggers pick at the ring
 		// where one stands, else the chat as it resolves now, so `trigger-new`
 		// names the model in its added line only where the flag made a
-		// difference.
-		without := ""
+		// difference; the effort the same way, read beside the trigger's own model.
+		var without assistant.ModelPick
 		if inst, err := s.assistants.Get(owner); err == nil {
-			without = assistant.DefaultModelFor(assistant.RunReaction, inst.Summary, s.modelDefaults(inst.CoderID))
+			defaults := s.modelDefaults(inst.CoderID)
+			without.Model = assistant.DefaultModelFor(assistant.RunReaction, inst.Summary, defaults)
+			without.Effort = assistant.EffortFor(assistant.RunReaction, inst.Summary, assistant.ModelPick{Model: trigger.Model}, defaults)
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"id": trigger.ID, "summary": summary, "state": string(trigger.State),
 			"timezone": trigger.Timezone, "nextAt": machineTime(trigger.NextAt),
-			"ignored": assistantTriggerIgnored(c, trigger), "model": trigger.Model, "modelDefault": without,
+			"ignored": assistantTriggerIgnored(c, trigger), "model": trigger.Model, "modelDefault": without.Model,
+			"effort": trigger.Effort, "effortDefault": without.Effort,
 		})
 		return
 	}
@@ -353,100 +357,6 @@ func assistantTriggerIgnored(c *gin.Context, trigger assistant.Trigger) string {
 // heading its row reads by, so a flash and a row never name it differently.
 func (s *Server) assistantTriggerSummary(trigger assistant.Trigger) string {
 	return s.assistantTriggerView(trigger, false).Heading
-}
-
-// assistantTriggerSpec reads a trigger's fields out of the form both surfaces
-// post. A field the request does not carry is one nobody named, which on a
-// create takes the default and on an edit leaves what stands, so the two ways
-// in share one reading and one meaning. source is what the trigger reacts to
-// when the request does not say (an edit never moves it), and stood are the
-// terminals it already names: those keep the name they were stored with
-// instead of being looked up again, a coder that stopped is still a terminal
-// this trigger waits for.
-func (s *Server) assistantTriggerSpec(c *gin.Context, source string, stood []string) (assistant.TriggerSpec, error) {
-	spec := assistant.TriggerSpec{
-		Event:    c.PostForm("event"),
-		Spec:     c.PostForm("spec"),
-		Timezone: c.PostForm("timezone"),
-		Task:     c.PostForm("task"),
-	}
-	// The model is optional and an empty one is a value, the assistant
-	// default: the page's select posts on every save and `--model default`
-	// posts the empty field, while a request without it leaves what stands.
-	if raw, ok := c.GetPostForm("model"); ok {
-		spec.Model, spec.ModelSet = raw, true
-	}
-	// The name is optional and an empty one is a value: the page posts the
-	// field on every save, so clearing it is saying so, while a request
-	// without the field named nothing and leaves what stands.
-	if raw, ok := c.GetPostForm("name"); ok {
-		spec.Name, spec.NameSet = raw, true
-	}
-	if kind, err := assistant.ParseEventOption(spec.Event); err == nil {
-		source = kind.Source
-	}
-	// Several terminals fire it, and the mode says whether any of them does or
-	// every one of them has to, which is a barrier. The page's select posts the
-	// mode, `--all` posts it too.
-	if raw, ok := c.GetPostForm("mode"); ok {
-		spec.All, spec.AllSet = strings.EqualFold(strings.TrimSpace(raw), "all"), true
-	}
-	if raw, ok := c.GetPostFormArray("once"); ok {
-		spec.OnceSet = true
-		spec.Once = slices.ContainsFunc(raw, func(v string) bool { return strings.TrimSpace(v) != "" })
-	}
-	if raw, ok := c.GetPostFormArray("terminal"); ok {
-		spec.TargetsSet = true
-		for _, one := range raw {
-			terminal := strings.TrimSpace(one)
-			if terminal == "" {
-				continue
-			}
-			target := assistant.TriggerTarget{Terminal: terminal}
-			// A coder target is named here, where the running coders are; a job
-			// target takes its name from the job, which the reactor reads.
-			if source == assistant.EventCoder && !slices.Contains(stood, terminal) {
-				running, err := s.assistantSteerTarget(terminal)
-				if err != nil {
-					return spec, err
-				}
-				target.Name = running.Name
-			}
-			spec.Targets = append(spec.Targets, target)
-		}
-	}
-	// The expiry is a span either way in, and the two ways write it
-	// differently: a command writes one word, `8h` or `never`, while the form
-	// asks for a number with the unit beside it and says none in that same
-	// select. So the unit is what the reading starts from, the number carries
-	// it where there is one, and both ways end in one span and one parser.
-	until := strings.TrimSpace(c.PostForm("until"))
-	if unit := strings.TrimSpace(c.PostForm("untilUnit")); strings.EqualFold(unit, triggerNoExpiry) {
-		// The number is disabled while that entry stands, so whatever it
-		// carried says nothing: the select is the answer.
-		until = triggerNoExpiry
-	} else if until != "" {
-		until += unit
-	}
-	if until != "" {
-		if strings.EqualFold(until, triggerNoExpiry) {
-			spec.Never = true
-		} else {
-			span, err := parseSpan(until)
-			if err != nil {
-				return spec, fmt.Errorf("The expiry %q cannot be read: a span like 8h, 90m or 2d, or never.", until)
-			}
-			spec.Until = span
-		}
-	}
-	if raw := strings.TrimSpace(c.PostForm("batch")); raw != "" {
-		batch, err := parseSpan(raw)
-		if err != nil {
-			return spec, fmt.Errorf("The batch window %q cannot be read: a span like 30s or 2m, or 0.", raw)
-		}
-		spec.Batch, spec.BatchSet = batch, true
-	}
-	return spec, nil
 }
 
 // assistantTriggerDelete removes one trigger, from the page or from
@@ -578,7 +488,7 @@ func (s *Server) assistantTriggerForm(c *gin.Context, edit bool) {
 		data.Event = assistant.EventOption{Source: trigger.Source, Kind: trigger.Kind}.Name()
 		data.Name = trigger.Name
 		data.Task, data.Spec, data.Once = trigger.Task, trigger.Spec, trigger.Once
-		data.Model.Current = trigger.Model
+		data.Model.Current, data.Effort.Current = trigger.Model, trigger.Effort
 		data.Timezone = trigger.Timezone
 		data.Mode = triggerMode(trigger.All)
 		data.Batch = trigger.BatchSeconds
@@ -598,14 +508,19 @@ func (s *Server) assistantTriggerForm(c *gin.Context, edit bool) {
 	// The model select offers what the owner's coder offers, with the empty
 	// entry naming the assistant default as it resolves now, the owner's
 	// Triggers pick at the ring, else its chat, stored as nothing: a trigger
-	// left on it runs on that default as it stands at fire time.
+	// left on it runs on that default as it stands at fire time. The effort
+	// select beside it reads the same way over the coder's levels.
 	repo := coder.ModelRepositoryFor(nil)
-	resolved := ""
+	var resolved assistant.ModelPick
+	var levels []string
 	if owner, err := s.assistants.Get(data.Owner); err == nil {
-		repo = s.coderModelRepository(owner.CoderID)
-		resolved = assistant.DefaultModelFor(assistant.RunReaction, owner.Summary, s.modelDefaults(owner.CoderID))
+		repo, levels = s.coderModelRepository(owner.CoderID), s.coderEfforts(owner.CoderID)
+		defaults := s.modelDefaults(owner.CoderID)
+		resolved.Model = assistant.DefaultModelFor(assistant.RunReaction, owner.Summary, defaults)
+		resolved.Effort = assistant.DefaultEffortFor(assistant.RunReaction, owner.Summary, defaults)
 	}
-	data.Model = modelPick("model", data.Model.Current, assistantDefaultLabel(resolved), repo)
+	data.Model = modelPick("model", data.Model.Current, assistantDefaultLabel(resolved.Model), repo)
+	data.Effort = effortPick("effort", data.Effort.Current, assistantDefaultLabel(resolved.Effort), data.Model.Current, levels)
 	data.ModelNote = repo.Note()
 	for _, k := range assistant.EventOptions {
 		data.Events = append(data.Events, render.AssistantEventOption{Name: k.Name(), Source: k.Source, Label: k.Label, Help: k.Help})
@@ -708,6 +623,7 @@ func (s *Server) assistantTriggerView(trigger assistant.Trigger, owners bool) re
 		Timezone: trigger.Timezone,
 		Task:     trigger.Task,
 		Model:    trigger.Model,
+		Effort:   trigger.Effort,
 		Once:     trigger.Once,
 		State:    string(trigger.State),
 		Open:     trigger.Open(),

@@ -625,7 +625,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "Default models",
 					Tag:      "Setting",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new coder and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat.`,
+					Desc:     `Settings &rarr; Coder &rarr; Models holds a coder's start default, what a new coder and an assistant's chat run on when nothing is picked. Settings &rarr; Assistants &rarr; Models holds the Chat, Checks and Triggers picks a new assistant is made with, empty meaning the coder's default and Same as chat. Each model has an effort beside it, read together with it.`,
+				},
+				{
+					Title:    "Effort",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Every model pick has an effort beside it. Empty goes with the model: it follows the way an empty model does, and beside a model of its own it is the CLI's level; a resume never passes one. A level a model does not take is refused where it is picked, where the cockpit can tell. Claude takes low to max and caps a level at what the model supports, a model without effort runs without one. Copilot takes none to max and refuses a level the model does not take, in the terminal and as the answer's error. OpenCode's levels are the variants <code>opencode models</code> names per model and need a model. Its terminal gets the level through the agent it starts as and runs at the level it remembers for the model where it remembers one, so such a start is refused; it remembers the last level per model once the cockpit started it at one.`,
 				},
 				{
 					Title:    "Claude through Ollama",

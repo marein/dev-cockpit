@@ -10,6 +10,22 @@ import (
 	"github.com/marein/dev-cockpit/internal/coder"
 )
 
+// copilotEfforts are the levels `copilot --reasoning-effort` takes, from its
+// own help (GitHub Copilot CLI 1.0.98). copilot checks a level against the
+// model itself and refuses one the model does not take, see effortRefusal.
+var copilotEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// Efforts implements coder.EffortKeeper.
+func (p *Coder) Efforts() []string { return slices.Clone(copilotEfforts) }
+
+// CheckEffort implements coder.EffortKeeper over the whole list: copilot
+// knows which model takes which level and nothing here does, so a level the
+// model refuses is copilot's refusal, see effortRefusal.
+func (p *Coder) CheckEffort(_, level string) error {
+	_, err := assistant.CleanEffortIn(level, copilotEfforts)
+	return err
+}
+
 // copilotModelsNote is the line under every select over copilot's list.
 const copilotModelsNote = "auto, your recent Copilot models, and what you add here."
 

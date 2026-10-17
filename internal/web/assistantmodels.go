@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -25,6 +27,10 @@ import (
 // way. The New coder
 // dialog picks a session's model out of the same list, see handleCoderNew,
 // and the two settings pages pick the defaults, see assistantmodelsettings.go.
+// Under every model select stands an effort select over the levels the coder
+// takes (coder.EffortsFor), read together with its model by
+// assistant.EffortFor: empty, it follows the model, so a purpose on a model
+// of its own runs at the CLI's level unless it picks one itself.
 
 // The empty entry of a select is worded per level, always with the resolved
 // name. The coder's own Start pick reads Default (CLI), the one level that
@@ -43,7 +49,10 @@ import (
 // owner resolves to for triggers when it fires, stored as nothing. One
 // wording wherever a pick follows the chat model, so the ring and the tab
 // cannot name the same thing two ways. The New coder dialog reads Default
-// (<start default>), else Default (CLI). No help line stands under a pick,
+// (<start default>), else Default (CLI). An effort select's empty entry reads
+// like the model select's above it, over the resolved level, while that
+// model select is empty, and Default (CLI) beside a model of its own. No help
+// line stands under a pick,
 // the one line a list gets is the repository's note, and the Models tab
 // carries one line of its own saying that it applies to new assistants.
 const modelSameChatLabel = "Same as chat"
@@ -77,9 +86,10 @@ func coderDefaultLabel(start string) string {
 }
 
 // assistantModels stores the three models the ring's menu posts, form=model
-// with `model`, `check_model` and `trigger_model`. A field the request does
-// not carry leaves what stands, the way a trigger's spec reads its fields;
-// the page posts all three. A name typed under Other… is remembered by the
+// with `model`, `check_model` and `trigger_model`, and the effort beside
+// each, `effort`, `check_effort` and `trigger_effort`. A field the request
+// does not carry leaves what stands, the way a trigger's spec reads its
+// fields; the page posts all six. A name typed under Other… is remembered by the
 // coder's repository, so it stands in every later list. The answer is JSON
 // for the page, which toasts the sentence, and a flash for a form posted
 // without JS. Every other open page of the assistant learns of the change
@@ -87,14 +97,19 @@ func coderDefaultLabel(start string) string {
 // on another tab or by the CLI shows everywhere without a reload.
 func (s *Server) assistantModels(c *gin.Context, id string) {
 	var choice assistant.ModelChoice
-	if raw, ok := c.GetPostForm("model"); ok {
-		choice.Chat, choice.ChatSet = raw, true
-	}
-	if raw, ok := c.GetPostForm("check_model"); ok {
-		choice.Check, choice.CheckSet = raw, true
-	}
-	if raw, ok := c.GetPostForm("trigger_model"); ok {
-		choice.Trigger, choice.TriggerSet = raw, true
+	for _, field := range []struct {
+		name  string
+		value *string
+		set   *bool
+	}{
+		{"model", &choice.Chat, &choice.ChatSet},
+		{"check_model", &choice.Check, &choice.CheckSet},
+		{"trigger_model", &choice.Trigger, &choice.TriggerSet},
+		{"effort", &choice.ChatEffort, &choice.ChatEffortSet},
+		{"check_effort", &choice.CheckEffort, &choice.CheckEffortSet},
+		{"trigger_effort", &choice.TriggerEffort, &choice.TriggerEffortSet},
+	} {
+		*field.value, *field.set = c.GetPostForm(field.name)
 	}
 	entry, err := s.assistants.SetModels(id, choice)
 	if err != nil {
@@ -109,7 +124,11 @@ func (s *Server) assistantModels(c *gin.Context, id string) {
 		// models is the same reading the stream's models frame carries, picks
 		// and stamp, so the page applies its own save and a frame from
 		// elsewhere through one shape and can tell which of the two is older.
-		c.JSON(http.StatusOK, gin.H{"saved": true, "model": entry.Model, "checkModel": entry.CheckModel, "triggerModel": entry.TriggerModel, "models": s.modelsFrame(entry.CoderID, entry.ModelPicks()), "message": message})
+		c.JSON(http.StatusOK, gin.H{
+			"saved": true, "model": entry.Model, "checkModel": entry.CheckModel, "triggerModel": entry.TriggerModel,
+			"effort": entry.Effort, "checkEffort": entry.CheckEffort, "triggerEffort": entry.TriggerEffort,
+			"models": s.modelsFrame(entry.CoderID, entry.ModelPicks()), "message": message,
+		})
 		return
 	}
 	s.redirectWithFlash(c, "/assistants/"+id, message, "")
@@ -121,21 +140,29 @@ func (s *Server) assistantModels(c *gin.Context, id string) {
 // a pick that left it to the default reads as what really runs. A purpose
 // without a pick of its own folds into the chat's clause, because it then
 // runs on what the chat resolves to, the chat pick included, which is what
-// Same as chat means; one pinned to a model of its own is named on its own,
-// even where that is the chat's very model.
+// Same as chat means; one pinned to a model or an effort of its own is named
+// on its own, even where that is the chat's very model. An effort stands
+// behind its model where one resolves, and the CLI's own level says nothing.
 func assistantModelsMessage(entry assistant.Summary, defaults assistant.ModelDefaults) string {
-	chat := orCLIDefault(assistant.ModelFor(assistant.RunChat, entry, "", defaults))
+	on := func(kind assistant.RunKind) string {
+		clause := orCLIDefault(assistant.ModelFor(kind, entry, "", defaults))
+		if effort := assistant.EffortFor(kind, entry, assistant.ModelPick{}, defaults); effort != "" {
+			clause += " at " + effort + " effort"
+		}
+		return clause
+	}
+	chat := on(assistant.RunChat)
 	same := []string{"Chat"}
 	var own []string
-	if entry.CheckModel == "" {
+	if entry.CheckModel == "" && entry.CheckEffort == "" {
 		same = append(same, "checks")
 	} else {
-		own = append(own, "checks on "+orCLIDefault(assistant.ModelFor(assistant.RunCheck, entry, "", defaults)))
+		own = append(own, "checks on "+on(assistant.RunCheck))
 	}
-	if entry.TriggerModel == "" {
+	if entry.TriggerModel == "" && entry.TriggerEffort == "" {
 		same = append(same, "triggers")
 	} else {
-		own = append(own, "triggers on "+orCLIDefault(assistant.ModelFor(assistant.RunReaction, entry, "", defaults)))
+		own = append(own, "triggers on "+on(assistant.RunReaction))
 	}
 	subject := same[0]
 	if len(same) > 1 {
@@ -145,9 +172,10 @@ func assistantModelsMessage(entry assistant.Summary, defaults assistant.ModelDef
 }
 
 // handleAssistantModelsResolved answers the calling assistant's own three
-// resolutions for its `assistant-models-get` command: the model its chat turns,
-// its checks and its triggers run on where nothing narrower is picked, each
-// with where the answer came from and whether it is the chat's own reading,
+// resolutions for its `assistant-models-get` command: the model and the
+// effort its chat turns, its checks and its triggers run on where nothing
+// narrower is picked, each with where the answer came from and whether it is
+// the chat's own reading,
 // so a check without a pick reads as "same as chat, ring" and never as if it
 // had been picked at the ring. It needs the caller, it reads that one's own
 // and nobody else's, and it changes nothing.
@@ -165,7 +193,11 @@ func (s *Server) handleAssistantModelsResolved(c *gin.Context) {
 	defaults := s.modelDefaults(inst.CoderID)
 	choice := func(kind assistant.RunKind) gin.H {
 		reading := assistant.ModelOrigin(kind, inst.Summary, "", defaults)
-		return gin.H{"model": reading.Model, "source": string(reading.From), "sameAsChat": reading.SameAsChat}
+		effort := assistant.EffortOrigin(kind, inst.Summary, assistant.ModelPick{}, defaults)
+		return gin.H{
+			"model": reading.Model, "source": string(reading.From), "sameAsChat": reading.SameAsChat,
+			"effort": gin.H{"effort": effort.Effort, "source": string(effort.From), "sameAsChat": effort.SameAsChat},
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"id": inst.ID, "coderId": inst.CoderID,
@@ -182,22 +214,28 @@ func orCLIDefault(name string) string {
 }
 
 // assistantModelsData is what the ring's menu renders for one assistant: the
-// three selects over the coder's list, the stored values selected. The Chat
-// select's empty entry names the coder's start default, what the chain
-// below a chat pick resolves to, and the Checks and the Triggers select's
-// read Same as chat: per ModelFor an empty pick there runs on what the chat
-// resolves to when the turn starts, the chat pick on the select above it
-// included, and on nothing else.
+// three selects over the coder's list and the three effort selects over its
+// levels, the stored values selected. The Chat selects' empty entries name
+// the coder's start defaults, what the chain below a chat pick resolves to,
+// and the Checks and the Triggers selects' read Same as chat: per ModelFor
+// and EffortFor an empty pick there runs on what the chat resolves to when
+// the turn starts, the chat pick on the select above it included, and on
+// nothing else.
 func (s *Server) assistantModelsData(current assistant.Instance) *render.AssistantModels {
 	repo := s.coderModelRepository(current.CoderID)
+	levels := s.coderEfforts(current.CoderID)
+	defaults := s.modelDefaults(current.CoderID)
 	frame := s.modelsFrame(current.CoderID, current.ModelPicks())
 	return &render.AssistantModels{
-		Chat:     modelPick("model", current.Model, coderDefaultLabel(assistant.DefaultModelFor(assistant.RunChat, current.Summary, s.modelDefaults(current.CoderID))), repo),
-		Check:    modelPick("check_model", current.CheckModel, modelSameChatLabel, repo),
-		Trigger:  modelPick("trigger_model", current.TriggerModel, modelSameChatLabel, repo),
-		Note:     repo.Note(),
-		Launcher: frame.Launcher,
-		Warning:  frame.Warning,
+		Chat:          modelPick("model", current.Model, coderDefaultLabel(assistant.DefaultModelFor(assistant.RunChat, current.Summary, defaults)), repo),
+		Check:         modelPick("check_model", current.CheckModel, modelSameChatLabel, repo),
+		Trigger:       modelPick("trigger_model", current.TriggerModel, modelSameChatLabel, repo),
+		ChatEffort:    effortPick("effort", current.Effort, coderDefaultLabel(assistant.DefaultEffortFor(assistant.RunChat, current.Summary, defaults)), current.Model, levels),
+		CheckEffort:   effortPick("check_effort", current.CheckEffort, modelSameChatLabel, current.CheckModel, levels),
+		TriggerEffort: effortPick("trigger_effort", current.TriggerEffort, modelSameChatLabel, current.TriggerModel, levels),
+		Note:          repo.Note(),
+		Launcher:      frame.Launcher,
+		Warning:       frame.Warning,
 	}
 }
 
@@ -247,6 +285,58 @@ func (s *Server) rememberModel(coderID, name string) {
 	}
 }
 
+// coderEfforts are the levels a coder takes on this server, none for a coder
+// that is not serving.
+func (s *Server) coderEfforts(coderID string) []string {
+	if m := s.coderByID(coderID); m != nil {
+		return coder.EffortsFor(m.Coder())
+	}
+	return nil
+}
+
+// effortPick builds one effort select the way modelPick builds a model's:
+// the empty entry first, the coder's levels with the stored one selected, and
+// a stored level the coder does not offer right now as an entry of its own,
+// so the next save never drops it silently. A level is a closed list, so
+// there is no way past it. The empty entry follows the model select above
+// it, model being that select's value: an empty effort goes with its model,
+// so beside an empty model it stands for follow, the level that model's level
+// gives, and beside a model of its own for the CLI's own level, see
+// assistant.EffortOrigin. dc-effort-pick moves the word when the model moves.
+func effortPick(field, current, follow, model string, levels []string) render.AssistantModelPick {
+	pick := render.AssistantModelPick{Field: field, Current: current, FollowLabel: follow, OwnLabel: modelDefaultLabel("")}
+	empty := follow
+	if model != "" {
+		empty = pick.OwnLabel
+	}
+	pick.Options = append(pick.Options, render.AssistantModelOption{Label: empty, Selected: current == ""})
+	for _, level := range levels {
+		pick.Options = append(pick.Options, render.AssistantModelOption{Value: level, Label: level, Selected: level == current})
+	}
+	if current != "" && !slices.Contains(levels, current) {
+		pick.Options = append(pick.Options, render.AssistantModelOption{Value: current, Label: current, Selected: true})
+	}
+	return pick
+}
+
+// pickDisplayName is how a turn names what it ran on above its answer: the
+// model, without the Ollama prefix and the cloud tag, and the effort beside
+// it where one was picked.
+func pickDisplayName(model, effort string) string {
+	name := strings.TrimSpace(model)
+	if bare, ok := strings.CutPrefix(name, ollama.Prefix); ok && bare != "" {
+		name = bare
+	}
+	name = strings.TrimSuffix(name, ":cloud")
+	switch {
+	case effort == "":
+		return name
+	case name == "":
+		return effort + " effort"
+	}
+	return name + " · " + effort + " effort"
+}
+
 // modelPick builds one select: the empty entry first under the word the
 // caller gives it, the repository's names with the stored value selected, and
 // the stored value as an entry of its own where the repository does not hold
@@ -266,7 +356,8 @@ func modelPick(field, current, emptyLabel string, repo coder.ModelRepository) re
 
 // handleAssistantModels serves the lists as JSON for the assistant's
 // `model-list` command: per installed coder, or the one named by `coder`, the
-// names with their source, the defaults set for it and the note. Reads only.
+// names with their source and the levels a model names of its own, the
+// levels the coder takes, the defaults set for it and the note. Reads only.
 func (s *Server) handleAssistantModels(c *gin.Context) {
 	want := strings.TrimSpace(c.Query("coder"))
 	out := make([]gin.H, 0, len(s.coders))
@@ -278,15 +369,23 @@ func (s *Server) handleAssistantModels(c *gin.Context) {
 		repo := coder.ModelRepositoryFor(s.coders[i].Coder())
 		models := make([]gin.H, 0)
 		for _, m := range repo.List() {
-			models = append(models, gin.H{"name": m.Name, "source": m.Source})
+			entry := gin.H{"name": m.Name, "source": m.Source}
+			if len(m.Efforts) > 0 {
+				entry["efforts"] = m.Efforts
+			}
+			models = append(models, entry)
 		}
 		defaults := s.modelDefaults(id)
 		out = append(out, gin.H{
-			"id":       id,
-			"label":    render.CoderLabel(id),
-			"note":     repo.Note(),
-			"models":   models,
-			"defaults": gin.H{"chat": defaults.Chat, "check": defaults.Check, "trigger": defaults.Trigger, "start": defaults.Start},
+			"id":      id,
+			"label":   render.CoderLabel(id),
+			"note":    repo.Note(),
+			"models":  models,
+			"efforts": coder.EffortsFor(s.coders[i].Coder()),
+			"defaults": gin.H{
+				"chat": defaults.Chat, "check": defaults.Check, "trigger": defaults.Trigger, "start": defaults.Start,
+				"chatEffort": defaults.ChatEffort, "checkEffort": defaults.CheckEffort, "triggerEffort": defaults.TriggerEffort, "startEffort": defaults.StartEffort,
+			},
 		})
 	}
 	if want != "" && len(out) == 0 {

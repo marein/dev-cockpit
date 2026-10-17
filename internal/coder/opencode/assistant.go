@@ -40,6 +40,9 @@ type runner struct {
 	// cached model list (modelWindow in models.go); nil where no list stands,
 	// which reads as unknown.
 	window func(model string) int
+	// variants answers the levels a model takes and whether the list holds
+	// it, out of the same list (modelList.variants).
+	variants func(model string) ([]string, bool, error)
 }
 
 // AssistantRunner returns the conversation capability, or nil when the
@@ -57,7 +60,7 @@ func (p *Coder) probeAssistant() bool {
 		log.Printf("opencode conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
 		return false
 	}
-	p.runner = &runner{sessions: p.sessions, create: createSession, window: p.modelWindow}
+	p.runner = &runner{sessions: p.sessions, create: createSession, window: p.modelWindow, variants: p.modelVariants}
 	return true
 }
 
@@ -98,7 +101,20 @@ func (r *runner) DeleteSession(sessionID string) error {
 // dash text (verified on 1.18.23, `opencode run -- -dxdebug.idekey=…`
 // delivers the words). A model the turn names rides behind -m, in the
 // provider/model form `opencode models` prints, and nothing else moves for it.
+// An effort rides behind --variant, and only for a model that lists it as a
+// variant: opencode runs a variant its model does not have as no variant at
+// all, without a word (1.19.0, `--variant bogus` answers like a run without
+// one), so a level the model does not take, and one without a model to
+// belong to, is refused here, before a session exists.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
+	switch err := checkVariant(r.variants, req.Model, req.Effort); {
+	case errors.Is(err, errEffortNeedsModel):
+		return assistant.Command{}, assistant.ErrEffortNeedsModel
+	case errors.Is(err, errVariantsUnknown):
+		return assistant.Command{}, err
+	case err != nil:
+		return assistant.Command{}, assistant.UnknownEffort(req.Effort, req.Model)
+	}
 	native := ""
 	if req.Resume {
 		native = r.sessions.nativeID(req.SessionID)
@@ -116,6 +132,9 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	}
 	if req.Model != "" {
 		args = append(args, "-m", req.Model)
+	}
+	if req.Effort != "" {
+		args = append(args, "--variant", req.Effort)
 	}
 	args = append(args, "--", req.Prompt)
 	return assistant.Command{

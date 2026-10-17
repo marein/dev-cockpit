@@ -306,7 +306,7 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       await gp.waitForURL((u) => u.pathname === `${fx.base}/assistants/${fx.a}`, { timeout: 10000 });
       await gp.waitForSelector("dc-share-chat [data-share-log]", { state: "attached", timeout: 10000 });
       assert((await gp.textContent("[data-share-title]")).trim() === `helper ${TAG}`, "the conversation's head names another assistant");
-      assert(!(await gp.$("[data-assistant-input], [data-assistant-send], [data-assistant-speak], [data-assistant-voice], [data-assistant-menu], [data-assistant-memory-button], [data-assistant-trigger-new], dc-model-pick")), "an owner control stands on the guest's conversation");
+      assert(!(await gp.$("[data-assistant-input], [data-assistant-send], [data-assistant-speak], [data-assistant-voice], [data-assistant-menu], [data-assistant-memory-button], [data-assistant-trigger-new], dc-model-pick, dc-effort-pick, dc-assistant-picks")), "an owner control stands on the guest's conversation");
       const column = await gp.$$eval("[data-assistant-rows] [data-assistant-instance]", (els) => els.map((el) => el.getAttribute("href")));
       assert(column.join(",") === `${fx.base}/assistants/${fx.a}`, `the list column holds ${column}`);
       await gp.click(`.dc-rail a[href="${fx.base}/terminals"]`);

@@ -58,6 +58,7 @@
       <div class="mb-3" data-coder-models="{{$co.ID}}" {{if ne $co.ID $.SelectedCoder}}hidden{{end}}>
         <label class="form-label" for="model-{{$co.ID}}">Model</label>
         {{template "assistant_model_pick.gohtml" (dict "Pick" $co.Model "ID" (printf "model-%s" $co.ID) "Disabled" (ne $co.ID $.SelectedCoder))}}
+        {{template "assistant_effort_pick.gohtml" (dict "Pick" $co.Effort "ID" (printf "effort-%s" $co.ID) "Disabled" (ne $co.ID $.SelectedCoder))}}
         {{if $co.ModelNote}}<div class="form-hint">{{$co.ModelNote}}</div>{{end}}
         {{if $co.ModelWarning}}<div class="form-hint text-warning" data-ollama-warning>{{$co.ModelWarning}}</div>{{end}}
       </div>

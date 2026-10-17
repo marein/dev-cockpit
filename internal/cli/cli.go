@@ -51,7 +51,6 @@ import (
 	"github.com/marein/dev-cockpit/internal/update"
 	"github.com/marein/dev-cockpit/internal/voice"
 	"github.com/marein/dev-cockpit/internal/web"
-	"github.com/marein/dev-cockpit/internal/web/render"
 	"github.com/marein/dev-cockpit/plugin"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
@@ -1240,31 +1239,6 @@ func oneLine(text string) string {
 func answerExcerpt(content string) string {
 	line, _ := markdown.Excerpt(content, assistant.PreviewRunes)
 	return line
-}
-
-// assistantCoders adapts the installed coders to what the assistant needs,
-// keeping internal/assistant free of any dependency on internal/coder.
-// assistantCoders hands the assistant the coders that can answer a turn, each
-// with the reading of its stored model defaults, the purpose fallback behind
-// an assistant's own pick, read fresh on every turn out of the settings store.
-type assistantCoders struct {
-	coders []coder.Coder
-	store  *settings.Store
-}
-
-func (c assistantCoders) Available() []assistant.CoderInfo {
-	out := make([]assistant.CoderInfo, 0, len(c.coders))
-	for _, co := range c.coders {
-		runner := coder.AssistantRunnerFor(co)
-		if runner == nil {
-			continue
-		}
-		id := co.ID()
-		out = append(out, assistant.CoderInfo{ID: id, Label: render.CoderLabel(id), Runner: runner, Defaults: func() assistant.ModelDefaults {
-			return assistant.ModelDefaultsFor(c.store, id)
-		}})
-	}
-	return out
 }
 
 // isStrayCheckSession decides what the startup sweep deletes. The name alone is

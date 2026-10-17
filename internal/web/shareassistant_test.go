@@ -476,7 +476,7 @@ func TestAGuestsLinksLeaveTheCockpitOnlyIntoTheShare(t *testing.T) {
 // runs, the name of a tool at work and the signals that the thread moved,
 // never the picks, and the live answer holds no link into the cockpit.
 func TestTheGuestFrameCarriesTheAnswerAndNothingElse(t *testing.T) {
-	models := assistant.ModelPicks{Chat: "secret-model"}
+	models := assistant.ModelPicks{Chat: "secret-model", ChatEffort: "secret-effort"}
 	for _, ev := range []assistant.StreamEvent{
 		{Kind: assistant.FrameModels, Models: &models},
 		{Kind: "something-new"},
@@ -485,11 +485,11 @@ func TestTheGuestFrameCarriesTheAnswerAndNothingElse(t *testing.T) {
 			t.Fatalf("%s reached the guest", ev.Kind)
 		}
 	}
-	frame, ok := guestFrame(assistant.Instance{}, assistant.StreamEvent{Kind: assistant.FrameStart, MessageID: "m", RunID: "r", Model: "secret-model", HTML: `<a href="/settings">go</a>`, Text: "x", Since: 42})
-	if !ok || frame.HTML != "go" || frame.Model != "" || frame.RunID != "" || frame.Text != "x" || frame.MessageID != "m" || frame.Since != 42 {
+	frame, ok := guestFrame(assistant.Instance{}, assistant.StreamEvent{Kind: assistant.FrameStart, MessageID: "m", RunID: "r", Model: "secret-model", Effort: "secret-effort", HTML: `<a href="/settings">go</a>`, Text: "x", Since: 42})
+	if !ok || frame.HTML != "go" || frame.Model != "" || frame.Effort != "" || frame.RunID != "" || frame.Text != "x" || frame.MessageID != "m" || frame.Since != 42 {
 		t.Fatalf("the start frame reads %+v", frame)
 	}
-	tool, ok := guestFrame(assistant.Instance{}, assistant.StreamEvent{Kind: assistant.FrameTool, MessageID: "m", RunID: "r", Text: "Bash", Model: "secret-model"})
+	tool, ok := guestFrame(assistant.Instance{}, assistant.StreamEvent{Kind: assistant.FrameTool, MessageID: "m", RunID: "r", Text: "Bash", Model: "secret-model", Effort: "secret-effort"})
 	if !ok || tool != (assistant.StreamEvent{Kind: assistant.FrameTool, MessageID: "m", Text: "Bash"}) {
 		t.Fatalf("the tool frame reads %+v", tool)
 	}

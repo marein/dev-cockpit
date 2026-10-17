@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/spf13/cobra"
@@ -218,7 +219,8 @@ func postCoderAction(opts inspectOptions, target, action string) (map[string]any
 }
 
 func newCoderCommand(opts *inspectOptions) *cobra.Command {
-	var coderID, agent, model, prompt, doneWhen, then string
+	var coderID, agent, prompt, doneWhen, then string
+	var pick assistant.ModelPick
 	cmd := &cobra.Command{
 		Use:   "coder-new <project> [name]",
 		Short: "Start a coder in a project",
@@ -238,12 +240,13 @@ func newCoderCommand(opts *inspectOptions) *cobra.Command {
 			if len(args) > 1 {
 				name = args[1]
 			}
-			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], name, coderID, agent, model, prompt, doneWhen, then)
+			return runNewCoder(cmd.OutOrStdout(), *opts, args[0], name, coderID, agent, pick, prompt, doneWhen, then)
 		},
 	}
 	cmd.Flags().StringVar(&coderID, "coder", "", "which coder answers (default: the cockpit's first installed one)")
 	cmd.Flags().StringVar(&agent, "agent", "", "agent the session starts with")
-	cmd.Flags().StringVar(&model, "model", "", "model the session starts on (default: the coder's own default)")
+	cmd.Flags().StringVar(&pick.Model, "model", "", "model the session starts on (default: the coder's own default)")
+	cmd.Flags().StringVar(&pick.Effort, "effort", "", "effort level the session starts at, one `model-list` names (default: the coder's start effort without --model, else the CLI's)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "task the coder starts working on")
 	cmd.Flags().StringVar(&doneWhen, "done-when", "", "steer the coder until this is true, then report")
 	cmd.Flags().StringVar(&then, "then", "", "what to do once this job closes done, wired in this call, fires once")
@@ -256,17 +259,15 @@ func newCoderCommand(opts *inspectOptions) *cobra.Command {
 // been as modelDefault), and then as the cockpit answered it, so a turn that
 // names the model to the user names what runs and never what it asked for;
 // without the flag, or with the flag naming the default anyway, the line
-// stays as it was and nothing is said about models.
-func startedLine(id, project, model, prompt string, created map[string]any) string {
+// stays as it was and nothing is said about models. The effort follows the
+// same rule, see pickWord.
+func startedLine(id, project string, pick assistant.ModelPick, prompt string, created map[string]any) string {
 	line := fmt.Sprintf("coder %s started in %s", id, project)
-	if model != "" {
-		on, _ := created["model"].(string)
-		if on == "" {
-			on = model
-		}
-		if without, _ := created["modelDefault"].(string); on != without {
-			line += " on " + on
-		}
+	if on := pickWord(pick.Model, created, "model", "modelDefault"); on != "" {
+		line += " on " + on
+	}
+	if at := pickWord(pick.Effort, created, "effort", "effortDefault"); at != "" {
+		line += " at " + at + " effort"
 	}
 	if prompt != "" {
 		line += ", working on the task"
@@ -274,7 +275,7 @@ func startedLine(id, project, model, prompt string, created map[string]any) stri
 	return line + "\n"
 }
 
-func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, agent, model, prompt, doneWhen, then string) error {
+func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, agent string, pick assistant.ModelPick, prompt, doneWhen, then string) error {
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
@@ -290,11 +291,16 @@ func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, age
 	if agent = strings.TrimSpace(agent); agent != "" {
 		form.Set("agent", agent)
 	}
-	// The model rides the same field the dialog posts; the server checks it
-	// with the one rule every model name goes through, before the session
-	// exists. A resume never carries one, a resumed session keeps its own.
-	if model = strings.TrimSpace(model); model != "" {
-		form.Set("model", model)
+	// The model and the effort ride the same fields the dialog posts; the
+	// server checks them with the rules every pick goes through, before the
+	// session exists. A resume never carries one, a resumed session keeps its
+	// own.
+	pick.Model, pick.Effort = strings.TrimSpace(pick.Model), strings.TrimSpace(pick.Effort)
+	if pick.Model != "" {
+		form.Set("model", pick.Model)
+	}
+	if pick.Effort != "" {
+		form.Set("effort", pick.Effort)
 	}
 	// The task starts the session instead of being typed into it afterwards, so
 	// there is no window in which it can be lost.
@@ -322,7 +328,7 @@ func runNewCoder(out io.Writer, opts inspectOptions, project, name, coderID, age
 	if id == "" {
 		return errors.New("The cockpit started the coder but did not name it.")
 	}
-	io.WriteString(out, startedLine(id, project, model, prompt, created))
+	io.WriteString(out, startedLine(id, project, pick, prompt, created))
 	if doneWhen == "" {
 		return nil
 	}

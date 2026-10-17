@@ -74,6 +74,7 @@ type StreamEvent struct {
 	State     string `json:"state,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
 	// Context rides the end frame and is how full the coder's context window
 	// stands, in percent. It is left out when the turn reported nothing or the
 	// model's window is unknown, and the page then leaves its ring as it is.
@@ -88,27 +89,35 @@ type StreamEvent struct {
 
 // ModelPicks is what the models frame carries and what a save of the ring's
 // menu answers alike, so the page applies one shape from both ways in: the
-// assistant the picks belong to, the three picks as stored, empty where the
-// assistant follows the default, and the moment they were written, which is
+// assistant the picks belong to, the three model picks and the three effort
+// picks as stored, empty where the assistant follows the default, and the
+// moment they were written, which is
 // what lets a page drop a reading older than the one it applied, the way a
 // draft's answer carries its own stamp. The frame travels the one
 // assistant's own hub channel like every message frame, so no other
 // assistant's page ever receives it, and the id is the page's own check on
 // top of that: it applies a reading only for the assistant it shows.
 type ModelPicks struct {
-	Assistant string    `json:"assistant"`
-	Chat      string    `json:"chat"`
-	Check     string    `json:"check"`
-	Trigger   string    `json:"trigger"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Launcher  string    `json:"launcher,omitempty"`
-	Warning   string    `json:"warning,omitempty"`
+	Assistant     string    `json:"assistant"`
+	Chat          string    `json:"chat"`
+	Check         string    `json:"check"`
+	Trigger       string    `json:"trigger"`
+	ChatEffort    string    `json:"chatEffort,omitempty"`
+	CheckEffort   string    `json:"checkEffort,omitempty"`
+	TriggerEffort string    `json:"triggerEffort,omitempty"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+	Launcher      string    `json:"launcher,omitempty"`
+	Warning       string    `json:"warning,omitempty"`
 }
 
 // ModelPicks answers the instance's picks the way the models frame carries
 // them.
 func (i Instance) ModelPicks() ModelPicks {
-	return ModelPicks{Assistant: i.ID, Chat: i.Model, Check: i.CheckModel, Trigger: i.TriggerModel, UpdatedAt: i.UpdatedAt}
+	return ModelPicks{
+		Assistant: i.ID, Chat: i.Model, Check: i.CheckModel, Trigger: i.TriggerModel,
+		ChatEffort: i.Effort, CheckEffort: i.CheckEffort, TriggerEffort: i.TriggerEffort,
+		UpdatedAt: i.UpdatedAt,
+	}
 }
 
 // subBuffer is generous on purpose: a fast provider can emit hundreds of small
@@ -129,6 +138,7 @@ type live struct {
 	runID     string
 	messageID string
 	model     string
+	effort    string
 	since     int64
 	text      string
 	// html is the last rendered prefix and renderedLen how much of text it
@@ -173,6 +183,7 @@ func (h *hub) subscribe(instanceID string) (StreamEvent, bool, <-chan StreamEven
 			RunID:     l.runID,
 			MessageID: l.messageID,
 			Model:     l.model,
+			Effort:    l.effort,
 			Text:      tail,
 			HTML:      l.html,
 			State:     string(StateStreaming),
@@ -219,6 +230,7 @@ func (h *hub) publish(instanceID string, ev StreamEvent) {
 		l.runID = ev.RunID
 		l.messageID = ev.MessageID
 		l.model = ev.Model
+		l.effort = ev.Effort
 		l.since = ev.Since
 		l.text = ev.Text
 		l.html = ev.HTML

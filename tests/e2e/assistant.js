@@ -749,7 +749,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
       `the checks select is off: ${JSON.stringify(shape)}`);
     assert(shape.trigger[0] === "Same as chat" && shape.trigger.includes("fable") && shape.trigger[shape.trigger.length - 1] === "Other…",
       `the triggers select is off: ${JSON.stringify(shape)}`);
-    assert(shape.labels.join("|") === "Chat|Checks|Triggers", `the three picks are not labelled in order: ${JSON.stringify(shape.labels)}`);
+    assert(shape.labels.join("|") === "Chat|Effort|Checks|Effort|Triggers|Effort", `the three picks are not labelled in order, each with its effort: ${JSON.stringify(shape.labels)}`);
     assert(shape.chatValue === "" && shape.checkValue === "" && shape.triggerValue === "", `a fresh assistant starts on the coder's default: ${JSON.stringify(shape)}`);
     assert(["Aliases, always the newest of each family.", "Aliases, always the newest of each family. ollama/ names run through Ollama, cloud models only."].includes(shape.hints),
       `the one line under the picks is off: ${JSON.stringify(shape)}`);
@@ -825,7 +825,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
       const box = document.querySelector(menuSel).getBoundingClientRect();
       return { left: Math.round(box.left), right: Math.round(box.right), width: window.innerWidth, selects: document.querySelectorAll(`${menuSel} select`).length };
     }, MENU);
-    assert(phone.left >= 0 && phone.right <= phone.width && phone.selects === 3, `the menu does not fit the phone: ${JSON.stringify(phone)}`);
+    assert(phone.left >= 0 && phone.right <= phone.width && phone.selects === 6, `the menu does not fit the phone: ${JSON.stringify(phone)}`);
     await closeMenu();
     await page.setViewportSize({ width: 1360, height: 900 });
 
@@ -953,7 +953,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     return "three selects moved live, a typed name as the entry, the focused select held until blur, no bounce on the page's own save, the other assistant untouched, the reload agrees";
   });
 
-  // applyModels decides whether an incoming frame is newer than the one it
+  // The ring's element decides whether an incoming frame is newer than the one it
   // already applied by comparing the two RFC3339Nano stamps, and the compare
   // has to read them as moments in time, not as plain strings: Go marshals
   // UpdatedAt with the fraction's trailing zeros trimmed, so a stamp that is
@@ -964,12 +964,12 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     const id = await page.locator("dc-assistant").getAttribute("assistant-id");
     const chatValue = () => page.$eval('dc-assistant [data-assistant-model-pick="chat"] select', (s) => s.value);
     const apply = (chat, updatedAt) => page.evaluate(({ assistantID, chatModel, at }) => {
-      document.querySelector("dc-assistant").applyModels(
+      document.querySelector("dc-assistant-picks").apply(
         { assistant: assistantID, chat: chatModel, check: "", trigger: "", updatedAt: at }, false);
     }, { assistantID: id, chatModel: chat, at: updatedAt });
     // No stamp stands on the element yet, so the first frame below applies
     // whatever the clock on it says, whichever year it names.
-    await page.evaluate(() => { document.querySelector("dc-assistant").modelsAt = ""; });
+    await page.evaluate(() => { document.querySelector("dc-assistant-picks").at = ""; });
 
     await apply("haiku", "2026-01-01T00:00:15.1Z");
     assert(await chatValue() === "haiku", "the first frame was not applied");

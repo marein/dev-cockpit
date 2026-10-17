@@ -46,7 +46,7 @@ func (s *Server) handleAssistantStream(c *gin.Context) {
 func (s *Server) ownerFrame(inst assistant.Instance, ev assistant.StreamEvent) (assistant.StreamEvent, bool) {
 	switch ev.Kind {
 	case assistant.FrameStart:
-		ev.Model = modelDisplayName(ev.Model)
+		ev.Model = pickDisplayName(ev.Model, ev.Effort)
 	case assistant.FrameModels:
 		if ev.Models != nil {
 			picks := s.modelsFrame(inst.CoderID, *ev.Models)

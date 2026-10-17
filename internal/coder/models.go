@@ -17,6 +17,9 @@ import (
 type Model struct {
 	Name   string
 	Source string
+	// Efforts are the levels this model takes where the coder knows them per
+	// model, none where the coder's own list is all there is to say.
+	Efforts []string
 }
 
 const (

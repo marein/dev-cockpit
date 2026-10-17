@@ -86,7 +86,8 @@ func (r *runner) TrustWorkdir(dir string) error {
 // Copilot CLI 1.0.78, `copilot -p --output-format json` takes the flag itself as
 // the prompt). An end of options separator would therefore become the prompt, so
 // this argv deliberately carries none. A model the turn names rides behind
-// --model, and nothing else about the command moves for it.
+// --model and an effort behind --reasoning-effort, and nothing else about the
+// command moves for them.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	args := []string{"-p", req.Prompt}
 	if req.Resume {
@@ -112,6 +113,9 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	)
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
+	}
+	if req.Effort != "" {
+		args = append(args, "--reasoning-effort", req.Effort)
 	}
 	return assistant.Command{Name: "copilot", Args: args}, nil
 }
@@ -257,15 +261,64 @@ func (p *copilotParser) Finish() error {
 // on standard error, so the general path is the only one there is here. A
 // model copilot does not have goes the same way, one line on standard error
 // and only ephemeral records on standard output, and that line names the
-// refusal.
+// refusal; so does an effort the model does not take. The effort is read
+// first: one of its lines opens the way the model's line does.
 func (p *copilotParser) Diagnose(err error, stderr string) error {
 	if assistant.LooksLikeLogin(stderr) {
 		return assistant.ErrNotLoggedIn
+	}
+	if effort, model, ok := effortRefusal(stderr); ok {
+		return assistant.UnknownEffort(effort, model)
 	}
 	if name, ok := modelRefusal(stderr); ok {
 		return assistant.UnknownModel(name)
 	}
 	return nil
+}
+
+// effortRefusal reads the lines copilot prints for an effort it refuses,
+// measured on GitHub Copilot CLI 1.0.98: `Error: Reasoning effort "max" is
+// not supported for model "gpt-5-mini".`, `Error: Model "claude-haiku-4.5"
+// does not support reasoning effort configuration (requested: "high").` and
+// the argument parser's `error: invalid value 'x' for '--reasoning-effort
+// <level>'`. It answers the level and the model out of their quotes, the
+// model empty where the line names none; false where standard error carries
+// no such line.
+func effortRefusal(stderr string) (effort, model string, ok bool) {
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if rest, found := strings.CutPrefix(line, "Error: Reasoning effort "); found {
+			quoted := quotedValues(rest, '"')
+			if len(quoted) > 0 {
+				return quoted[0], at(quoted, 1), true
+			}
+		}
+		if rest, found := strings.CutPrefix(line, "Error: Model "); found && strings.Contains(rest, "reasoning effort") {
+			quoted := quotedValues(rest, '"')
+			return at(quoted, 1), at(quoted, 0), true
+		}
+		if rest, found := strings.CutPrefix(line, "error: invalid value "); found && strings.Contains(rest, "--reasoning-effort") {
+			return at(quotedValues(rest, '\''), 0), "", true
+		}
+	}
+	return "", "", false
+}
+
+// quotedValues are the stretches of text between pairs of the quote rune.
+func quotedValues(text string, quote rune) []string {
+	parts := strings.Split(text, string(quote))
+	var out []string
+	for i := 1; i < len(parts); i += 2 {
+		out = append(out, parts[i])
+	}
+	return out
+}
+
+func at(values []string, i int) string {
+	if i < len(values) {
+		return values[i]
+	}
+	return ""
 }
 
 // modelRefusal reads the line copilot prints for a model it does not have,

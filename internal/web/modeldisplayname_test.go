@@ -2,18 +2,21 @@ package web
 
 import "testing"
 
-func TestModelDisplayNamesDropThePrefixAndTheCloudSuffix(t *testing.T) {
-	cases := map[string]string{
-		"ollama/nemotron-3-ultra:cloud": "nemotron-3-ultra",
-		"ollama/gpt-oss:120b-cloud":     "gpt-oss:120b-cloud",
-		"opus":                          "opus",
-		" claude-sonnet-4-5 ":           "claude-sonnet-4-5",
-		"ollama/":                       "ollama/",
-		"":                              "",
+func TestPickDisplayNamesDropThePrefixAndTheCloudSuffixAndNameTheEffort(t *testing.T) {
+	cases := []struct{ model, effort, want string }{
+		{"ollama/nemotron-3-ultra:cloud", "", "nemotron-3-ultra"},
+		{"ollama/gpt-oss:120b-cloud", "", "gpt-oss:120b-cloud"},
+		{"opus", "", "opus"},
+		{" claude-sonnet-4-5 ", "", "claude-sonnet-4-5"},
+		{"ollama/", "", "ollama/"},
+		{"", "", ""},
+		{"opus", "high", "opus · high effort"},
+		{"ollama/nemotron-3-ultra:cloud", "low", "nemotron-3-ultra · low effort"},
+		{"", "max", "max effort"},
 	}
-	for raw, want := range cases {
-		if got := modelDisplayName(raw); got != want {
-			t.Errorf("modelDisplayName(%q) = %q, want %q", raw, got, want)
+	for _, c := range cases {
+		if got := pickDisplayName(c.model, c.effort); got != c.want {
+			t.Errorf("pickDisplayName(%q, %q) = %q, want %q", c.model, c.effort, got, c.want)
 		}
 	}
 }

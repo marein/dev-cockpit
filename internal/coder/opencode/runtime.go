@@ -43,6 +43,14 @@ type runtime struct {
 	// the tui config, and answers the two paths the environment names, see
 	// theme.go; injected like ensurePlugin.
 	ensureConfig func() (pin, tui string, err error)
+	// variants answers the levels a model takes, see modelList.variants,
+	// tuiState is the file the terminal remembers its variant per model in
+	// and agentOf names the agent a terminal starts as, all for a start with
+	// a level, see PrepareStart; agentOf is injected so tests never run
+	// opencode.
+	variants func(model string) ([]string, bool, error)
+	tuiState string
+	agentOf  func(workdir string) (string, error)
 }
 
 // UsesProvidedSessionID is false: opencode mints its own session ids
@@ -123,11 +131,13 @@ func (r runtime) injectNotifyPlugin() {
 // --prompt takes it, yargs reads `--model=x` as one thing whatever x starts
 // with (`-m, --model  model to use in the format of provider/model`, verified
 // on 1.18.32). It rides on a start alone: a resume carries none, so a resumed
-// session keeps the model it has, whatever was set inside it.
+// session keeps the model it has, whatever was set inside it. The terminal
+// has no effort flag, a start's level rides in the configuration of the agent
+// PrepareStart named, in front of opencode for this process alone.
 func (r runtime) StartCommand(start coder.SessionStart) string {
 	r.injectNotifyPlugin()
-	base := fmt.Sprintf("cd %s && exec opencode%s",
-		clirun.ShellQuote(start.Workdir), flags(start.AgentID, start.AutomaticApproval))
+	base := fmt.Sprintf("cd %s && exec %sopencode%s",
+		clirun.ShellQuote(start.Workdir), effortPrefix(start), flags(start.AgentID, start.AutomaticApproval))
 	if model := strings.TrimSpace(start.Model); model != "" {
 		base += " --model=" + clirun.ShellQuote(model)
 	}

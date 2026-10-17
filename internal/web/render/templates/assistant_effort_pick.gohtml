@@ -1,0 +1,8 @@
+{{define "assistant_effort_pick.gohtml"}}
+<dc-effort-pick class="input-group{{if .Small}} input-group-sm{{end}} mt-1" follow-label="{{.Pick.FollowLabel}}" own-label="{{.Pick.OwnLabel}}">
+  <label class="input-group-text" for="{{.ID}}">Effort</label>
+  <select class="form-select" name="{{.Pick.Field}}" id="{{.ID}}"{{if .Form}} form="{{.Form}}"{{end}}{{if .Disabled}} disabled{{end}}{{if .Kind}} data-assistant-effort-pick="{{.Kind}}"{{end}} data-effort-select>
+    {{range .Pick.Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+  </select>
+</dc-effort-pick>
+{{end}}

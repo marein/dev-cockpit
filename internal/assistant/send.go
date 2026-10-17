@@ -184,12 +184,14 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 	}
 	runID := statefile.NewID()
 	model := ModelFor(RunChat, c.Summary, "", co.ModelDefaults())
+	effort := EffortOrigin(RunChat, c.Summary, ModelPick{}, co.ModelDefaults())
 	msg := Message{
 		ID:        statefile.NewID(),
 		Role:      RoleAssistant,
 		CreatedAt: s.now().UTC(),
 		RunID:     runID,
 		Model:     model,
+		Effort:    effort.Effort,
 		State:     StateStreaming,
 	}
 	c.Messages = append(c.Messages, msg)
@@ -204,21 +206,24 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		Workdir:   workdir,
 		Prompt:    prompt,
 		Model:     model,
+		Effort:    effort.Effort,
 	}
 	rec := RunRecord{
-		ID:        runID,
-		Kind:      RunChat,
-		Instance:  c.ID,
-		MessageID: msg.ID,
-		CoderID:   co.ID,
-		SessionID: c.NativeSessionID,
-		Model:     req.Model,
-		StartedAt: s.now().UTC(),
+		ID:         runID,
+		Kind:       RunChat,
+		Instance:   c.ID,
+		MessageID:  msg.ID,
+		CoderID:    co.ID,
+		SessionID:  c.NativeSessionID,
+		Model:      req.Model,
+		Effort:     req.Effort,
+		EffortFrom: effort.From,
+		StartedAt:  s.now().UTC(),
 	}
 	for _, id := range announce {
 		s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: id})
 	}
-	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
+	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, Effort: effort.Effort, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
 
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	s.running[runID] = a

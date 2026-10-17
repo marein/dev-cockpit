@@ -118,7 +118,11 @@ func (r *runner) TrustWorkdir(dir string) error {
 // Every flag comes first and the prompt goes last, behind endOfOptions: it is
 // claude's positional argument, so that separator is the one thing that keeps a
 // prompt somebody typed from being read as an option. A model the turn names
-// rides behind --model, and nothing else about the command moves for it.
+// rides behind --model and an effort behind --effort, and nothing else about
+// the command moves for them. claude sends a level as far as the model takes
+// it, see claudeEfforts, so an effort never ends a turn on its own; through
+// Ollama the level reaches the server, and a server that refuses it ends the
+// turn with its own words, quoted like every API error.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	args := []string{"-p"}
 	if req.Resume {
@@ -141,6 +145,9 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	ollamaName, viaOllama := ollamaPick(req.Model)
 	if req.Model != "" && !viaOllama {
 		args = append(args, "--model", req.Model)
+	}
+	if req.Effort != "" {
+		args = append(args, "--effort", req.Effort)
 	}
 	args = append(args, endOfOptions, req.Prompt)
 	if !viaOllama {

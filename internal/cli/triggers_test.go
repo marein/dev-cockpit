@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/assistant"
 )
 
 // The list prints what the page's row says: the event and where it applies,
@@ -262,7 +264,7 @@ func TestTheAddedLineNamesAPassedModelAsAnswered(t *testing.T) {
 		{"haiku", map[string]any{"id": "t1", "summary": "Nightly build", "model": "haiku", "modelDefault": "haiku"}, "added t1: Nightly build\n"},
 		{"haiku", map[string]any{"id": "t1", "summary": "Nightly build"}, "added t1: Nightly build on haiku\n"},
 	} {
-		if got := addedLine(tc.model, tc.answer); got != tc.want {
+		if got := addedLine(assistant.ModelPick{Model: tc.model}, tc.answer); got != tc.want {
 			t.Fatalf("addedLine(%q, %v) = %q, want %q", tc.model, tc.answer, got, tc.want)
 		}
 	}
