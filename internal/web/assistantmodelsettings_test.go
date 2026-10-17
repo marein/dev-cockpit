@@ -37,7 +37,7 @@ func modelSettingsServer(t *testing.T) (*gin.Engine, *Server) {
 	t.Setenv("PATH", t.TempDir())
 	gin.SetMode(gin.TestMode)
 	stateDir := t.TempDir()
-	assistants, _, err := assistant.New(stateDir, oneCoder{}, assistant.Cockpit{StateDir: stateDir})
+	assistants, workspace, err := assistant.New(stateDir, oneCoder{}, assistant.Cockpit{StateDir: stateDir})
 	if err != nil {
 		t.Fatalf("assistant: %v", err)
 	}
@@ -55,6 +55,7 @@ func modelSettingsServer(t *testing.T) (*gin.Engine, *Server) {
 	s := &Server{
 		cfg:             config.Config{StateDir: stateDir},
 		assistants:      assistants,
+		workspace:       workspace,
 		assistantRecent: recent.NewCapped(filepath.Join(stateDir, "recent-assistants.json"), recentEntries),
 		assets:          assets,
 		plugins:         serves,

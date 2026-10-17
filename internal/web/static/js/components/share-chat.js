@@ -1,0 +1,156 @@
+import { ChatStream, appendLive, showTool, writeLive } from "@dc/chat-stream";
+import { resolveHostlessLinks } from "@dc/docker";
+import { markWorking } from "@dc/dom";
+
+const END_SLACK = 48;
+
+class ShareChat extends HTMLElement {
+  connectedCallback() {
+    if (this.ac) return;
+    this.scroller = this.querySelector("[data-share-scroll]");
+    this.thread = this.querySelector("[data-share-thread]");
+    this.headIcon = this.querySelector("[data-share-head-icon]");
+    if (!this.scroller || !this.thread) return;
+    this.ac = new AbortController();
+    const { signal } = this.ac;
+    this.live = null;
+    this.atEnd = true;
+    this.scroller.addEventListener("scroll", () => {
+      this.atEnd = this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight < END_SLACK;
+    }, { signal, passive: true });
+    resolveHostlessLinks(this.thread);
+    this.toEnd();
+    this.stream = new ChatStream(this.getAttribute("stream-url"), {
+      onFrame: (frame) => this.onFrame(frame),
+      onOpen: () => {
+        this.live = null;
+        void this.pull();
+      },
+      onClosed: () => this.end(),
+    });
+    this.stream.open();
+    document.addEventListener("visibilitychange", () => this.stream?.check(), { signal });
+  }
+
+  disconnectedCallback() {
+    this.ac?.abort();
+    this.ac = null;
+    this.stream?.close();
+    this.stream = null;
+  }
+
+  onFrame(frame) {
+    switch (frame.kind) {
+      case "start":
+        this.live = { id: frame.messageId, html: frame.html || "", text: frame.text || "" };
+        if (this.headIcon) markWorking(this.headIcon, Number(frame.since || this.headIcon.dataset.workingSince) || 0);
+        this.paint(true);
+        break;
+      case "html":
+        if (this.live?.id !== frame.messageId) break;
+        this.live.html = frame.html || "";
+        this.live.text = "";
+        this.paint(true);
+        break;
+      case "delta": {
+        if (this.live?.id !== frame.messageId) break;
+        const text = frame.text || "";
+        this.live.text += text;
+        const body = this.liveBody();
+        if (body) this.follow(() => appendLive(body, text));
+        break;
+      }
+      case "tool":
+        showTool(this.thread.querySelector(`[data-message-id="${CSS.escape(frame.messageId)}"]`), frame.text);
+        break;
+      case "end":
+        this.live = null;
+        if (this.headIcon) markWorking(this.headIcon, 0);
+        void this.pull();
+        break;
+      case "message":
+      case "gone":
+        void this.pull();
+        break;
+    }
+  }
+
+  liveBody() {
+    return this.thread.querySelector(`[data-message-id="${CSS.escape(this.live.id)}"] [data-assistant-text]`);
+  }
+
+  paint(pullMissing) {
+    if (!this.live) return;
+    const body = this.liveBody();
+    if (body) {
+      this.follow(() => {
+        writeLive(body, this.live.html, this.live.text);
+        resolveHostlessLinks(body);
+      });
+    } else if (pullMissing) {
+      void this.pull();
+    }
+  }
+
+  async pull() {
+    if (this.pulling) {
+      this.again = true;
+      return;
+    }
+    this.pulling = true;
+    try {
+      const response = await fetch(this.getAttribute("page-url"), { cache: "no-store", headers: { Accept: "text/html" }, signal: this.ac?.signal });
+      if (!response.ok) {
+        this.end();
+        return;
+      }
+      const html = await response.text();
+      if (!this.ac) return;
+      this.follow(() => this.apply(html));
+      this.paint(false);
+    } catch (error) {
+      void error;
+    } finally {
+      this.pulling = false;
+      if (this.again && this.ac) {
+        this.again = false;
+        void this.pull();
+      }
+    }
+  }
+
+  apply(html) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const fresh = doc.querySelector("[data-share-log]");
+    const log = this.thread.querySelector("[data-share-log]");
+    if (!fresh || !log) return;
+    const standing = new Map([...log.children].map((node) => [node.dataset.messageId, node]));
+    const nodes = [...fresh.children].map((node) => {
+      const old = standing.get(node.dataset.messageId);
+      return old && old.dataset.state === node.dataset.state ? old : document.adoptNode(node);
+    });
+    log.replaceChildren(...nodes);
+    resolveHostlessLinks(log);
+    this.thread.querySelector("[data-share-empty]")?.toggleAttribute("hidden", nodes.length > 0);
+    const head = doc.querySelector("[data-share-head-icon]");
+    if (this.headIcon && head) markWorking(this.headIcon, head.classList.contains("working") ? Number(head.dataset.workingSince) || 0 : 0);
+  }
+
+  follow(change) {
+    const follow = this.atEnd;
+    change();
+    if (follow) this.toEnd();
+  }
+
+  toEnd() {
+    this.scroller.scrollTop = this.scroller.scrollHeight;
+  }
+
+  end() {
+    this.stream?.close();
+    this.stream = null;
+    this.querySelector("[data-share-ended]")?.removeAttribute("hidden");
+  }
+}
+
+customElements.define("dc-share-chat", ShareChat);

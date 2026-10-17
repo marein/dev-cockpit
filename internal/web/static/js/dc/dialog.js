@@ -38,6 +38,12 @@ function announcingClose(options) {
   };
 }
 
+// SweetAlert reads a title as HTML, so a name in it would lose text or run as
+// markup. A title is text, markup goes in html.
+function plainTitle({ title, ...options }) {
+  return { ...options, titleText: title };
+}
+
 export function fire(options = {}) {
   if (!window.Swal) {
     const message = nativeMessage(options);
@@ -48,8 +54,8 @@ export function fire(options = {}) {
     return Promise.resolve({ isConfirmed: true });
   }
   const host = options.target || popupHost();
-  if (!host) return window.Swal.fire(announcingClose(options));
-  const settings = announcingClose({ ...options, target: host });
+  if (!host) return window.Swal.fire(announcingClose(plainTitle(options)));
+  const settings = announcingClose({ ...plainTitle(options), target: host });
   // heightAuto is about the page behind the popup and means nothing with a
   // target of its own; SweetAlert warns about the pair.
   if (settings.heightAuto === undefined) settings.heightAuto = false;

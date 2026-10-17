@@ -251,10 +251,13 @@ case "$prompt" in
   *SLOW*)
     # A wake check answers under a contract that covers its whole answer, so the
     # partial line only goes out for a chat turn: prefixed to a verdict it would
-    # be a different verdict.
+    # be a different verdict. With TOOL the turn then stays at work with a tool.
     case "$prompt" in
       *"you are steering"*) : ;;
       *) emit "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"## Working\\n\\nstill working\"}}}" ;;
+    esac
+    case "$prompt" in
+      *TOOL*) emit "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"name\":\"Edit\"}}}" ;;
     esac
     sleep 120
     ;;

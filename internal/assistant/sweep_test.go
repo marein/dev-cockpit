@@ -88,3 +88,22 @@ func mustWrite(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// Gone is the one read a link may end on, so it answers yes only when the
+// directory is not there: a transcript that cannot be read is no deletion.
+func TestGoneOnlyAnswersADirectoryThatIsNotThere(t *testing.T) {
+	dir := t.TempDir()
+	index, instances, _ := Paths(dir)
+	store := NewStoreAt(index, instances)
+	live := "11111111-1111-4111-8111-111111111111"
+	broken := "33333333-3333-4333-8333-333333333333"
+	store.Save(Instance{Summary: Summary{ID: live, Title: "Here", CoderID: "claude"}})
+	mustWrite(t, filepath.Join(instances, broken, "transcript.json"), "{not json")
+
+	if store.Gone(live) || store.Gone(broken) {
+		t.Fatal("a standing directory reads as gone")
+	}
+	if !store.Gone("44444444-4444-4444-8444-444444444444") || !store.Gone("../escape") {
+		t.Fatal("a missing directory or a name that is no id reads as standing")
+	}
+}

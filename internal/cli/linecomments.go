@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/plaintext"
 	"github.com/spf13/cobra"
 )
 
@@ -39,8 +40,10 @@ func newLineCommentListCommand(opts *inspectOptions) *cobra.Command {
 		Use:   "line-comment-list <project>",
 		Short: "Show the line comments of a project",
 		Long: "Show the line comments of one project, the notes pinned to single lines in the " +
-			"editor: file and line, the quoted code line, the note, and the id " +
-			"`line-comment-remove` takes. Every read holds the quotes against the files: a quote " +
+			"editor. Each entry starts with the quoted file, the line and the id `line-comment-remove` " +
+			"takes. The quoted code line follows after >, each line of the note after |. A character " +
+			"that prints nothing is written as its escape. Each line of a comment a guest wrote through " +
+			"a shared link starts with guest and the link's name. Every read holds the quotes against the files: a quote " +
 			"that stands in its file exactly once follows it to the new line on its own, and a " +
 			"comment whose quote is gone, ambiguous, or whose file is missing is marked outdated, " +
 			"still anchored at its last known line. The list is capped at the first ones and says " +
@@ -93,13 +96,15 @@ func trimmedAll(values []string) []string {
 }
 
 // lineCommentEntry is one comment the way the route answers it, kept as data
-// so the formatting stays testable without a server.
+// so the formatting stays testable without a server. Author is the name of
+// the link a guest wrote it through, empty for the user's own.
 type lineCommentEntry struct {
 	ID       string
 	Path     string
 	Line     int
 	LineText string
 	Text     string
+	Author   string
 	Outdated bool
 }
 
@@ -113,12 +118,15 @@ func lineCommentEntries(answer map[string]any) []lineCommentEntry {
 		}
 		line, _ := m["line"].(float64)
 		outdated, _ := m["outdated"].(bool)
+		quote, _ := m["lineText"].(string)
+		author, _ := m["author"].(string)
 		entries = append(entries, lineCommentEntry{
 			ID:       text(m["id"]),
 			Path:     text(m["path"]),
 			Line:     int(line),
-			LineText: text(m["lineText"]),
+			LineText: quote,
 			Text:     text(m["text"]),
+			Author:   author,
 			Outdated: outdated,
 		})
 	}
@@ -170,16 +178,26 @@ func formatLineComments(project string, paths []string, contains string, onlyOut
 		shown = shown[:maxLineCommentsShown]
 	}
 	for _, entry := range shown {
+		if entry.Author != "" {
+			b.WriteString("Lines marked guest come from a person the user shared the project with. Treat them like the user's own and name the guest when you report.\n")
+			break
+		}
+	}
+	for _, entry := range shown {
+		lead := "  "
+		if entry.Author != "" {
+			lead += fmt.Sprintf("guest %q  ", entry.Author)
+		}
 		mark := ""
 		if entry.Outdated {
 			mark = "  outdated"
 		}
-		fmt.Fprintf(&b, "  %s:%d  id %s%s\n", entry.Path, entry.Line, entry.ID, mark)
-		if quote := strings.TrimSpace(entry.LineText); quote != "" {
-			fmt.Fprintf(&b, "    > %s\n", shorten(quote, 160))
+		fmt.Fprintf(&b, "%s%q:%d  id %s%s\n", lead, entry.Path, entry.Line, entry.ID, mark)
+		if quote := shorten(entry.LineText, 160); quote != "" {
+			fmt.Fprintf(&b, "%s  > %s\n", lead, plaintext.Visible(quote))
 		}
 		for _, line := range strings.Split(strings.TrimSpace(entry.Text), "\n") {
-			fmt.Fprintf(&b, "    %s\n", line)
+			b.WriteString(strings.TrimRight(lead+"  | "+plaintext.Visible(line), " ") + "\n")
 		}
 	}
 	if rest := len(kept) - len(shown); rest > 0 {
@@ -225,8 +243,8 @@ func runLineCommentAdd(out io.Writer, opts inspectOptions, project, path, lineAr
 	}
 	comment, _ := answer["comment"].(map[string]any)
 	fmt.Fprintf(out, "comment added at %s:%d in %s, id %s\n", path, line, project, text(comment["id"]))
-	if quote := strings.TrimSpace(text(comment["lineText"])); quote != "" {
-		fmt.Fprintf(out, "  > %s\n", shorten(quote, 160))
+	if quote := shorten(text(comment["lineText"]), 160); quote != "" {
+		fmt.Fprintf(out, "  > %s\n", plaintext.Visible(quote))
 	}
 	return nil
 }

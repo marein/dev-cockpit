@@ -43,6 +43,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	r.Any("/sessions/*rest", legacyRedirect)
 	r.Any("/resumable/*rest", legacyRedirect)
 
+	s.registerShareRoutes(r)
+
 	browser := r.Group("/", s.csrfMiddleware())
 	browser.GET("/login", s.handleLoginGet)
 	browser.POST("/login", s.handleLoginPost)
@@ -243,6 +245,11 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/projects/worktrees", s.handleSettingsProjectsWorktreesSave)
 	auth.GET(settingsTagsPath, s.handleSettingsProjectsTags)
 	auth.POST(settingsTagsPath, s.handleSettingsProjectsTagsSave)
+	auth.GET(settingsSharingPath, s.handleSettingsSharing)
+	auth.GET(settingsSharingNewPath, s.handleShareNew)
+	auth.POST(settingsSharingNewPath, s.handleShareCreate)
+	auth.GET(settingsSharingPath+"/:id", s.handleShareEdit)
+	auth.POST(settingsSharingPath+"/:id", s.handleShareSave)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	// The assistant's settings sit behind a tab like the editor's, so the page
@@ -408,6 +415,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.POST("/upload", s.handleEditorUpload)
 	editor.POST("/preview", s.handleEditorPreview)
 	editor.GET("/comments", s.handleEditorComments)
+	editor.GET("/comments/text", s.handleEditorCommentsText)
 	editor.POST("/comments", s.handleEditorCommentSave)
 	editor.POST("/comments/delete", s.handleEditorCommentsDelete)
 	editor.POST("/comments/move", s.handleEditorCommentsMove)

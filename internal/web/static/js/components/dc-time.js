@@ -9,7 +9,17 @@ export function relativeTime(value) {
 }
 
 class DcTime extends HTMLElement {
+  static observedAttributes = ["datetime"];
+
   connectedCallback() {
+    this.render();
+  }
+
+  attributeChangedCallback() {
+    if (this.isConnected) this.render();
+  }
+
+  render() {
     const stamp = new Date(this.getAttribute("datetime") || "");
     if (Number.isNaN(stamp.getTime())) return;
     if (this.hasAttribute("relative")) {

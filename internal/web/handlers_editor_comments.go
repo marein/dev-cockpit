@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,7 +16,7 @@ import (
 const maxLineCommentText = 16 << 10
 
 // maxLineCommentQuote bounds the quoted code line. The quote is what the
-// Markdown export cites, one line of code, so anything past this is cut
+// text export cites, one line of code, so anything past this is cut
 // rather than stored: the state file must not grow with a minified file
 // somebody commented on.
 const maxLineCommentQuote = 500
@@ -37,6 +38,13 @@ func isRuneStart(b byte) bool {
 	return b&0xC0 != 0x80
 }
 
+// fileLine is one line of a file the way a quote holds it. A file with
+// Windows line endings ends every line with a carriage return, which belongs
+// to the ending, not to the code.
+func fileLine(line string) string {
+	return clampLineQuote(strings.TrimSuffix(line, "\r"))
+}
+
 // checkCommentPath verifies that a comment's path stays inside the project.
 // The file itself does not have to exist: a note may outlive its file, and
 // the sheet still wants to show it.
@@ -55,10 +63,28 @@ func checkCommentPath(c *gin.Context, root, rel string) bool {
 // lineCommentView is one comment the way a read answers it: the stored note,
 // plus whether its quote still matches the file. Outdated is judged on every
 // read and never stored, so a file that comes back heals its comments by
-// itself.
+// itself. Mine marks a note the reading guest wrote under its own link.
 type lineCommentView struct {
 	lineComment
 	Outdated bool `json:"outdated,omitempty"`
+	Mine     bool `json:"mine,omitempty"`
+}
+
+// commentWriterOf answers who a request writes line comments as, the guest
+// of the link it came in through or the owner.
+func commentWriterOf(c *gin.Context) commentWriter {
+	if g, ok := guestOf(c); ok {
+		return commentWriter{link: g.share.ID, name: g.share.Name}
+	}
+	return commentWriter{}
+}
+
+// shown is a comment the way w reads it: whether w wrote it, and nothing of
+// the link a guest wrote it under, which another guest has no business with.
+func (w commentWriter) shown(view lineCommentView) lineCommentView {
+	view.Mine = w.link != "" && view.Link == w.link
+	view.Link = ""
+	return view
 }
 
 // reconcileLineComments holds every stored quote against the file it points
@@ -89,24 +115,27 @@ func reconcileLineComments(root string, list []lineComment) ([]lineCommentView, 
 	for _, comment := range list {
 		view := lineCommentView{lineComment: comment}
 		lines, ok := linesOf(comment.Path)
+		// TODO(v2.0.0): a released build quoted the disk with the carriage
+		// return of a Windows line ending, fileLine cuts it on both sides.
+		quote := fileLine(comment.LineText)
 		switch {
 		case !ok:
 			view.Outdated = true
-		case comment.Line >= 1 && comment.Line <= len(lines) && clampLineQuote(lines[comment.Line-1]) == comment.LineText:
-		case comment.LineText == "":
+		case comment.Line >= 1 && comment.Line <= len(lines) && fileLine(lines[comment.Line-1]) == quote:
+		case quote == "":
 			view.Outdated = true
 		default:
 			at := 0
 			hits := 0
 			for i, line := range lines {
-				if clampLineQuote(line) == comment.LineText {
+				if fileLine(line) == quote {
 					at = i + 1
 					hits++
 				}
 			}
 			if hits == 1 {
 				view.Line = at
-				rebinds[comment.Path] = append(rebinds[comment.Path], lineComment{ID: comment.ID, Line: at, LineText: comment.LineText})
+				rebinds[comment.Path] = append(rebinds[comment.Path], lineComment{ID: comment.ID, Line: at, LineText: quote})
 			} else {
 				view.Outdated = true
 			}
@@ -129,7 +158,7 @@ func (s *Server) reconciledLineComments(p project.Project) []lineCommentView {
 	views, rebinds := reconcileLineComments(p.Path, s.lineComments.List(p.Name))
 	changed := false
 	for path, moves := range rebinds {
-		if s.lineComments.Move(p.Name, path, moves) {
+		if s.lineComments.Move(p.Name, path, moves, commentWriter{}) {
 			changed = true
 		}
 	}
@@ -150,15 +179,13 @@ func (s *Server) handleEditorComments(c *gin.Context) {
 	if !ok {
 		return
 	}
-	list := s.reconciledLineComments(p)
-	if patterns := c.QueryArray("path"); len(patterns) > 0 {
-		kept := list[:0:0]
-		for _, comment := range list {
-			if matchesAnyCommentPath(patterns, comment.Path) {
-				kept = append(kept, comment)
-			}
+	w := commentWriterOf(c)
+	patterns := c.QueryArray("path")
+	list := []lineCommentView{}
+	for _, comment := range s.reconciledLineComments(p) {
+		if len(patterns) == 0 || matchesAnyCommentPath(patterns, comment.Path) {
+			list = append(list, w.shown(comment))
 		}
-		list = kept
 	}
 	c.JSON(http.StatusOK, gin.H{"comments": list})
 }
@@ -173,8 +200,9 @@ type editorCommentSaveRequest struct {
 
 // handleEditorCommentSave stores one note: a new one without an id, an edited
 // one under its id, and a renamed file's note under its id with the new path.
-// Only a save that changed something is published, so the other devices are
-// not woken for a note they already hold.
+// A guest's note is written under its link, and a note of anybody else is
+// refused to it. Only a save that changed something is published, so the
+// other devices are not woken for a note they already hold.
 func (s *Server) handleEditorCommentSave(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -214,13 +242,18 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 	} else {
 		quote = diskLineQuote(p.Path, req.Path, req.Line)
 	}
+	w := commentWriterOf(c)
 	comment, changed, err := s.lineComments.Save(p.Name, lineComment{
 		ID:       req.ID,
 		Path:     req.Path,
 		Line:     req.Line,
-		LineText: clampLineQuote(quote),
+		LineText: fileLine(quote),
 		Text:     req.Text,
-	})
+	}, w)
+	if errors.Is(err, errNotYourComment) {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -234,7 +267,7 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"gone": true})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"comment": comment})
+	c.JSON(http.StatusOK, gin.H{"comment": w.shown(lineCommentView{lineComment: comment})})
 }
 
 // diskLineQuote reads the code line a comment anchors to from the file on
@@ -266,8 +299,9 @@ type editorCommentsDeleteRequest struct {
 // and never counts as an orphan; paths narrow which orphans fall — or with
 // all everything the project holds, which is what the sheet's delete-all
 // spends. The paths are match expressions against stored comments, never
-// filesystem access, so they are not resolved against the disk. The answer
-// counts what fell, which is what the CLI reports.
+// filesystem access, so they are not resolved against the disk. A guest's
+// delete reaches only the notes written under its link, whatever it names.
+// The answer counts what fell, which is what the CLI reports.
 func (s *Server) handleEditorCommentsDelete(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -278,27 +312,26 @@ func (s *Server) handleEditorCommentsDelete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
 		return
 	}
-	removed := 0
+	named := map[string]bool{}
+	pick := func(comment lineComment) bool { return named[comment.ID] }
 	switch {
 	case req.All:
-		removed = s.lineComments.Clear(p.Name)
+		pick = func(lineComment) bool { return true }
 	case req.Outdated:
-		ids := []string{}
 		for _, view := range s.reconciledLineComments(p) {
-			if !view.Outdated {
-				continue
+			if view.Outdated && (len(req.Paths) == 0 || matchesAnyCommentPath(req.Paths, view.Path)) {
+				named[view.ID] = true
 			}
-			if len(req.Paths) > 0 && !matchesAnyCommentPath(req.Paths, view.Path) {
-				continue
-			}
-			ids = append(ids, view.ID)
 		}
-		removed = s.lineComments.Remove(p.Name, ids)
 	case len(req.Paths) > 0:
-		removed = s.lineComments.RemoveByPaths(p.Name, req.Paths)
+		pick = func(comment lineComment) bool { return matchesAnyCommentPath(req.Paths, comment.Path) }
 	default:
-		removed = s.lineComments.Remove(p.Name, req.IDs)
+		for _, id := range req.IDs {
+			named[id] = true
+		}
 	}
+	w := commentWriterOf(c)
+	removed := s.lineComments.Remove(p.Name, func(comment lineComment) bool { return pick(comment) && w.may(comment) })
 	if removed > 0 {
 		s.publishLineComments(p.Name)
 	}
@@ -318,7 +351,8 @@ type editorCommentMoveEntry struct {
 
 // handleEditorCommentsMove syncs where one file's notes stand after the open
 // buffer edited around them: the client maps the lines through its changes
-// and lands every pause here, debounced like the commit draft.
+// and lands every pause here, debounced like the commit draft. A guest moves
+// only the notes written under its link, the others stay where they are.
 func (s *Server) handleEditorCommentsMove(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -341,10 +375,10 @@ func (s *Server) handleEditorCommentsMove(c *gin.Context) {
 		positions = append(positions, lineComment{
 			ID:       entry.ID,
 			Line:     entry.Line,
-			LineText: clampLineQuote(entry.LineText),
+			LineText: fileLine(entry.LineText),
 		})
 	}
-	if s.lineComments.Move(p.Name, req.Path, positions) {
+	if s.lineComments.Move(p.Name, req.Path, positions, commentWriterOf(c)) {
 		s.publishLineComments(p.Name)
 	}
 	c.JSON(http.StatusOK, gin.H{"saved": true})

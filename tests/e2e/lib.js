@@ -103,7 +103,9 @@ async function dismissUpdate(page) {
 // Settings, Editor, Files: the autosave switch and the disk poll interval sit
 // in one form, so both are posted. Answers the interval it found, to put back.
 // Autosave is on by default, and a runner that types into the editor and reads
-// the dirty state has to switch it off.
+// the dirty state has to switch it off. The boosted form fetches the page the
+// save leads to after the POST answered, and a runner navigating on before it
+// arrived aborts it, a WebKit page error.
 async function setEditorFiles(page, { autosave, poll }) {
   const form = "#settings-editor-files";
   await page.goto(`${BASE}/settings/editor/files`, { waitUntil: "domcontentloaded" });
@@ -113,6 +115,7 @@ async function setEditorFiles(page, { autosave, poll }) {
   await page.fill(`${form} [name="file_poll_seconds"]`, poll === undefined ? before : String(poll));
   await Promise.all([
     page.waitForResponse((r) => r.url().includes("/settings/editor/files") && r.request().method() === "POST", { timeout: 15000 }),
+    page.waitForEvent("requestfinished", { predicate: (r) => r.url().includes("/settings/editor/files") && r.method() === "GET", timeout: 15000 }),
     page.click(`${form} button[type="submit"]`),
   ]);
   await page.waitForLoadState("domcontentloaded");

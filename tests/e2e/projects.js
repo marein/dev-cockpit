@@ -1731,7 +1731,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await indexMenu(source);
       const main = await menuLabels();
       assert(
-        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "New worktree", "Fetch", "Commit changes", "Compare", "Delete project"]),
+        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Share", "New worktree", "Fetch", "Commit changes", "Compare", "Delete project"]),
         `the main repository's row menu reads ${JSON.stringify(main)}`,
       );
       const hrefs = await page.$$eval(".dc-context-menu a.dropdown-item", (els) => els.map((e) => e.getAttribute("href")));
@@ -1741,19 +1741,19 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       // A shell needs nothing asked, so its entry acts instead of leading to
       // the form.
       assert((await page.locator('.dc-context-menu button.dropdown-item:has-text("New shell")').count()) === 1, "New shell is a link, not an action");
-      assert(hrefs.includes(`/projects/new?create=worktree%3A${source}`) && hrefs.includes(`/projects/${source}/tags`), `New worktree or Edit tags leads elsewhere: ${hrefs.join(", ")}`);
+      assert(hrefs.includes(`/projects/new?create=worktree%3A${source}`) && hrefs.includes(`/projects/${source}/tags`) && hrefs.includes(`/settings/sharing?project=${source}`), `New worktree, Edit tags or Share leads elsewhere: ${hrefs.join(", ")}`);
       assert((await page.locator('.dc-context-menu .dropdown-item.text-danger:has-text("Delete project")').count()) === 1, "Delete project is not the danger entry");
       await closeMenu();
       await indexMenu(`${source}-wt1`);
       const worktree = await menuLabels();
       assert(
-        JSON.stringify(worktree) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Fetch", "Commit changes", "Compare", "Delete project"]),
+        JSON.stringify(worktree) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Share", "Fetch", "Commit changes", "Compare", "Delete project"]),
         `the worktree's row menu reads ${JSON.stringify(worktree)}`,
       );
       await closeMenu();
       await indexMenu(project);
       const plain = await menuLabels();
-      assert(JSON.stringify(plain) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Delete project"]), `a plain directory's row menu reads ${JSON.stringify(plain)}`);
+      assert(JSON.stringify(plain) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Share", "Delete project"]), `a plain directory's row menu reads ${JSON.stringify(plain)}`);
       await page.click('.dc-context-menu .dropdown-item:has-text("Edit tags")');
       await page.waitForSelector(`[data-form-modal].show form[action="/projects/${project}/tags?modal=1"] dc-tag-editor [data-tag-input]`, { state: "visible", timeout: 8000 });
       await page.keyboard.press("Escape");
@@ -1790,7 +1790,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert(mp.url().endsWith("/projects"), `the dots followed the row's link: ${mp.url()}`);
       const labels = (await mp.locator(".dc-context-menu .dropdown-item").allTextContents()).map((t) => t.trim());
       assert(
-        JSON.stringify(labels) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Delete project"]),
+        JSON.stringify(labels) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Share", "Delete project"]),
         `the sheet's row menu reads ${JSON.stringify(labels)}`,
       );
       const fit = await mp.evaluate(() => {
@@ -1833,10 +1833,10 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       assert((await page.locator(".dc-context-menu").count()) === 1, "the re-render closed the open menu");
       await closeMenu();
       await sheetMenu(mp, project);
-      assert((await mp.locator(".dc-context-menu .dropdown-item").count()) === 6, "the fresh sheet row opens a different menu");
+      assert((await mp.locator(".dc-context-menu .dropdown-item").count()) === 7, "the fresh sheet row opens a different menu");
       await sheetMenuClose(mp);
       await indexMenu(project);
-      assert((await menuLabels()).length === 6, "the fresh column row opens a different menu");
+      assert((await menuLabels()).length === 7, "the fresh column row opens a different menu");
       await closeMenu();
     });
 

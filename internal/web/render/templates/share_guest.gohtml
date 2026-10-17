@@ -1,0 +1,63 @@
+{{/* A guest's areas of a link, the rail on a wide screen and the tab bar on
+     a phone: the editor of the project the page belongs to, or of the link's
+     first one, the terminals and the assistants, under the link's address,
+     each where the link carries one. Nothing of the owner's cockpit stands
+     here. */}}
+{{define "guest_rail.gohtml"}}
+<nav class="dc-rail d-print-none" aria-label="Areas">
+  <dc-working hidden></dc-working>
+  <span class="dc-rail-mark" title="Shared link" aria-label="Shared link"><i class="ti ti-share icon" aria-hidden="true"></i></span>
+  {{if .Access.Projects}}<a class="dc-rail-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="{{template "guest_editor_href" .}}"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>{{end}}
+  <a class="dc-rail-btn{{if eq .ActiveTab "terminals"}} active{{end}}" href="{{.Access.Base}}/terminals"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i><span>Terminals</span></a>
+  {{if .Access.Assistants}}<a class="dc-rail-btn{{if eq .ActiveTab "assistants"}} active{{end}}" href="{{.Access.Base}}/assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i></span><span>Assistants</span></a>{{end}}
+</nav>
+{{end}}
+
+{{define "guest_tabbar.gohtml"}}
+<nav class="dc-tabbar d-print-none" aria-label="Areas">
+  {{if .Access.Projects}}<a class="dc-tabbar-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="{{template "guest_editor_href" .}}"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>{{end}}
+  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "terminals"}} active{{end}}" data-ctx-area="terminals"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i><span>Terminals</span></button>
+  {{if .Access.Assistants}}<button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "assistants"}} active{{end}}" data-ctx-area="assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i></span><span>Assistants</span></button>{{end}}
+</nav>
+{{end}}
+
+{{define "guest_editor_href"}}{{.Access.Base}}{{with .Access.Project}}/projects/{{.}}/editor{{end}}{{end}}
+
+{{/* A guest's page of an assistant on a link: the owner's list column of
+     the link's assistants, the owner's bubbles of the whole conversation in
+     the owner's layout and the owner's aside of its jobs and triggers,
+     without the composer. dc-share-chat follows the conversation's stream,
+     writes the answer being written into its bubble, puts the working ring
+     on the phone's head icon while a turn runs, and pulls this page again
+     when the thread moved. */}}
+{{define "guest_assistant.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "assistant_ctx.gohtml" .Ctx}}
+<dc-share-chat class="dc-work" stream-url="{{.StreamURL}}" page-url="{{.PageURL}}">
+  <div class="dc-work-head">
+    <span class="dc-term-icon assistant d-lg-none{{if .Running}} working{{end}}"{{with .Running}} data-working-since="{{.}}"{{end}} data-share-head-icon aria-hidden="true"><i class="ti ti-sparkles"></i></span>
+    <h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-share-title>{{template "assistant_title.gohtml" .Name}}</h1>
+    <span class="badge bg-secondary-lt flex-shrink-0">Read only</span>
+    {{template "assistant_watching_button.gohtml" .}}
+  </div>
+  <div class="dc-work-body dc-work-fill">
+    <div class="dc-assistant-body">
+      <div class="dc-assistant-main">
+        <div class="dc-assistant-scroll" data-share-scroll>
+          <div data-share-thread>{{template "share_thread.gohtml" .}}</div>
+          <div class="mt-3" data-share-ended hidden>{{template "notice.gohtml" (dict "Level" "info" "Message" "This conversation is no longer shared." "Class" "m-0")}}</div>
+        </div>
+      </div>
+      {{template "assistant_aside.gohtml" .}}
+    </div>
+  </div>
+</dc-share-chat>
+{{template "app_close.gohtml" .}}
+{{end}}
+
+{{define "share_thread.gohtml"}}
+<div class="d-flex flex-column gap-3" data-share-log aria-live="polite" aria-label="Conversation">
+  {{range .Messages}}{{template "chat_message.gohtml" (dict "Message" .)}}{{end}}
+</div>
+<p class="text-secondary text-center py-5 mb-0" data-share-empty{{if .Messages}} hidden{{end}}>Nothing was said yet.</p>
+{{end}}

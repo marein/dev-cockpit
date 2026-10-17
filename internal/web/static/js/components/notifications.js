@@ -1,6 +1,6 @@
 import { labelCockpitTab } from "@dc/cockpit";
 import { latestServerEvent, onServerEvent } from "@dc/events";
-import { markWorking, windowSeen } from "@dc/dom";
+import { windowSeen } from "@dc/dom";
 import { getJSON, postForm } from "@dc/http";
 import { playNotification } from "@dc/jingle";
 import { showToast } from "@dc/toast";
@@ -111,8 +111,6 @@ const channel = {
 // only handles the notification ones. It resends a notification snapshot on
 // every reconnect, so a woken background tab reconciles from here too.
 onServerEvent("notifications", (event) => channel.receive(event.detail));
-
-onServerEvent("activity", (event) => decorateWorking((event.detail && event.detail.since) || {}));
 
 // On becoming visible or focused again, re-check whether the target whose
 // page is open should mark itself read. Focus is the desktop comeback signal,
@@ -233,16 +231,6 @@ function projectScopes(dot) {
   if (named.length > 0) return named.map((id) => document.getElementById(id)).filter(Boolean);
   const scope = dot.closest("[data-project-name]");
   return scope ? [scope] : [];
-}
-
-function decorateWorking(since) {
-  document.querySelectorAll("[data-notify-target]:not(.assistant)").forEach((icon) => {
-    markWorking(icon, since[icon.getAttribute("data-notify-target")] || 0);
-  });
-  document.querySelectorAll("[data-notify-targets]").forEach((icon) => {
-    const marks = (icon.getAttribute("data-notify-targets") || "").split(" ").map((id) => since[id]).filter(Boolean);
-    markWorking(icon, marks.length ? Math.min(...marks) : 0);
-  });
 }
 
 function targetURL(notification) {
@@ -627,5 +615,3 @@ if (missedReviews) {
   paintReviews();
   paintCockpit();
 }
-const missedActivity = latestServerEvent("activity");
-if (missedActivity) decorateWorking(missedActivity.since || {});

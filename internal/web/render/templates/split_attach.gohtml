@@ -58,7 +58,7 @@
                           stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}"{{if .ScrollHistory}} scroll-history{{end}}>
             <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
           </terminal-attach>
-          {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL)}}
+          {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL "Typing" true)}}
         </div>
         <terminal-input terminal-id="{{.ID}}" input-url="{{.InputURL}}"{{if .ScrollHistory}} scroll-history{{end}}></terminal-input>
       </div>

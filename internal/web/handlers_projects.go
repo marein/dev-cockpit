@@ -505,6 +505,10 @@ func (s *Server) deleteProject(p project.Project, wait bool) (projectDeleteResul
 	if !ok {
 		return projectDeleteResult{Deleting: true, Already: true}, nil
 	}
+	// The main leaves its links before the cascade: a worktree project that
+	// will not go leaves the main standing, and its guests must not keep
+	// reading.
+	s.unshareProject(p.Name)
 	// The worktree projects go first, the cascade the confirm announced: they
 	// are dead without the main. A failure still publishes, part of the cascade
 	// may already be gone.

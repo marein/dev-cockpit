@@ -9,6 +9,7 @@
   <script>(()=>{let s="";try{s=window.localStorage.getItem("dc-theme")||""}catch(e){}const f=s==="light"||s==="dark"?s:"";(f?f==="dark":window.matchMedia("(prefers-color-scheme:dark)").matches)&&document.documentElement.setAttribute("data-bs-theme","dark");if(!f)return;const m=document.querySelector('meta[name="theme-color"][media*="'+f+'"]');m&&document.querySelectorAll('meta[name="theme-color"]').forEach((t)=>t.setAttribute("content",m.getAttribute("content")))})();</script>
   <meta name="csrf-token" content="{{.CSRFToken}}">
   <meta name="dc-jingle" content="{{.Jingle}}">
+  <meta name="dc-base" content="{{.Access.Base}}">
   <meta name="dc-build" content="{{assetBuild}}">
   <title>{{if .Title}}{{.Title}} - {{end}}{{$appName}}</title>
   <link rel="icon" href="{{asset "/favicon.svg"}}" type="image/svg+xml">
@@ -22,6 +23,7 @@
   <link rel="stylesheet" href="{{asset "/css/tags.css"}}">
   <link rel="stylesheet" href="{{asset "/css/song-player.css"}}">
   <link rel="stylesheet" href="{{asset "/css/file-mention.css"}}">
+  <link rel="stylesheet" href="{{asset "/css/picker.css"}}">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
@@ -59,6 +61,7 @@
       "@dc/editor-groups": "{{asset "/js/dc/editor-groups.js"}}",
       "@dc/editor-change-bars": "{{asset "/js/dc/editor-change-bars.js"}}",
       "@dc/editor-changes": "{{asset "/js/dc/editor-changes.js"}}",
+      "@dc/editor-comments": "{{asset "/js/dc/editor-comments.js"}}",
       "@dc/editor-marks": "{{asset "/js/dc/editor-marks.js"}}",
       "@dc/editor-filetypes": "{{asset "/js/dc/editor-filetypes.js"}}",
       "@dc/editor-format": "{{asset "/js/dc/editor-format.js"}}",
@@ -76,6 +79,9 @@
       "@dc/pull": "{{asset "/js/dc/pull.js"}}",
       "@dc/cost-chart": "{{asset "/js/dc/cost-chart.js"}}",
       "@dc/tags": "{{asset "/js/dc/tags.js"}}",
+      "@dc/terminal": "{{asset "/js/dc/terminal.js"}}",
+      "@dc/chat-stream": "{{asset "/js/dc/chat-stream.js"}}",
+      "@dc/single-flight": "{{asset "/js/dc/single-flight.js"}}",
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
@@ -85,10 +91,12 @@
       "dc-cost-status": "{{asset "/js/components/cost-status.js"}}",
       "dc-costs": "{{asset "/js/components/costs.js"}}",
       "dc-steered-mark": "{{asset "/js/components/steered-mark.js"}}",
+      "dc-working": "{{asset "/js/components/working.js"}}",
       "dc-steer-badge": "{{asset "/js/components/steer-badge.js"}}",
       "dc-project-list": "{{asset "/js/components/project-list.js"}}",
       "dc-project-index": "{{asset "/js/components/project-index.js"}}",
       "dc-project-select": "{{asset "/js/components/project-select.js"}}",
+      "dc-picker": "{{asset "/js/components/picker.js"}}",
       "dc-project-new": "{{asset "/js/components/project-new.js"}}",
       "dc-form-modal": "{{asset "/js/components/form-modal.js"}}",
       "dc-tag-editor": "{{asset "/js/components/tag-editor.js"}}",
@@ -106,6 +114,10 @@
       "dc-inline-rename": "{{asset "/js/components/inline-rename.js"}}",
       "dc-live-name": "{{asset "/js/components/live-name.js"}}",
       "dc-time": "{{asset "/js/components/dc-time.js"}}",
+      "dc-copy-field": "{{asset "/js/components/copy-field.js"}}",
+      "dc-share-links": "{{asset "/js/components/share-links.js"}}",
+      "dc-share-form": "{{asset "/js/components/share-form.js"}}",
+      "dc-share-chat": "{{asset "/js/components/share-chat.js"}}",
       "dc-theme-cycle": "{{asset "/js/components/theme-cycle.js"}}",
       "dc-ctx-sheet": "{{asset "/js/components/ctx-sheet.js"}}",
       "dc-editor": "{{asset "/js/components/editor.js"}}",
@@ -243,7 +255,7 @@
 <body class="dc-body">
   <div data-page-content>
   <div class="dc-app" data-area="{{.ActiveTab}}">
-  {{if .User}}{{template "shell_rail.gohtml" .}}{{end}}
+  {{if .User}}{{template "shell_rail.gohtml" .}}{{else if .Access.Guest}}{{template "guest_rail.gohtml" .}}{{end}}
 {{end}}
 
 {{define "app_end.gohtml"}}
@@ -259,9 +271,12 @@
   {{if .User}}
   {{template "shell_status.gohtml" .}}
   {{template "shell_tabbar.gohtml" .}}
+  {{else if .Access.Guest}}
+  {{template "shell_status.gohtml" .}}
+  {{template "guest_tabbar.gohtml" .}}
   {{end}}
   </div>
-  {{if .User}}{{template "ctx_sheet.gohtml" .}}{{template "assistant_memory_sheet.gohtml" .}}{{end}}
+  {{if .User}}{{template "ctx_sheet.gohtml" .}}{{template "assistant_memory_sheet.gohtml" .}}{{else if .Access.Guest}}{{template "ctx_sheet.gohtml" .}}{{end}}
   {{if and .User (not .HasTabStrip)}}{{template "terminal_tabs_switcher.gohtml" .}}{{end}}
   </div>
   <div class="toast-container position-fixed top-0 end-0 p-3" data-dc-toasts></div>
@@ -275,7 +290,10 @@
       <div class="modal-dialog modal-dialog-centered" role="document">
         <div class="modal-content" data-form-modal-content>
           <div class="modal-header">
-            <h3 class="modal-title" id="dc-form-modal-title" data-form-modal-title></h3>
+            <div class="min-w-0 py-2">
+              <h3 class="modal-title text-break" id="dc-form-modal-title" data-form-modal-title></h3>
+              <div class="small text-secondary" data-form-modal-sub hidden></div>
+            </div>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
         </div>
@@ -291,6 +309,7 @@
      header (theme, update, bell, logout). */}}
 {{define "shell_rail.gohtml"}}
 <nav class="dc-rail d-print-none" aria-label="Areas">
+  <dc-working hidden></dc-working>
   <a class="dc-rail-mark" href="/projects" title="Dev Cockpit" aria-label="Dev Cockpit"><i class="ti ti-dashboard icon" aria-hidden="true"></i></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "projects"}} active{{end}}" href="/projects"><i class="ti ti-folders icon" aria-hidden="true"></i><span>Projects</span></a>
   {{/* Always a link, empty or not: the entry leads to the projects list with
@@ -326,13 +345,16 @@
 
 {{/* The status line under the shell: the server, the links of the running
      stacks and the coders' spend at the left, the song player and the version
-     at the right. */}}
+     at the right. A guest's is the server, the links of the link's projects
+     and the version: the spend, the songs and the update check stay the
+     owner's. */}}
 {{define "shell_status.gohtml"}}
 <footer class="dc-status d-print-none">
   {{template "host_status_bar.gohtml" .}}
   {{template "status_links.gohtml" .}}
-  {{template "cost_status.gohtml" .}}
+  {{if not .Access.Guest}}{{template "cost_status.gohtml" .}}{{end}}
   <span class="dc-status-gap"></span>
+  {{if not .Access.Guest}}
   {{/* Like the server status, the list is a dropup positioned fixed, so the
        sideways scrolling status line does not clip it. */}}
   <dc-song-player class="dc-status-item dropup">
@@ -372,7 +394,8 @@
       </div>
     </div>
   </dc-song-player>
-  <span class="dc-status-item" title="Version">Version {{appVersion}} <dc-update-check id="dc-update" data-version="{{appVersion}}"></dc-update-check></span>
+  {{end}}
+  <span class="dc-status-item" title="Version">Version {{appVersion}}{{if not .Access.Guest}} <dc-update-check id="dc-update" data-version="{{appVersion}}"></dc-update-check>{{end}}</span>
 </footer>
 {{end}}
 

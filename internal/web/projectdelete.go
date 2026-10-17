@@ -198,10 +198,11 @@ func stacksToStop(state docker.State, path string) []docker.Stack {
 }
 
 // deleteProjectWithCompose is the deletion of a project that runs containers,
-// off the request: the runners go first, then every stack is brought down and
-// waited for, and the directory goes last, because compose reads its file out
-// of it. The row says it is working the whole time and disappears when the
-// projects event lands.
+// off the request: the project leaves its links first, so no guest reads it
+// while it goes, and it stays off them when the deletion aborts. The runners go next, then
+// every stack is brought down and waited for, and the directory goes last,
+// because compose reads its file out of it. The row says it is working the
+// whole time and disappears when the projects event lands.
 //
 // Every step of it can be done twice, which is what lets a deletion the last
 // process was in the middle of simply run again from the top: the purge finds
@@ -214,6 +215,7 @@ func stacksToStop(state docker.State, path string) []docker.Stack {
 // an assistant's delete of the project once the user approved it; everybody
 // else reads the row.
 func (s *Server) deleteProjectWithCompose(p project.Project) error {
+	s.unshareProject(p.Name)
 	s.purgeProjectRunners(p.Path)
 	s.publishTerminals("") // the purge removed this project's coders and shells everywhere
 	for _, stack := range s.composeStacksToStop(p.Path) {
@@ -314,10 +316,12 @@ func (s *Server) runDeleteCascade(p project.Project, children []project.Project)
 	return nil
 }
 
-// removeProjectNow is the in-request deletion: runners purged, language
+// removeProjectNow is the in-request deletion: the project taken off its
+// links first, for good even when the removal fails, runners purged, language
 // servers closed, the directory removed, per project state cleared.
 // Publishing stays with the caller.
 func (s *Server) removeProjectNow(p project.Project) error {
+	s.unshareProject(p.Name)
 	s.purgeProjectRunners(p.Path)
 	s.closeProjectLSP(p.Name)
 	if err := s.projects.Remove(p); err != nil {

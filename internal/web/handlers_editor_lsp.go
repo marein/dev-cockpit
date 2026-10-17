@@ -137,7 +137,9 @@ func (s *Server) editorLSPRequest(c *gin.Context) (project.Project, editorintell
 // (SourceRoot), and a path under none of the roots is refused here rather
 // than read. The answer is text and never bytes, capped and binary checked
 // like every editor buffer, and it carries no version: nothing on this
-// route can be written back.
+// route can be written back. A guest reaches it bound to a project of its
+// link and reads that project's roots, the owner's set, private
+// dependencies in its module cache included, which the user accepted.
 func (s *Server) handleEditorLSPSource(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {

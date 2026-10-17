@@ -16,7 +16,7 @@ import { errorText, notifySuccess } from "@dc/toast";
 // and a POST target of its own, and the app's pe.js glue already closes open
 // modals and drops their backdrop on every boosted navigation.
 const PATHS = ["/coders/new", "/shells/new", "/projects/new", "/assistants/triggers"];
-const PATTERNS = [/^\/projects\/[^/]+\/tags$/];
+const PATTERNS = [/^\/projects\/[^/]+\/tags$/, /^\/settings\/sharing\/[^/]+$/];
 
 // A touch keyboard must not jump up over the dialog the moment it opens, so
 // only a fine pointer gets the field focused, the same rule the editor's
@@ -78,6 +78,7 @@ class FormModal extends HTMLElement {
     this.modal = this.querySelector("[data-form-modal]");
     this.content = this.querySelector("[data-form-modal-content]");
     this.titleEl = this.querySelector("[data-form-modal-title]");
+    this.subEl = this.querySelector("[data-form-modal-sub]");
     if (!this.modal || !this.content) return;
     // Capture, because pe.js boosts the same click on the way up and cancelling
     // its pe:click would hand the link back to the browser as a full load.
@@ -132,18 +133,11 @@ class FormModal extends HTMLElement {
       this.loading = false;
       done?.();
     }
-    this.reset();
-    this.content.insertAdjacentHTML("beforeend", html);
-    const form = this.content.querySelector("form");
+    const form = await this.place(html);
     if (!form) {
       this.leave(url);
       return;
     }
-    if (this.titleEl) this.titleEl.textContent = form.dataset.formTitle || "";
-    const dialog = this.modal.querySelector(".modal-dialog");
-    dialog?.classList.toggle("modal-dialog-scrollable", "formScrollable" in form.dataset);
-    dialog?.classList.toggle("dc-form-modal-fixed", "formFixed" in form.dataset);
-    await window.app?.loadElements?.(this.content);
     if (standing) {
       this.focusFirst(form);
       return;
@@ -152,11 +146,32 @@ class FormModal extends HTMLElement {
     window.bootstrap.Modal.getOrCreateInstance(this.modal).show();
   }
 
+  // place shows a view the server rendered, a form or what a form led to
+  // (data-form-view), under the title and the sub line it names, and answers
+  // it, or nothing when the answer holds neither.
+  async place(html) {
+    this.reset();
+    this.content.insertAdjacentHTML("beforeend", html);
+    const view = this.content.querySelector("form, [data-form-view]");
+    if (!view) return null;
+    if (this.titleEl) this.titleEl.textContent = view.dataset.formTitle || "";
+    const sub = view.querySelector("template[data-form-sub]");
+    if (this.subEl) {
+      this.subEl.replaceChildren(...(sub ? [sub.content.cloneNode(true)] : []));
+      this.subEl.hidden = !sub;
+    }
+    const dialog = this.modal.querySelector(".modal-dialog");
+    dialog?.classList.toggle("modal-dialog-scrollable", "formScrollable" in view.dataset);
+    dialog?.classList.toggle("dc-form-modal-fixed", "formFixed" in view.dataset);
+    await window.app?.loadElements?.(this.modal);
+    return view;
+  }
+
   // The field the form asks for takes the focus, and nothing scrolls doing
   // it. A form that names one (autofocus) means it: on the trigger form every
   // other field stands on a value already and the task is what is typed.
   focusFirst(form) {
-    if (!POINTER.matches) return;
+    if (!POINTER.matches || !form) return;
     (form.querySelector("[autofocus]:not([disabled])")
       || form.querySelector("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])"))
       ?.focus({ preventScroll: true });
@@ -207,6 +222,11 @@ class FormModal extends HTMLElement {
         // A refusal keeps the dialog standing over what was typed.
         restore();
         this.showError(await errorText(response, "The form could not be sent."));
+        return;
+      }
+      // A form that leads to a next view in the dialog answers it as HTML.
+      if ((response.headers.get("Content-Type") || "").startsWith("text/html")) {
+        this.focusFirst(await this.place(await response.text()));
         return;
       }
       const data = await response.json().catch(() => null);

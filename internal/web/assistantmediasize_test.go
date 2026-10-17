@@ -63,7 +63,13 @@ func TestAPictureInTheTranscriptCarriesItsSize(t *testing.T) {
 		t.Fatalf("the attachment reads as %dx%d, want 1280x800", view.Attachments[0].Width, view.Attachments[0].Height)
 	}
 
-	html := string(s.assistantMarkdown(id, "![the board](assistant-files/board.png)"))
+	answer := s.assistantMessageView(id, assistant.Message{
+		ID:      "m2",
+		Role:    assistant.RoleAssistant,
+		Content: "![the board](assistant-files/board.png)",
+		State:   assistant.StateComplete,
+	}, false, true, "Claude")
+	html := string(answer.HTML)
 	for _, want := range []string{`width="1280"`, `height="800"`} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("want %s in the answer, got %q", want, html)

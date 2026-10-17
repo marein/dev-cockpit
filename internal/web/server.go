@@ -37,6 +37,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/restore"
 	"github.com/marein/dev-cockpit/internal/settings"
+	"github.com/marein/dev-cockpit/internal/share"
 	"github.com/marein/dev-cockpit/internal/shell"
 	"github.com/marein/dev-cockpit/internal/update"
 	"github.com/marein/dev-cockpit/internal/voice"
@@ -123,6 +124,10 @@ type Server struct {
 	// the plus button, which offers the coder the assistant opened last runs
 	// on instead of whichever the list happens to return first.
 	assistantRecent *recent.Store
+	// guestFiles is which files the conversation of each shared assistant
+	// links, so a guest's request of one renders the thread again only when
+	// it moved.
+	guestFiles chatFiles
 	// askpassBroker and askpassScript are the bridge a user-triggered git
 	// action may ask the browser through; nil keeps every prompt failing
 	// fast, which is also what the tests run with.
@@ -168,7 +173,9 @@ type Server struct {
 	// approvals are the actions assistants asked for that wait for the
 	// user's approval.
 	approvals *approval.Service
-	handler   http.Handler
+	// shares are the links a guest opens one project through.
+	shares  *share.Store
+	handler http.Handler
 }
 
 // localCallKey marks a request that arrived on the local socket, see
@@ -236,6 +243,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		voice:           voiceService,
 		plugins:         plugins,
 		deletes:         newProjectDeletes(cfg.StateDir),
+		shares:          share.NewStore(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
@@ -263,6 +271,11 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		s.bus.Publish(eventbus.Event{Type: "docker"})
 	})
 	dockerService.OnComposeDone(s.composeDone)
+	// Every write of the links, from a form, a deleted project or assistant,
+	// moves the list of links an open Settings › Sharing shows.
+	s.shares.OnChange(func() {
+		s.bus.Publish(eventbus.Event{Type: "shares"})
+	})
 	s.approvals = s.newApprovals(cfg.StateDir)
 	// A project's indexing picture moved (a server preparing, announcing
 	// progress, dying, closing): every open editor of the project pulls the
@@ -303,7 +316,8 @@ func (s *Server) newHandler() (http.Handler, error) {
 	if err := r.SetTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}
-	r.Use(gin.Logger(), gin.CustomRecovery(s.recoveryHandler))
+	redactStandardLog()
+	r.Use(gin.LoggerWithWriter(redactingWriter{gin.DefaultWriter}), gin.CustomRecoveryWithWriter(redactingWriter{gin.DefaultErrorWriter}, s.recoveryHandler))
 	// No WithMinLength: gin-contrib/gzip (<= v1.2.6) drops its buffered prefix
 	// when a single write of minLength+ bytes arrives while the buffer is still
 	// below the threshold, truncating responses whose head is small chunks

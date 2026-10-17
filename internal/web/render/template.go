@@ -142,6 +142,10 @@ type Page struct {
 	// Cost is the status line's cost item at render time. It refreshes over
 	// the costs event from there.
 	Cost CostStatus
+	// Access is who the page is for: the owner, or a guest of a shared
+	// project who sees the owner's pages under the link's address. Only the
+	// guest's page sets it.
+	Access Access
 }
 
 // QuickNav feeds the quick nav floating button: the live sessions and shells you

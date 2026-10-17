@@ -1,11 +1,12 @@
 const L = require("./lib");
 const { assert, sleep, BASE } = L;
+const { guestChecks } = require("./editor-comments-guest");
 
-// Line comments in the editor: notes pinned to single lines. Routes:
-// GET /projects/:name/editor/comments (the project's notes, ordered by file
-// then line; ?path= narrows for the CLI), POST .../editor/comments (upsert
-// one: without an id a new note, with one an edit, path change included; a
-// save without a quote gets the code line read from the disk), POST
+// Line comments in the editor: notes pinned to single lines. Routes: GET
+// /projects/:name/editor/comments (the project's notes, ordered by file then
+// line; ?path= narrows for the CLI), POST .../editor/comments (upsert one:
+// without an id a new note, with one an edit, path change included; a save
+// without a quote gets the code line read from the disk), POST
 // .../editor/comments/delete ({ids}, {paths} or {all}), POST
 // .../editor/comments/move (one file's lines after the buffer edited around
 // them, posted by the save alone). State lives per project in
@@ -19,24 +20,28 @@ const { assert, sleep, BASE } = L;
 // order: add or edit the comment, Delete comment on a commented line, Copy
 // path:line, and the blame toggle (only in a git repository, blameMenuItem
 // answers null without one, so this runner's scratch project shows a bare
-// line's menu with two entries). The
-// note's dialog is a Bootstrap modal (data-editor-comment-modal, its host
-// moved to document.body like the terminal panel's modals): textarea with a dimmed
-// form-hint under it, Cancel, Save
-// or Add, an empty save marks the field is-invalid, Ctrl/Cmd+Enter saves
+// line's menu with two entries). The note's dialog is a Bootstrap modal
+// (data-editor-comment-modal, its host moved to document.body like the
+// terminal panel's modals): textarea with a dimmed form-hint under it, Cancel,
+// Save or Add, an empty save marks the field is-invalid, Ctrl/Cmd+Enter saves
 // like the commit message; the dialog only creates and edits, every delete
 // lives in the menus behind a swal confirm. Ctrl+Alt+C comments the cursor
-// line, Ctrl+Shift+C
-// toggles the Line comments sheet, and the menu badges (Line comments, Git)
-// hide at zero instead of standing as an empty pill. The sheet follows the
-// git history's shape: one cell per comment in a row-deck grid (col-12
-// col-lg-6, two per line from lg up), the whole cell is the control and a
-// click on it opens the app's menu over it (Go to line jumps there, Edit
-// opens the note's dialog, Delete is the danger entry), anchored at the click
-// or at the cell when Enter got there; the sheet stands behind that menu.
-// The head actions close the sheet themselves: Copy as Markdown (heading
-// "Line comments in <project>:", then path:line, the comment, the code line
-// as quote) and Delete all comments behind a confirm. Gotchas:
+// line, Ctrl+Shift+C toggles the Line comments sheet, and the menu badges
+// (Line comments, Git) hide at zero instead of standing as an empty pill. The
+// sheet follows the git history's shape: one cell per comment, the sheet's
+// own row, in a row-deck grid (col-12 col-lg-6, two per line from lg up), the
+// whole cell is the control and a click on it opens the app's menu over it (Go
+// to line jumps there, Edit opens the note's dialog, Delete is the danger
+// entry), anchored at the click or at the cell when Enter got there; the sheet
+// stands behind that menu. The head actions close the sheet themselves: Copy
+// as text (built by GET .../comments/text: heading "Line comments in
+// <project>:", then an entry per comment, path:line and the code line in its
+// head, every line of the comment behind "  > " as written, a line break or a
+// control character in path, quote and note shown as its escape, so no line
+// reads as another entry) and Delete all
+// comments behind a confirm. Path and quote are stored as sent, a Windows
+// line's carriage return cut from the quote. A guest's entries and the attacks
+// on them are editor-comments-guest.js's. Gotchas:
 //   - comments follow the buffer through CodeMirror's position mapping while
 //     the tab is open, as a purely local overlay: no move request leaves the
 //     client while the buffer is dirty, the save posts the file's anchors in
@@ -52,7 +57,7 @@ const { assert, sleep, BASE } = L;
 //     its file exactly once rebinds in the same read and persists, everything
 //     else reads as outdated at its last known line (orange struck-through
 //     number, the "Outdated · was:" line in the sheet cell, "(outdated)" in
-//     the Markdown head), and delete {outdated:true} takes exactly those,
+//     the text's head), and delete {outdated:true} takes exactly those,
 //     which is what the CLI's --outdated rides on. A last known line past
 //     the file's end paints no gutter mark at all, the sheet is the only
 //     place then, like a deleted file.
@@ -137,7 +142,7 @@ async function openSheet(target) {
   await target.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
 }
 
-L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
+L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage, bag }) => {
   const saveFile = (content) => page.evaluate(([p, f, c]) => {
     const token = document.querySelector('meta[name="csrf-token"]').content;
     return fetch(p, {
@@ -161,14 +166,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
     // Autosave is on by default and the checks read the dirty state.
     await L.setEditorFiles(page, { autosave: false });
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    const save = await page.evaluate(([p, f, c]) => {
-      const token = document.querySelector('meta[name="csrf-token"]').content;
-      return fetch(p, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": token, Accept: "application/json" },
-        body: new URLSearchParams({ path: f, content: c }).toString(),
-      }).then((r) => r.status);
-    }, [`/projects/${encodeURIComponent(scratch)}/editor/file`, FILE, CONTENT]);
+    const save = await saveFile(CONTENT);
     assert(save === 200, `seeding the file answered ${save}`);
     // The projects page pulls its own fragment right after the connect
     // snapshot; navigating away mid-pull reads as a WebKit pageerror.
@@ -561,17 +559,17 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
     await waitMarked(page, "3");
   });
 
-  await run("copy as Markdown puts path, comment and quoted line on the clipboard", async () => {
+  await run("copy as text puts path, comment and quoted line on the clipboard", async () => {
     await openMenu(page);
     await page.click("[data-editor-comments-item]");
     await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });
-    await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Copy as Markdown" }).click();
+    await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Copy as text" }).click();
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
     await page.waitForSelector(".dc-toast", { timeout: 6000 });
     if (engine === "chromium") {
       const text = await page.evaluate(() => navigator.clipboard.readText());
-      assert(text.includes(`Line comments in ${scratch}:`), `markdown heading is off: ${JSON.stringify(text.split("\n")[0])}`);
-      assert(text.includes(`${FILE}:3\nneeds a guard\n> two`), `markdown format is ${JSON.stringify(text)}`);
+      assert(text.includes(`Line comments in ${scratch}:`), `the text's heading is off: ${JSON.stringify(text.split("\n")[0])}`);
+      assert(text.includes(`- ${FILE}:3, code: two\n  > needs a guard`), `the text's format is ${JSON.stringify(text)}`);
     }
   });
 
@@ -605,7 +603,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
       `the vanished quote is not outdated at its last line: ${JSON.stringify(data.comments)}`);
   });
 
-  await run("an outdated note shows in gutter, sheet and Markdown", async () => {
+  await run("an outdated note shows in gutter, sheet and text", async () => {
     await openEditor(page);
     await openFile(page, "alpha");
     await page.waitForFunction(() => {
@@ -617,12 +615,12 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
     assert(await cell.count() === 1, "the orphan has no cell");
     const cellText = await cell.textContent();
     assert(cellText.includes("Outdated") && cellText.includes("was: two"), `the cell does not say outdated with the old quote: ${cellText}`);
-    await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Copy as Markdown" }).click();
+    await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Copy as text" }).click();
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
     await page.waitForSelector(".dc-toast", { timeout: 6000 });
     if (engine === "chromium") {
       const text = await page.evaluate(() => navigator.clipboard.readText());
-      assert(text.includes(`${FILE}:4 (outdated)`), `the markdown does not mark the orphan: ${JSON.stringify(text)}`);
+      assert(text.includes(`- ${FILE}:4 (outdated), code: two`), `the text does not mark the orphan: ${JSON.stringify(text)}`);
     }
   });
 
@@ -738,6 +736,37 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, page, run, mobilePage }) => {
       }).then((r) => r.status);
     }, `/projects/${encodeURIComponent(scratch)}/editor/comments/delete`);
   });
+
+  await run("path and quote are stored as sent, a Windows line's return is cut, the text keeps each note as written inside its entry", async () => {
+    const post = (body) => page.evaluate(([p, b]) => fetch(p, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content, Accept: "application/json" },
+      body: JSON.stringify(b),
+    }).then(async (r) => ({ status: r.status, body: await r.json() })), [`/projects/${encodeURIComponent(scratch)}/editor/comments`, body]);
+    await saveFile("one\r\ntwo\r\nthree\r\n");
+    const cut = await post({ path: FILE, line: 2, lineText: "two\r", text: "first\n\n- `x.txt:1`, code `x`\n<b>bold</b> & [link](x)" });
+    assert(cut.status === 200 && cut.body.comment.lineText === "two", `the Windows line answered ${JSON.stringify(cut)}`);
+    const odd = { path: `${FILE}\n- \`x.txt:1\``, line: 1, lineText: "one\u001b[0m\f", text: "odd" };
+    const taken = await post(odd);
+    assert(taken.status === 200 && taken.body.comment.path === odd.path && taken.body.comment.lineText === odd.lineText, `the odd note answered ${JSON.stringify(taken)}`);
+    const { comments } = await getComments(page);
+    assert(comments.length === 2 && !comments.find((c) => c.path === FILE).outdated, `the Windows file's note reads ${JSON.stringify(comments)}`);
+    await openEditor(page);
+    await openFile(page);
+    await openSheet(page);
+    await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Copy as text" }).click();
+    await page.locator(".dc-toast", { hasText: "Copied the line comments" }).first().waitFor({ timeout: 6000 });
+    if (engine === "chromium") {
+      const text = await page.evaluate(() => navigator.clipboard.readText());
+      const want = [`- ${FILE}:2, code: two`, "  > first", "  >", "  > - `x.txt:1`, code `x`", "  > <b>bold</b> & [link](x)",
+        `- ${FILE}\\n- \`x.txt:1\`:1 (outdated), code: one\\x1b[0m`, "  > odd"].join("\n");
+      assert(text.endsWith(`\n\n${want}`), `the text reads ${JSON.stringify(text)}`);
+    }
+    await page.evaluate((p) => fetch(p, { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content }, body: JSON.stringify({ all: true }) }), `/projects/${encodeURIComponent(scratch)}/editor/comments/delete`);
+    await saveFile(CONTENT);
+  });
+
+  await guestChecks({ engine, browser, page, run, mobilePage, bag, scratch, file: FILE, openEditor, openFile, openSheet, commentDialogShown, commentDialogGone });
 
   await run("phone: tapping a line number opens the menu, the sheet reads on touch", async () => {
     const mp = await mobilePage();

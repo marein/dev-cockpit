@@ -19,13 +19,11 @@ import (
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
-// statusLineSession signs in to a server whose routes are the router's own,
-// behind the cookie session the flash rides on, and answers a post of the
-// status line form and a read of its page, each sending the session the last
-// answer set.
-func statusLineSession(t *testing.T) (s *Server, path string, post func(url.Values) *httptest.ResponseRecorder, get func() string) {
+// ownerSession signs in to s, whose routes are the router's own, behind the
+// cookie session the flash rides on. send sends the session the last answer
+// set, token is the session's CSRF token.
+func ownerSession(t *testing.T, s *Server) (send func(*http.Request) *httptest.ResponseRecorder, token string) {
 	t.Helper()
-	_, s = modelSettingsServer(t)
 	s.cfg.AuthUsername = "admin"
 	r := gin.New()
 	r.SetHTMLTemplate(render.HTMLTemplate(s.assets.assetPath, "test", "test", s.plugins, nil))
@@ -37,7 +35,7 @@ func statusLineSession(t *testing.T) (s *Server, path string, post func(url.Valu
 	s.registerRoutes(r)
 
 	var session string
-	send := func(req *http.Request) *httptest.ResponseRecorder {
+	send = func(req *http.Request) *httptest.ResponseRecorder {
 		if session != "" {
 			req.Header.Set("Cookie", session)
 		}
@@ -48,10 +46,19 @@ func statusLineSession(t *testing.T) (s *Server, path string, post func(url.Valu
 		}
 		return rec
 	}
-	token := send(httptest.NewRequest(http.MethodGet, "/test/sign-in", nil)).Body.String()
+	token = send(httptest.NewRequest(http.MethodGet, "/test/sign-in", nil)).Body.String()
 	if session == "" || token == "" {
 		t.Fatal("the sign-in answered no session")
 	}
+	return send, token
+}
+
+// statusLineSession answers an owner's post of the status line form and read
+// of its page, over ownerSession.
+func statusLineSession(t *testing.T) (s *Server, path string, post func(url.Values) *httptest.ResponseRecorder, get func() string) {
+	t.Helper()
+	_, s = modelSettingsServer(t)
+	send, token := ownerSession(t, s)
 	path = s.coderBase(s.coders[0]) + "/" + statusLineSection
 	post = func(form url.Values) *httptest.ResponseRecorder {
 		form.Set(csrfFieldName, token)

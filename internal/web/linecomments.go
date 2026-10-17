@@ -30,24 +30,49 @@ type lineComments struct {
 }
 
 // lineComment is one note: the project relative path, the 1-based line, the
-// code line's text as the editor last saw it (what the Markdown export
+// code line's text as the editor last saw it (what the text export
 // quotes, so the export never has to read the files again), and the note
-// itself.
+// itself. A note a guest wrote carries the name of the link it came through
+// as its author and that link's id, which decides what the guest may change.
+// The owner's notes carry neither.
 type lineComment struct {
 	ID        string    `json:"id"`
 	Path      string    `json:"path"`
 	Line      int       `json:"line"`
 	LineText  string    `json:"lineText,omitempty"`
 	Text      string    `json:"text"`
+	Author    string    `json:"author,omitempty"`
+	Link      string    `json:"link,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// commentWriter is who changes line comments: the owner, the zero value, who
+// may change every one, or the guest of a link, who writes under the link's
+// name and changes only what was written under the same link.
+type commentWriter struct {
+	link string
+	name string
+}
+
+func (w commentWriter) may(c lineComment) bool {
+	return w.link == "" || c.Link == w.link
+}
+
+// errNotYourComment refuses a guest's change of a note it did not write.
+var errNotYourComment = errors.New("You can change only your own comments.")
 
 // errTooManyComments bounds one project's list. The cap is far beyond any
 // real pass over a project and only refuses a runaway writer, so the state
 // file stays a state file.
 var errTooManyComments = errors.New("This project already holds the maximum number of comments.")
 
-const maxLineCommentsPerProject = 500
+const maxLineCommentsPerProject = 1000
+
+// maxLineCommentPath bounds the path a comment takes. No system opens a file
+// by a longer one, so it refuses no file a note could stand on.
+const maxLineCommentPath = 4 << 10
+
+var errCommentPathTooLong = errors.New("That file path is too long.")
 
 func newLineComments(stateDir string) *lineComments {
 	return &lineComments{dir: filepath.Join(stateDir, "line-comments")}
@@ -103,12 +128,13 @@ func (l *lineComments) List(project string) []lineComment {
 	return list
 }
 
-// Save stores one comment and says whether that changed anything. An entry
-// with an id updates the note it names, path and line included, which is what
-// lets a renamed file take its notes along; without one a new note is minted.
-// An id nobody holds is a note deleted on another device meanwhile, and it is
-// not resurrected: the save answers unchanged.
-func (l *lineComments) Save(project string, next lineComment) (lineComment, bool, error) {
+// Save stores one comment w writes and says whether that changed anything. An
+// entry with an id updates the note it names, path and line included, which
+// is what lets a renamed file take its notes along, and keeps who wrote it;
+// without one a new note is minted under w's name. An id nobody holds is a
+// note deleted on another device meanwhile, and it is not resurrected: the
+// save answers unchanged.
+func (l *lineComments) Save(project string, next lineComment, w commentWriter) (lineComment, bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	list := l.load(project)
@@ -116,7 +142,11 @@ func (l *lineComments) Save(project string, next lineComment) (lineComment, bool
 		if len(list) >= maxLineCommentsPerProject {
 			return lineComment{}, false, errTooManyComments
 		}
+		if len(next.Path) > maxLineCommentPath {
+			return lineComment{}, false, errCommentPathTooLong
+		}
 		next.ID = statefile.NewID()
+		next.Author, next.Link = w.name, w.link
 		next.UpdatedAt = time.Now().UTC()
 		l.store(project, append(list, next))
 		return next, true, nil
@@ -125,6 +155,15 @@ func (l *lineComments) Save(project string, next lineComment) (lineComment, bool
 		if list[i].ID != next.ID {
 			continue
 		}
+		if !w.may(list[i]) {
+			return lineComment{}, false, errNotYourComment
+		}
+		// TODO(v2.0.0): a released build took a path of any length, a note
+		// keeps the one it holds.
+		if next.Path != list[i].Path && len(next.Path) > maxLineCommentPath {
+			return lineComment{}, false, errCommentPathTooLong
+		}
+		next.Author, next.Link = list[i].Author, list[i].Link
 		if list[i].Path == next.Path && list[i].Line == next.Line &&
 			list[i].LineText == next.LineText && list[i].Text == next.Text {
 			return list[i], false, nil
@@ -139,15 +178,16 @@ func (l *lineComments) Save(project string, next lineComment) (lineComment, bool
 
 // Move updates where one file's comments stand after the buffer edited around
 // them: line and quoted text per id, nothing else. An entry that moved to
-// another file since is left alone, the id has to name a note of this path.
-func (l *lineComments) Move(project, path string, positions []lineComment) bool {
+// another file since is left alone, the id has to name a note of this path,
+// and so is one w may not change.
+func (l *lineComments) Move(project, path string, positions []lineComment, w commentWriter) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	list := l.load(project)
 	changed := false
 	for _, pos := range positions {
 		for i := range list {
-			if list[i].ID != pos.ID || list[i].Path != path {
+			if list[i].ID != pos.ID || list[i].Path != path || !w.may(list[i]) {
 				continue
 			}
 			if list[i].Line != pos.Line || list[i].LineText != pos.LineText {
@@ -195,21 +235,14 @@ func (l *lineComments) Rename(project, oldPath, newPath string) bool {
 	return changed
 }
 
-// Remove drops the named comments and answers how many of them stood.
-func (l *lineComments) Remove(project string, ids []string) int {
-	if len(ids) == 0 {
-		return 0
-	}
-	wanted := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		wanted[id] = true
-	}
+// Remove drops the comments drop picks and answers how many fell.
+func (l *lineComments) Remove(project string, drop func(lineComment) bool) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	list := l.load(project)
 	kept := list[:0]
 	for _, comment := range list {
-		if !wanted[comment.ID] {
+		if !drop(comment) {
 			kept = append(kept, comment)
 		}
 	}
@@ -266,29 +299,9 @@ func matchesAnyCommentPath(patterns []string, target string) bool {
 	return false
 }
 
-// RemoveByPaths drops every comment whose file matches one of the path
-// filters, ored together, and answers how many stood, which is how a whole
-// file or folder is cleared at once.
-func (l *lineComments) RemoveByPaths(project string, patterns []string) int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	list := l.load(project)
-	kept := list[:0]
-	for _, comment := range list {
-		if !matchesAnyCommentPath(patterns, comment.Path) {
-			kept = append(kept, comment)
-		}
-	}
-	removed := len(list) - len(kept)
-	if removed > 0 {
-		l.store(project, kept)
-	}
-	return removed
-}
-
-// Clear drops everything the project holds by removing its file: the sheet's
-// delete-all spent the notes, or the project itself is gone. It answers how
-// many comments fell with the file.
+// Clear drops everything the project holds by removing its file, which is
+// what a deleted project does to its notes. It answers how many comments fell
+// with the file.
 func (l *lineComments) Clear(project string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()

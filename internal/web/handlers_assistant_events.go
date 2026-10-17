@@ -57,7 +57,7 @@ func (s *Server) handleAssistantTriggers(c *gin.Context) {
 		s.assistantTriggersJSON(c, owner)
 		return
 	}
-	c.HTML(http.StatusOK, "assistant_triggers_list.gohtml", s.assistantTriggersData(c, owner))
+	c.HTML(http.StatusOK, "assistant_triggers_list.gohtml", s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, owner))
 }
 
 // assistantTriggersJSON is what `trigger-list` reads: the rows the aside shows,
@@ -521,12 +521,12 @@ func parseSpan(raw string) (time.Duration, error) {
 	return span, nil
 }
 
-// assistantTriggersData is the model of the fragment: one assistant's triggers
-// and what its form offers, or everybody's when no owner is named.
-func (s *Server) assistantTriggersData(c *gin.Context, owner string) render.AssistantTriggersData {
+// assistantTriggersData is the model of the fragment on page: one assistant's
+// triggers and what its form offers, or everybody's when no owner is named.
+func (s *Server) assistantTriggersData(page render.Page, owner string) render.AssistantTriggersData {
 	triggers, _, older := narrowTriggers(s.triggersOf(owner), "", time.Time{}, false)
 	data := render.AssistantTriggersData{
-		Page:   render.Page{CSRFToken: s.csrfToken(c)},
+		Page:   page,
 		Owner:  owner,
 		URL:    assistantTriggersPath,
 		Owners: owner == "",

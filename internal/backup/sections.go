@@ -23,7 +23,8 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 	st := func(name string) string { return filepath.Join(stateDir, name) }
 	hm := func(name string) string { return filepath.Join(home, name) }
 	// The cost books stay out of the backup on purpose, the price cache in
-	// cost/prices.json is rebuilt by the next refresh.
+	// cost/prices.json is rebuilt by the next refresh. So do the shared links
+	// in shares/: a link opens a project of this host and was shown once.
 	return []Section{
 		{ID: "settings", Group: "Cockpit", Label: "Settings",
 			Description: "General settings, the configured compose actions, the claude status line, the notification jingle and the worktree post script.",

@@ -8,11 +8,11 @@ import { onServerEvent } from "@dc/events";
 import { focusRow, followPointer, labelNodes, menuJustClosed, openMenu, openedByKeyboard, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
-import { copyText, escapeHtml, syncAnimations } from "@dc/dom";
+import { copyPending, copyText, el, escapeHtml, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens, rankTokens } from "@dc/filter";
-import { csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
+import { appPath, csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { renameCoder, renameShell } from "@dc/rename";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
 import { isDark } from "@dc/theme";
@@ -23,6 +23,7 @@ import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeav
 import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, langUrl, modeUrl } from "@dc/editor-filetypes";
 import { baseName, byteLength, commitDate, countLines, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
+import { authorHead, commentRow, findUniqueQuoteLine, placeNodes, sortComments, visibleLine } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
 import { changeList } from "@dc/editor-changes";
 import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-marks";
@@ -30,6 +31,7 @@ import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl,
 import { createTextarea } from "@dc/editor-textarea";
 import * as projectSort from "@dc/project-sort";
 import { paletteGroups } from "@dc/project-palette";
+import { singleFlight } from "@dc/single-flight";
 import * as store from "@dc/store";
 
 const MAX_SAVED_TREE_DIRS = 200;
@@ -61,7 +63,10 @@ const COMMIT_GROUP_KEY = "dc-editor-commit-grouped";
 
 async function init(root) {
   const name = root.dataset.editorName;
-  const base = `/projects/${encodeURIComponent(name)}/editor`;
+  const base = appPath(`/projects/${encodeURIComponent(name)}/editor`);
+  const guest = root.hasAttribute("data-editor-guest");
+  const grants = new Set((root.dataset.editorGrants || "").split(" "));
+  const can = (grant) => grants.has(grant);
   const tabsKey = `dc-editor-tabs:${name}`;
   const treeKey = `dc-editor-tree:${name}`;
   const treeScrollKey = `${TREE_SCROLL_KEY}:${name}`;
@@ -108,6 +113,9 @@ async function init(root) {
   const commentModalTitleEl = root.querySelector("[data-editor-comment-title]");
   const commentModalPlaceEl = root.querySelector("[data-editor-comment-place]");
   const commentModalCodeEl = root.querySelector("[data-editor-comment-code]");
+  const commentModalAuthorEl = root.querySelector("[data-editor-comment-author]");
+  const commentModalHintEl = root.querySelector("[data-editor-comment-hint]");
+  const commentModalCancelBtn = root.querySelector("[data-editor-comment-cancel]");
   const commentModalTextEl = root.querySelector("[data-editor-comment-text]");
   const commentModalSaveBtn = root.querySelector("[data-editor-comment-save]");
   const lspIndexEl = root.querySelector("[data-editor-lsp-index]");
@@ -675,6 +683,7 @@ async function init(root) {
       onGoToDefinition: goToDefinitionAtCursor,
       onDocChanged: (update) => onDocChanged(g, update),
       onViewMoved: scheduleViewSave,
+      readOnly: !can("files"),
     }, editorSettings, g.ac.signal, el.querySelector("[data-editor-merge]"));
     g.editor.setVisible(false);
     wireGroup(g);
@@ -1561,7 +1570,7 @@ async function init(root) {
       paintDockerItems(items);
       focusSheetTop({ force: true });
     };
-    const items = data.cli
+    const items = data.cli && can("compose")
       ? dockerApi.projectMenuItems({
         project: name,
         stacks: data.stacks,
@@ -1570,7 +1579,7 @@ async function init(root) {
         onLogs: (stack, filter) => void composeLogsFromEditor(stack, filter),
         onDrill: drill,
       })
-      : dockerApi.projectMenuItems({ project: name, containers, onDrill: drill });
+      : dockerApi.projectMenuItems({ project: name, containers, stacks: guest ? data.stacks : [], readOnly: true, onDrill: drill });
     paintDockerItems(items);
     if (items.length && data.containers.length) {
       const divider = document.createElement("div");
@@ -1593,7 +1602,7 @@ async function init(root) {
           sub: container.portsLabel,
           onClick: (event) => {
             const info = { ...container, cli: data.cli };
-            const menu = dockerApi.containerMenuItems(info, { onShell: dockerShellFromEditor });
+            const menu = dockerApi.containerMenuItems(info, can("compose") ? { onShell: dockerShellFromEditor } : { readOnly: true });
             // A row reached with the keyboard clicks at no point at all, so the
             // row itself is the anchor then; at 0,0 the menu would sit in the
             // screen corner and read as not opening.
@@ -1666,7 +1675,7 @@ async function init(root) {
     // What a single file can do, copy path and download through rename and
     // delete, belongs to the file itself: the tab's menu and the tree row carry
     // it, so the editor menu keeps only what acts on the editor as a whole.
-    saveAllItem.disabled = !tabs.some((t) => t.dirty);
+    if (saveAllItem) saveAllItem.disabled = !tabs.some((t) => t.dirty);
   }
 
   function afterActiveChanged(g = group) {
@@ -1820,7 +1829,7 @@ async function init(root) {
     dl.innerHTML = '<i class="ti ti-download me-1"></i>Download';
     actions.appendChild(dl);
     // An archive is more useful unpacked than downloaded, so it says so here too.
-    if (isArchive(tab.name)) {
+    if (isArchive(tab.name) && can("files")) {
       const extract = document.createElement("button");
       extract.type = "button";
       extract.className = "btn btn-sm btn-outline-primary";
@@ -1906,12 +1915,12 @@ async function init(root) {
     return [
       ...closing,
       { divider: true },
-      { label: "Copy file", icon: "ti-files", action: () => copyToClipboard(tab.path, false) },
-      clipboard ? { label: `Paste "${baseName(clipboard.path)}"`, icon: "ti-clipboard", action: () => void pasteInto(parentDir(tab.path)) } : null,
+      can("files") && { label: "Copy file", icon: "ti-files", action: () => copyToClipboard(tab.path, false) },
+      clipboard && can("files") ? { label: `Paste "${baseName(clipboard.path)}"`, icon: "ti-clipboard", action: () => void pasteInto(parentDir(tab.path)) } : null,
       copyPathItem("Copy path", tab.path),
       { label: "Copy contents", icon: "ti-file-text", action: () => copyContents(tab.path) },
       { label: "Download", icon: "ti-download", action: () => startDownload(tab.path) },
-      isArchive(tab.name) ? { label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(tab.path) } : null,
+      isArchive(tab.name) && can("files") ? { label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(tab.path) } : null,
       { label: "Reveal in tree", icon: "ti-list-tree", hint: "Ctrl+Alt+R", action: () => revealInTree(tab.path) },
       { divider: true },
       previewMenuItem(tab),
@@ -1927,8 +1936,8 @@ async function init(root) {
       } : null,
       revertMenuItem(tab.path, false),
       { divider: true },
-      { label: "Rename", icon: "ti-pencil", hint: "F2", action: () => renameEntry({ path: tab.path, name: tab.name, isDir: false }) },
-      { label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(tab.path) },
+      can("files") && { label: "Rename", icon: "ti-pencil", hint: "F2", action: () => renameEntry({ path: tab.path, name: tab.name, isDir: false }) },
+      can("files") && { label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(tab.path) },
     ].filter(Boolean);
   }
 
@@ -2400,7 +2409,7 @@ async function init(root) {
     // press to the browser's own drag lift on touch, and iOS then never lets
     // the press become the row's menu; moving a file is a mouse gesture here,
     // the menu is what touch needs.
-    row.draggable = pointerMedia.matches;
+    row.draggable = pointerMedia.matches && can("files");
     row.addEventListener("dragstart", (e) => {
       dragging = { path: entry.path, isDir: !!entry.isDir };
       row.classList.add("editor-dragging");
@@ -2430,14 +2439,14 @@ async function init(root) {
   function treeMenuItems(entry) {
     const dir = entry ? (entry.isDir ? entry.path : parentDir(entry.path)) : "";
     const items = [
-      { label: "New file", icon: "ti-file-plus", action: () => createFile(dir) },
-      { label: "New folder", icon: "ti-folder-plus", action: () => createFolder(dir) },
-      { label: "Upload files", icon: "ti-upload", action: () => pickUpload(uploadInput, dir) },
-      { label: "Upload folder", icon: "ti-folder-up", action: () => pickUpload(uploadDirInput, dir) },
+      can("files") && { label: "New file", icon: "ti-file-plus", action: () => createFile(dir) },
+      can("files") && { label: "New folder", icon: "ti-folder-plus", action: () => createFolder(dir) },
+      can("files") && { label: "Upload files", icon: "ti-upload", action: () => pickUpload(uploadInput, dir) },
+      can("files") && { label: "Upload folder", icon: "ti-folder-up", action: () => pickUpload(uploadDirInput, dir) },
     ];
     // The clipboard is this browser's own; paste targets the row's folder, or
     // the project root from the empty area below the tree.
-    if (clipboard) {
+    if (clipboard && can("files")) {
       items.push({ divider: true });
       items.push({
         label: `Paste "${baseName(clipboard.path)}"`,
@@ -2451,7 +2460,7 @@ async function init(root) {
       return items;
     }
     items.push({ divider: true });
-    items.push({
+    items.push(can("files") && {
       label: entry.isDir ? "Copy folder" : "Copy file",
       icon: "ti-files",
       action: () => copyToClipboard(entry.path, entry.isDir),
@@ -2476,13 +2485,13 @@ async function init(root) {
         icon: "ti-file-search",
         action: () => openQuickOpen("files", entry.path),
       });
-      items.push({
+      items.push(can("files") && {
         label: "Replace in files",
         icon: "ti-replace",
         action: () => openQuickOpen("replace", entry.path),
       });
     }
-    if (!entry.isDir && isArchive(baseName(entry.path))) {
+    if (!entry.isDir && isArchive(baseName(entry.path)) && can("files")) {
       items.push({ label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(entry.path) });
     }
     // What git says about one file, then two files against each other, picked
@@ -2537,13 +2546,13 @@ async function init(root) {
       items.push(revertItem);
     }
     items.push({ divider: true });
-    items.push({
+    items.push(can("files") && {
       label: "Rename",
       icon: "ti-pencil",
       hint: entry.isDir ? undefined : "F2",
       action: () => renameEntry({ path: entry.path, name: baseName(entry.path), isDir: entry.isDir }),
     });
-    items.push({ label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(entry.path) });
+    items.push(can("files") && { label: "Delete", icon: "ti-trash", danger: true, action: () => deletePath(entry.path) });
     return items;
   }
 
@@ -3148,7 +3157,7 @@ async function init(root) {
   }
 
   function syncCommitUI(changed = true) {
-    commitToggleBtn.hidden = !gitRepo;
+    commitToggleBtn.hidden = !gitRepo || !can("git-local");
     revdiffToggleBtn.hidden = !gitRepo;
     gitItem.hidden = !gitSurface();
     gitItemCount.textContent = commitChanges.length ? String(commitChanges.length) : "";
@@ -3216,7 +3225,7 @@ async function init(root) {
   // already on but sits in a closed drawer or a folded column still has to
   // become visible, which is what the entry in the git sheet promises.
   function openCommit({ reveal = true } = {}) {
-    if (!gitRepo) return;
+    if (!gitRepo || !can("git-local")) return;
     if (!commitOn) {
       closeRevdiff();
       commitOn = true;
@@ -3349,7 +3358,7 @@ async function init(root) {
     // A save of this device is on its way; the answer of this pull would be
     // older than what the server is about to hold. saveCommitDraft pulls
     // again when it is through.
-    if (commitDraftSaving) return;
+    if (commitDraftSaving || !can("git-local")) return;
     let draft;
     try {
       draft = await getJSON(`${base}/git/commit-draft`, { signal });
@@ -4016,12 +4025,12 @@ async function init(root) {
   // file's context menu.
 
   // gitSurface is the one answer to "is there a git surface at all": the status
-  // has arrived, and either the project is no repository, which is what the
-  // clone is reached from, or git named the branch it stands on. The statusbar
+  // has arrived, and either the project is no repository and the clone it
+  // offers is allowed here, or git named the branch it stands on. The statusbar
   // segment, the menu entry, the sheet and the shortcut all read this one, so
   // they cannot end up offering different halves of the same thing.
   function gitSurface() {
-    return gitLoaded && (!gitRepo || !!(gitBranch && gitBranch.name));
+    return gitLoaded && (gitRepo ? !!(gitBranch && gitBranch.name) : can("git-remote"));
   }
 
   function paintGitStatus() {
@@ -4077,7 +4086,7 @@ async function init(root) {
     void appendGitLog(log, "", 0);
     // The counts on show may be minutes old. The quiet fetch runs only when
     // they are, and its answer arrives as the ordinary git event.
-    if (fetch) postJSON(`${base}/git/fetch`, { auto: true }).catch(() => {});
+    if (fetch && can("git-remote")) postJSON(`${base}/git/fetch`, { auto: true }).catch(() => {});
   }
 
   // The divider draws its own line: bootstrap's rule reads variables that
@@ -4104,14 +4113,14 @@ async function init(root) {
   function paintGitSheet() {
     if (sheetKind !== "git" || !gitSheetEls || !gitSheetEls.actions.isConnected) return;
     if (!gitRepo) {
-      gitSheetEls.actions.replaceChildren(sheetActionRow({
+      gitSheetEls.actions.replaceChildren(...[can("git-remote") && sheetActionRow({
         icon: "ti-cloud-download",
         label: "Clone repository",
         sub: "into this project folder",
         disabled: gitBusy,
         busy: gitBusyAction === "clone",
         onClick: () => void cloneDialog(),
-      }));
+      })].filter(Boolean));
       return;
     }
     const b = gitBranch || {};
@@ -4121,7 +4130,7 @@ async function init(root) {
       ? (b.counted ? `${b.ahead} ahead, ${b.behind} behind ${b.upstream}` : `upstream ${b.upstream}`)
       : (b.detached ? "" : "no upstream");
     const rows = [
-      sheetActionRow({
+      can("git-local") && sheetActionRow({
         icon: "ti-git-branch",
         label: "Switch branch",
         title: "Switch branch",
@@ -4130,7 +4139,7 @@ async function init(root) {
         sub: [standing, drift].filter(Boolean).join(" · "),
         onClick: () => openBranchPicker(),
       }),
-      sheetActionRow({
+      can("git-local") && sheetActionRow({
         icon: "ti-plus",
         label: "New branch",
         disabled: gitBusy,
@@ -4138,8 +4147,8 @@ async function init(root) {
         sub: "created here and switched to",
         onClick: () => void createBranchDialog(),
       }),
-      gitDivider(),
-      sheetActionRow({
+      can("git-local") && gitDivider(),
+      can("git-local") && sheetActionRow({
         icon: "ti-git-commit",
         label: "Commit",
         disabled: gitBusy,
@@ -4159,8 +4168,8 @@ async function init(root) {
           openRevdiff();
         },
       }),
-      gitDivider(),
-      sheetActionRow({
+      can("git-remote") && gitDivider(),
+      can("git-remote") && sheetActionRow({
         icon: "ti-upload",
         label: "Push",
         disabled: gitBusy,
@@ -4170,7 +4179,7 @@ async function init(root) {
           : "",
         onClick: () => void doPush(false),
       }),
-      sheetActionRow({
+      can("git-remote") && sheetActionRow({
         icon: "ti-download",
         label: "Pull",
         disabled: gitBusy,
@@ -4178,7 +4187,7 @@ async function init(root) {
         sub: b.counted && b.behind ? `${b.behind} behind, fast forward only` : "fast forward only",
         onClick: () => void doPull(),
       }),
-      sheetActionRow({
+      can("git-remote") && sheetActionRow({
         icon: "ti-refresh",
         label: "Fetch",
         disabled: gitBusy,
@@ -4186,8 +4195,8 @@ async function init(root) {
         sub: "updates ahead and behind",
         onClick: () => void doFetch(),
       }),
-      gitDivider(),
-      sheetActionRow({
+      can("git-remote") && gitDivider(),
+      can("git-remote") && sheetActionRow({
         icon: "ti-alert-triangle",
         iconClass: "text-danger",
         label: "Force push",
@@ -4197,7 +4206,7 @@ async function init(root) {
         onClick: () => void doPush(true),
       }),
     ];
-    gitSheetEls.actions.replaceChildren(...rows);
+    gitSheetEls.actions.replaceChildren(...rows.filter(Boolean));
   }
 
   function logDate(time) {
@@ -4282,11 +4291,11 @@ async function init(root) {
       diffItem(diffPath, commit, `Diff ${baseName(diffPath)} against this`),
       hashItem(commit),
       { divider: true },
-      { label: "Tag this commit", icon: "ti-tag", action: () => void tagDialog(commit, paintChips) },
+      can("git-local") && { label: "Tag this commit", icon: "ti-tag", action: () => void tagDialog(commit, paintChips) },
     ];
     for (const name of commit.tags || []) {
-      items.push({ label: `Push ${name}`, icon: "ti-upload", action: () => void pushTag(name) });
-      items.push({ label: `Delete ${name}`, icon: "ti-trash", danger: true, action: () => void deleteTagDialog(commit, name, paintChips) });
+      items.push(can("git-remote") && { label: `Push ${name}`, icon: "ti-upload", action: () => void pushTag(name) });
+      items.push(can("git-local") && { label: `Delete ${name}`, icon: "ti-trash", danger: true, action: () => void deleteTagDialog(commit, name, paintChips) });
     }
     return items;
   }
@@ -5009,7 +5018,7 @@ async function init(root) {
   // one path back to HEAD. Only a path that carries a mark has anything to
   // revert, so a clean row does not offer it.
   function revertMenuItem(path, isDir) {
-    if (!gitRepo) return null;
+    if (!gitRepo || !can("git-local")) return null;
     if (!(isDir ? dirKind(path) : fileKind(path))) return null;
     return { label: "Revert changes", icon: "ti-arrow-back-up", danger: true, action: () => void revertPath(path, isDir) };
   }
@@ -5540,10 +5549,7 @@ async function init(root) {
   const commentableTab = (tab) => (tab && !tab.kind && !tab.compare && !tab.external ? tab : null);
   const commentsFor = (path) => comments.filter((c) => c.path === path);
   const commentAt = (path, line) => comments.find((c) => c.path === path && c.line === line) || null;
-
-  function sortedComments() {
-    return [...comments].sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
-  }
+  const mayChange = (c) => (c ? can("comments") && (!guest || !!c.mine) : can("comments"));
 
   function paintComments() {
     commentsCountEl.textContent = comments.length ? String(comments.length) : "";
@@ -5587,18 +5593,6 @@ async function init(root) {
     }
     comments = fresh;
     paintComments();
-  }
-
-  function findUniqueQuoteLine(doc, quote) {
-    if (!quote) return 0;
-    let at = 0;
-    for (let n = 1; n <= doc.lines; n++) {
-      if (doc.line(n).text === quote) {
-        if (at) return 0;
-        at = n;
-      }
-    }
-    return at;
   }
 
   function onDocChanged(g, update) {
@@ -5723,14 +5717,22 @@ async function init(root) {
   }
 
   function openCommentModal({ existing, path, line, lineText }) {
-    commentModalTitleEl.textContent = existing ? "Edit line comment" : "Line comment";
-    commentModalPlaceEl.textContent = `${path}:${line}`;
+    const editable = mayChange(existing);
+    commentModalTitleEl.textContent = existing && editable ? "Edit line comment" : "Line comment";
+    commentModalPlaceEl.replaceChildren(...placeNodes(path, line));
+    commentModalPlaceEl.title = commentModalPlaceEl.textContent;
     const code = (lineText || "").trim();
-    commentModalCodeEl.textContent = code;
+    commentModalCodeEl.replaceChildren(...visibleLine(code));
     commentModalCodeEl.hidden = !code;
+    commentModalAuthorEl.textContent = existing && existing.author ? `By ${existing.author}` : "";
+    commentModalAuthorEl.hidden = !commentModalAuthorEl.textContent;
     commentModalTextEl.value = existing ? existing.text : "";
     commentModalTextEl.classList.remove("is-invalid");
-    commentModalSaveBtn.textContent = existing ? "Save" : "Add";
+    if (can("comments")) {
+      commentModalSaveBtn.textContent = existing ? "Save" : "Add";
+      commentModalTextEl.readOnly = commentModalSaveBtn.hidden = commentModalHintEl.hidden = !editable;
+      commentModalCancelBtn.textContent = editable ? "Cancel" : "Close";
+    }
     return new Promise((resolve) => {
       const modal = window.bootstrap.Modal.getOrCreateInstance(commentModalEl);
       const wires = new AbortController();
@@ -5745,15 +5747,17 @@ async function init(root) {
         result = { text };
         modal.hide();
       };
-      commentModalSaveBtn.addEventListener("click", submit, { signal: wires.signal });
-      commentModalTextEl.addEventListener("input", () => commentModalTextEl.classList.remove("is-invalid"), { signal: wires.signal });
-      commentModalTextEl.addEventListener("keydown", (ev) => {
-        if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key === "Enter") {
-          ev.preventDefault();
-          ev.stopPropagation();
-          submit();
-        }
-      }, { signal: wires.signal });
+      if (editable) {
+        commentModalSaveBtn.addEventListener("click", submit, { signal: wires.signal });
+        commentModalTextEl.addEventListener("input", () => commentModalTextEl.classList.remove("is-invalid"), { signal: wires.signal });
+        commentModalTextEl.addEventListener("keydown", (ev) => {
+          if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key === "Enter") {
+            ev.preventDefault();
+            ev.stopPropagation();
+            submit();
+          }
+        }, { signal: wires.signal });
+      }
       commentModalEl.addEventListener("shown.bs.modal", () => commentModalTextEl.focus(), { once: true, signal: wires.signal });
       commentModalEl.addEventListener("hidden.bs.modal", () => {
         wires.abort();
@@ -5770,12 +5774,6 @@ async function init(root) {
     if (!outcome) return;
     if (existing && outcome.text === existing.text) return;
     await saveComment({ id: existing ? existing.id : "", path, line, lineText, text: outcome.text });
-  }
-
-  function openLineCommentAt(line) {
-    const tab = commentableTab(activeTab());
-    if (!tab) return;
-    void editLineComment(tab.path, line);
   }
 
   // commitGroup is what the line's commit can do, read off the blame gutter:
@@ -5821,15 +5819,18 @@ async function init(root) {
 
   function openGutterMenu(tab, line, x, y) {
     const existing = commentAt(tab.path, line);
+    const editable = mayChange(existing);
     openMenu({
       x,
       y,
       signal,
       items: [
-        existing
+        existing && existing.author && { label: `Comment by ${existing.author}`, icon: "ti-user", disabled: true },
+        editable && (existing
           ? { label: "Edit comment", icon: "ti-message-circle", hint: "Ctrl+Alt+C", action: () => void editLineComment(tab.path, line) }
-          : { label: "Add line comment", icon: "ti-message-plus", hint: "Ctrl+Alt+C", action: () => void editLineComment(tab.path, line) },
-        existing ? { label: "Delete comment", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(existing) } : null,
+          : { label: "Add line comment", icon: "ti-message-plus", hint: "Ctrl+Alt+C", action: () => void editLineComment(tab.path, line) }),
+        existing && !editable && { label: "Show comment", icon: "ti-message-circle", action: () => void editLineComment(tab.path, line) },
+        existing && editable ? { label: "Delete comment", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(existing) } : null,
         copyPathItem("Copy path:line", `${tab.path}:${line}`),
         blameMenuItem(tab),
         ...commitGroup(tab, line),
@@ -5863,24 +5864,13 @@ async function init(root) {
     openGutterMenu(tab, line, e.clientX, e.clientY);
   }
 
-  function commentsMarkdown() {
-    const parts = [`Line comments in ${name}:`];
-    for (const comment of sortedComments()) {
-      const quote = (comment.lineText || "").trim();
-      const lines = [`${comment.path}:${comment.line}${comment.outdated ? " (outdated)" : ""}`, comment.text];
-      if (quote) lines.push(`> ${quote}`);
-      parts.push(lines.join("\n"));
-    }
-    return parts.join("\n\n");
-  }
-
-  async function copyCommentsMarkdown() {
+  async function copyCommentsText() {
     if (!comments.length) return;
     try {
-      await navigator.clipboard.writeText(commentsMarkdown());
-      notifySuccess("Copied the line comments as Markdown.");
-    } catch {
-      notifyError("Clipboard is not available.");
+      if (!(await copyPending(getText(`${base}/comments/text`)))) throw new Error("Clipboard is not available.");
+      notifySuccess("Copied the line comments as text.");
+    } catch (err) {
+      notifyError(err.message || "Clipboard is not available.");
     }
   }
 
@@ -5917,46 +5907,23 @@ async function init(root) {
   function commentCellMenuItems(comment) {
     return [
       { label: "Go to line", icon: "ti-arrow-right", action: () => void jumpToComment(comment) },
-      { label: "Edit", icon: "ti-pencil", action: () => void editLineComment(comment.path, comment.line) },
-      { label: "Delete", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(comment) },
+      mayChange(comment) && { label: "Edit", icon: "ti-pencil", action: () => void editLineComment(comment.path, comment.line) },
+      mayChange(comment) && { label: "Delete", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(comment) },
     ];
   }
 
   async function deleteCommentDialog(comment) {
     if (!(await confirmDialog({
       title: "Delete this comment?",
-      html: `<div>${escapeHtml(`${comment.path}:${comment.line}`)}</div><div class="text-secondary">${escapeHtml(comment.text)}</div>`,
+      html: `${el("div", {}, ...visibleLine(`${comment.path}:${comment.line}`)).outerHTML}${comment.author ? `<div>By ${escapeHtml(comment.author)}</div>` : ""}<div class="text-secondary">${escapeHtml(comment.text)}</div>`,
       confirmText: "Delete",
     }))) return;
     await deleteComments([comment.id]);
   }
 
-  function commentCell(comment) {
-    let sub = comment.text;
-    let subNodes;
-    let title = comment.text;
-    if (comment.outdated) {
-      sub = undefined;
-      const wrap = document.createElement("span");
-      wrap.className = "d-flex flex-column min-w-0";
-      const textEl = document.createElement("span");
-      textEl.className = "text-truncate";
-      textEl.textContent = comment.text;
-      const oldEl = document.createElement("span");
-      oldEl.className = "text-orange text-truncate";
-      const quote = (comment.lineText || "").trim();
-      oldEl.textContent = quote ? `Outdated · was: ${quote}` : "Outdated";
-      wrap.append(textEl, oldEl);
-      subNodes = [wrap];
-      title = `${comment.text}\n${oldEl.textContent}`;
-    }
-    const cell = sheetActionRow({
-      icon: "ti-message-circle",
-      iconClass: comment.outdated ? "text-orange" : undefined,
-      label: { head: comment.path, tail: `:${comment.line}` },
-      sub,
-      subNodes,
-      title,
+  function commentCol(comment) {
+    const cell = authorHead(sheetActionRow({
+      ...commentRow(comment),
       onClick: (event) => {
         const rect = event.currentTarget.getBoundingClientRect();
         openMenu({
@@ -5966,28 +5933,25 @@ async function init(root) {
           signal,
         });
       },
-    });
-    const col = document.createElement("div");
-    col.className = "col-12 col-lg-6";
-    col.appendChild(cell);
-    return col;
+    }), comment);
+    return el("div", { class: "col-12 col-lg-6" }, cell);
   }
 
   function paintCommentsSheet() {
     if (sheetKind !== "comments") return;
     sheetBodyEl.replaceChildren();
-    const list = sortedComments();
+    const list = sortComments(comments);
     sheetBodyEl.appendChild(sheetActionRow({
       icon: "ti-copy",
-      label: "Copy as Markdown",
-      sub: "file, line and comment, the code line quoted",
+      label: "Copy as text",
+      sub: "file, line and comment as plain text, the code line quoted",
       disabled: !list.length,
       onClick: () => {
         closeSheet();
-        void copyCommentsMarkdown();
+        void copyCommentsText();
       },
     }));
-    sheetBodyEl.appendChild(sheetActionRow({
+    if (can("comments") && !guest) sheetBodyEl.appendChild(sheetActionRow({
       icon: "ti-trash",
       iconClass: "text-danger",
       label: "Delete all comments",
@@ -6001,13 +5965,13 @@ async function init(root) {
     if (!list.length) {
       const empty = document.createElement("div");
       empty.className = "text-secondary small px-3 py-2";
-      empty.textContent = "No comments yet. Click a line number to add one.";
+      empty.textContent = can("comments") ? "No comments yet. Click a line number to add one." : "No comments yet.";
       sheetBodyEl.appendChild(empty);
       return;
     }
     const grid = document.createElement("div");
     grid.className = "row row-deck g-0";
-    for (const comment of list) grid.appendChild(commentCell(comment));
+    for (const comment of list) grid.appendChild(commentCol(comment));
     sheetBodyEl.appendChild(grid);
   }
 
@@ -6156,7 +6120,7 @@ async function init(root) {
       const label = state.readOnly ? `${state[`${side}Label`]} · ${state[side]}` : state[side];
       g.compareNameEls[side].textContent = label;
       g.compareNameEls[side].title = label;
-      g.compareSaveBtns[side].hidden = !!state.readOnly;
+      g.compareSaveBtns[side].hidden = !!state.readOnly || !can("files");
     }
     // While the view is still being built there is nothing to read a buffer
     // from, and reading an empty one would call both sides changed.
@@ -7459,7 +7423,7 @@ async function init(root) {
   async function loadSearchDraft() {
     if (searchDraft) return searchDraft;
     if (!searchDraftPending) {
-      searchDraftPending = getJSON(`${base}/search-draft`, { signal })
+      searchDraftPending = (guest ? Promise.resolve({}) : getJSON(`${base}/search-draft`, { signal }))
         .then((data) => {
           searchDraft = data || {};
           return searchDraft;
@@ -7536,7 +7500,7 @@ async function init(root) {
   // written for, so a slow one can never speak for values that moved on.
   const flushSearchDraft = singleFlight(async () => {
     const sent = searchDraft;
-    if (!sent) return;
+    if (!sent || guest) return;
     searchDraftSaving = true;
     try {
       const res = await postJSON(`${base}/search-draft`, {
@@ -7558,7 +7522,7 @@ async function init(root) {
   });
 
   async function pullSearchDraft() {
-    if (searchDraftSaving) return;
+    if (searchDraftSaving || guest) return;
     let draft;
     try {
       draft = await getJSON(`${base}/search-draft`, { signal });
@@ -7602,13 +7566,13 @@ async function init(root) {
     closeSheet();
     closePalette();
     holdFocus();
-    quickOpenMode = mode;
+    quickOpenMode = mode === "replace" && !can("files") ? "search" : mode;
     quickOpenView = "results";
     quickOpenEl.hidden = false;
     quickOpenInput.value = "";
     quickOpenInput.placeholder = resultsPlaceholder();
     quickOpenMatches = [];
-    quickOpenReplaceInput.hidden = mode !== "replace";
+    quickOpenReplaceInput.hidden = quickOpenMode !== "replace";
     lastSearch = { matches: [], truncated: false, total: 0, files: 0 };
     // A folder that was just picked in the tree outranks the stored one, or
     // somebody clicks a folder and searches in the one from yesterday.
@@ -8692,7 +8656,7 @@ async function init(root) {
   function wireQuickOpen() {
     quickOpenItem.addEventListener("click", () => openQuickOpen("files"), { signal });
     searchProjectItem.addEventListener("click", () => openQuickOpen("search"), { signal });
-    replaceProjectItem.addEventListener("click", () => openQuickOpen("replace"), { signal });
+    replaceProjectItem?.addEventListener("click", () => openQuickOpen("replace"), { signal });
     quickOpenReplaceInput.addEventListener("input", () => {
       scheduleSearchDraftSave();
       scheduleSearch();
@@ -8743,7 +8707,7 @@ async function init(root) {
   // ---- wiring ----------------------------------------------------------------
 
   saveBtn.addEventListener("click", save, { signal });
-  saveAllItem.addEventListener("click", saveAll, { signal });
+  saveAllItem?.addEventListener("click", saveAll, { signal });
   refreshBtn.addEventListener("click", () => {
     dropChangeHeads();
     void loadTree();
@@ -9320,8 +9284,8 @@ async function init(root) {
     openMenu({ x, y, items: [item], signal });
     return true;
   }, { signal });
-  wireTreeDrop();
-  wirePaste();
+  if (can("files")) wireTreeDrop();
+  if (can("files")) wirePaste();
   wireSplitter();
   wireTreeScroll();
   wireQuickOpen();
@@ -9340,8 +9304,8 @@ async function init(root) {
   commentsItem.addEventListener("click", openCommentsSheet, { signal });
   wireRowMenus(root, ".cm-gutters .cm-gutterElement", lineNumberMenu, { signal });
   root.addEventListener("click", gutterClick, { signal });
-  reindexItem.hidden = !lsp;
-  reindexItem.addEventListener("click", () => {
+  if (reindexItem) reindexItem.hidden = !lsp;
+  reindexItem?.addEventListener("click", () => {
     void lsp?.reindex();
     void pullLSPIndex();
   }, { signal });
@@ -9408,8 +9372,6 @@ async function init(root) {
   const projectFilterEl = root.querySelector("[data-editor-project-filter]");
   const projectEmptyEl = root.querySelector("[data-editor-project-empty]");
   let paletteIndex = -1;
-  let projectsInFlight = false;
-  let projectsDirty = false;
   if (projectListEl) projectSort.sort(projectListEl);
 
   const paletteOpen = () => Boolean(paletteEl) && !paletteEl.hidden;
@@ -9531,30 +9493,22 @@ async function init(root) {
     action();
   }, { capture: true, signal });
 
-  async function refreshProjects() {
+  const refreshProjects = singleFlight(async () => {
     if (!projectListEl) return;
-    if (projectsInFlight) {
-      projectsDirty = true;
-      return;
+    const html = await getText(`${base}/projects`, { signal }).catch((err) => {
+      if (guest && err.status === 404) window.pe?.navigate(appPath(""));
+      return "";
+    });
+    if (!html) return;
+    const marked = paletteRows()[paletteIndex]?.dataset.projectName || "";
+    projectListEl.innerHTML = html;
+    projectSort.sort(projectListEl);
+    if (paletteOpen()) {
+      renderPalette();
+      paletteIndex = marked ? paletteRows().findIndex((row) => row.dataset.projectName === marked) : -1;
+      paintPalette();
     }
-    projectsInFlight = true;
-    const html = await getText(`${base}/projects`, { signal }).catch(() => "");
-    if (html) {
-      const marked = paletteRows()[paletteIndex]?.dataset.projectName || "";
-      projectListEl.innerHTML = html;
-      projectSort.sort(projectListEl);
-      if (paletteOpen()) {
-        renderPalette();
-        paletteIndex = marked ? paletteRows().findIndex((row) => row.dataset.projectName === marked) : -1;
-        paintPalette();
-      }
-    }
-    projectsInFlight = false;
-    if (projectsDirty) {
-      projectsDirty = false;
-      void refreshProjects();
-    }
-  }
+  });
   onServerEvent("projects", () => void refreshProjects(), { signal });
 
   const termPanelEl = root.querySelector("[data-editor-term-panel]");
@@ -9623,13 +9577,14 @@ async function init(root) {
     attach.setAttribute("terminal-id", id);
     attach.setAttribute("embedded", "");
     attach.setAttribute("stream-url", pane.getAttribute("data-stream-url") || "");
-    attach.setAttribute("resize-url", pane.getAttribute("data-resize-url") || "");
+    if (pane.getAttribute("data-resize-url")) attach.setAttribute("resize-url", pane.getAttribute("data-resize-url"));
+    if (!pane.getAttribute("data-input-url")) attach.setAttribute("read-only", "");
     if (pane.hasAttribute("data-scroll-history")) attach.setAttribute("scroll-history", "");
     const input = document.createElement("terminal-input");
     input.setAttribute("terminal-id", id);
     input.setAttribute("input-url", pane.getAttribute("data-input-url") || "");
     if (pane.hasAttribute("data-scroll-history")) input.setAttribute("scroll-history", "");
-    pane.prepend(attach, input);
+    pane.prepend(...(pane.getAttribute("data-input-url") ? [attach, input] : [attach]));
     await window.app?.loadElements?.(pane);
     const upload = termFootsHostEl.querySelector(`[data-term-foot="${CSS.escape(id)}"] coder-file-upload`);
     if (upload) {
@@ -9642,7 +9597,7 @@ async function init(root) {
 
   function markTermRead(id) {
     const icon = termTabFor(id)?.querySelector(".dc-term-icon");
-    if (!icon || !icon.classList.contains("news")) return;
+    if (!icon || !icon.classList.contains("news") || guest) return;
     icon.classList.remove("news");
     void postForm("/notifications/read", { target: id });
   }
@@ -9835,6 +9790,7 @@ async function init(root) {
 
   async function closeTermSession(id, kind, sessionName, purge = false) {
     const coder = kind === "coder";
+    if (guest && (!coder || purge || !can("terminals"))) return;
     const drop = purge && coder;
     const ok = await confirmDialog({
       title: drop ? `Delete coder "${sessionName}"?`
@@ -9872,17 +9828,17 @@ async function init(root) {
     const items = [
       { label: "Open terminal page", icon: "ti-external-link", href: url },
     ];
-    if (!coder || tab.hasAttribute("data-term-renames")) {
+    if ((!coder || tab.hasAttribute("data-term-renames")) && can("terminals")) {
       items.push({ label: "Rename", icon: "ti-pencil", action: () => void (coder ? renameCoder(id, sessionName, { mode: tab.getAttribute("data-term-renames"), label: tab.getAttribute("data-term-coder-label") }) : renameShell(id, sessionName)) });
     }
-    if (tab.querySelector(".dc-term-icon.news")) {
+    if (tab.querySelector(".dc-term-icon.news") && !guest) {
       items.push({
         label: "Mark read",
         icon: "ti-eye-check",
         action: () => void postForm("/notifications/read", { target: id }),
       });
     }
-    if (coder) {
+    if (coder && !guest) {
       items.push(tab.hasAttribute("data-term-steered")
         ? {
           label: "Release",
@@ -9902,16 +9858,16 @@ async function init(root) {
         });
     }
     items.push({ divider: true });
-    items.push({ label: "Open project", icon: "ti-folder", href: "/projects#project-" + name });
+    items.push(!guest && { label: "Open project", icon: "ti-folder", href: "/projects#project-" + name });
     items.push({ divider: true });
-    items.push({
+    items.push((!guest || (coder && can("terminals"))) && {
       label: coder ? "Stop" : "Delete",
       icon: coder ? "ti-player-stop" : "ti-trash",
       danger: !coder,
       warn: coder,
       action: () => void closeTermSession(id, kind, sessionName),
     });
-    if (coder) {
+    if (coder && !guest) {
       items.push({
         label: "Delete",
         icon: "ti-trash",
@@ -10273,7 +10229,7 @@ async function init(root) {
   mobileMedia.addEventListener("change", paintTermPanel, { signal });
   termPointerMedia.addEventListener("change", paintTermPanel, { signal });
   wireTermSplitter();
-  wireTermTabDrag();
+  if (!guest) wireTermTabDrag();
   paintTermPanel();
   void loadDocker();
   void pullLSPIndex();
@@ -10364,9 +10320,9 @@ async function init(root) {
       }
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
       && e.code === "KeyC" && quickOpenEl.hidden) {
-      if (commentableTab(activeTab())) {
+      if (commentableTab(activeTab()) && can("comments")) {
         e.preventDefault();
-        openLineCommentAt(group.cursor.line);
+        void editLineComment(activeTab().path, group.cursor.line);
       }
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
       && e.code === "KeyR" && quickOpenEl.hidden) {
@@ -10385,7 +10341,7 @@ async function init(root) {
     } else if (e.key === "F2" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
       && !e.repeat && quickOpenEl.hidden) {
       const tab = activeTab();
-      if (tab && !tab.compare && !tab.external) {
+      if (tab && !tab.compare && !tab.external && can("files")) {
         e.preventDefault();
         void renameEntry({ path: tab.path, name: tab.name, isDir: false });
       }
@@ -10438,7 +10394,7 @@ async function init(root) {
   };
   // A file link names the project the way the server escapes it, which is
   // not encodeURIComponent's way, so both sides compare unescaped.
-  const opensHere = (href) => decodeURIComponent(new URL(href, location.href).pathname) === `/projects/${name}/editor`;
+  const opensHere = (href) => decodeURIComponent(new URL(href, location.href).pathname) === decodeURIComponent(base);
   document.addEventListener("click", (e) => {
     const a = e.target.closest("a[href]");
     if (a?.hasAttribute("data-file-link") && opensHere(a.href)) return;
@@ -10519,32 +10475,6 @@ async function createEditor(host, hooks, settings, signal, mergeHost) {
     console.warn("CodeMirror unavailable, using textarea", err);
     return createTextarea(host, hooks, settings);
   }
-}
-
-// singleFlight makes the last word the one that stands: while a write is on the
-// wire the next is only remembered, and it goes out when the first is through
-// with whatever is current by then. Two writes can then never land in the wrong
-// order, however short the wait in front of them gets.
-function singleFlight(run) {
-  let running = false;
-  let again = false;
-  const start = async () => {
-    if (running) {
-      again = true;
-      return;
-    }
-    running = true;
-    try {
-      await run();
-    } finally {
-      running = false;
-      if (again) {
-        again = false;
-        void start();
-      }
-    }
-  };
-  return start;
 }
 
 async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
@@ -11032,6 +10962,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     sharedExtensions(langExt),
     keymap.of([indentWithTab]),
     lspNav.extension,
+    hooks.readOnly ? EditorState.readOnly.of(true) : [],
     mergeConf.of([]),
     blameConf.of(blame),
     commentsConf.of(commentsExtension(commentData)),

@@ -1,0 +1,45 @@
+{{/* Picks several things for a form (dc-picker), of every kind it offers in
+     one list: a toggle naming the picked ones over a menu that searches the
+     rows, each kind under its head when there is more than one. Projects are
+     the project palette's rows, an assistant a row of its name and coder. A
+     row only checks or clears the hidden checkbox of its value, so the form
+     sends what the server rendered and the rows picked. */}}
+{{define "picker.gohtml"}}
+<dc-picker class="dropdown d-block">
+  <button type="button" class="form-select d-flex align-items-center gap-2 text-start" id="{{.ID}}" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-haspopup="listbox" data-picker-toggle>
+    <span class="flex-fill min-w-0 text-truncate{{if not .Count}} text-secondary{{end}}" data-picker-summary data-picker-none="{{.None}}">{{with .Summary}}{{.}}{{else}}{{$.None}}{{end}}</span>
+    <span class="badge bg-primary-lt flex-none" data-picker-count{{if not .Count}} hidden{{end}}>{{.Count}}</span>
+  </button>
+  <div class="dropdown-menu w-100 p-0 overflow-hidden" data-own-selection>
+    <div class="editor-sheet-filter">
+      <i class="ti ti-search" aria-hidden="true"></i>
+      <input type="text" class="editor-sheet-filter-input" placeholder="{{.Search}}" aria-label="{{.Search}}" role="combobox" aria-expanded="true" aria-controls="{{.ID}}-list" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" data-picker-filter>
+    </div>
+    <div class="dc-picker-list" id="{{.ID}}-list" role="listbox" aria-multiselectable="true" aria-label="{{.Label}}" data-picker-list></div>
+    <div class="editor-palette-empty text-secondary small" role="status" data-picker-empty hidden>{{.NoMatch}}</div>
+  </div>
+  <div hidden data-picker-source>
+    {{range .Kinds}}{{if .Choices}}{{$kind := .}}
+    <div data-picker-kind="{{.Field}}"{{if $.Headed}} data-picker-head="{{.Label}}"{{end}}{{if .Projects}} data-picker-projects{{end}}>
+      {{range .Choices}}
+      {{if $kind.Projects}}
+      <div class="editor-palette-row flex-row align-items-center gap-2" role="option" aria-selected="false" data-picker-key="{{$kind.Key .}}"{{template "project_palette_attrs.gohtml" .Project}}>
+        <input type="checkbox" class="form-check-input m-0 flex-none pe-none" tabindex="-1" aria-hidden="true">
+        <span class="d-flex flex-column flex-fill min-w-0">{{template "project_palette_body.gohtml" .Project}}</span>
+      </div>
+      {{else}}
+      <div class="editor-palette-row flex-row align-items-center gap-2" role="option" aria-selected="false" data-picker-key="{{$kind.Key .}}" data-picker-name="{{.Label}}" data-picker-search="{{.Label}} {{.Sub}}" title="{{.Label}}">
+        <input type="checkbox" class="form-check-input m-0 flex-none pe-none" tabindex="-1" aria-hidden="true">
+        <span class="d-flex flex-column flex-fill min-w-0">
+          <span class="editor-palette-line"><i class="ti ti-sparkles" aria-hidden="true"></i><span class="editor-palette-name">{{.Label}}</span></span>
+          <span class="editor-palette-sub">{{.Sub}}</span>
+        </span>
+      </div>
+      {{end}}
+      {{end}}
+    </div>
+    {{end}}{{end}}
+  </div>
+  {{range .Kinds}}{{$kind := .}}{{range .Choices}}<input type="checkbox" name="{{$kind.Field}}" value="{{.Value}}" hidden{{if .Picked}} checked{{end}} data-picker-value="{{$kind.Key .}}" data-picker-label="{{.Label}}">{{end}}{{end}}
+</dc-picker>
+{{end}}

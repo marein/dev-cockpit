@@ -53,7 +53,7 @@ export function createTextarea(host, hooks, settings) {
     showDoc(tab) {
       fileConfig = tab.editorConfig || {};
       ta.value = tab.handle.value;
-      ta.readOnly = !!tab.handle.readOnly;
+      ta.readOnly = !!tab.handle.readOnly || !!hooks.readOnly;
       applyTabWidth();
       ta.scrollTop = tab.handle.scrollTop || 0;
       ta.scrollLeft = tab.handle.scrollLeft || 0;

@@ -2,7 +2,7 @@ import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import * as projectActions from "@dc/project-actions";
 import { confirm } from "@dc/dialog";
-import { escapeHtml, syncAnimations } from "@dc/dom";
+import { syncAnimations } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
@@ -251,10 +251,8 @@ class ProjectList extends HTMLElement {
     event.preventDefault();
     event.stopPropagation();
     if (form.dataset.confirm) {
-      // The question names a project, a shell or a coder and becomes the
-      // dialog's title, which SweetAlert reads as HTML.
       const ok = await confirm({
-        title: escapeHtml(form.dataset.confirm),
+        title: form.dataset.confirm,
         text: form.dataset.confirmText,
         confirmText: form.dataset.confirmButton || "Confirm",
       });
@@ -377,7 +375,7 @@ class ProjectList extends HTMLElement {
   // goes away in one request.
   async deleteCoder(chip) {
     const ok = await confirm({
-      title: `Delete coder "${escapeHtml(chip.dataset.chipName || "")}"?`,
+      title: `Delete coder "${chip.dataset.chipName || ""}"?`,
       text: "It is stopped first, its conversation cannot be resumed afterwards.",
       confirmText: "Delete",
     });

@@ -65,18 +65,38 @@ cannot show stays at that function, within the comment rule below.
 - The cockpit is single user, the session is the whole authorization. Every
   POST carries a CSRF token. `@dc/http` sends the `X-CSRF-Token` header
   from `<meta name="csrf-token">`, server forms carry a hidden `csrf_token`.
-- The server validates every input itself: length, characters, count,
-  shape and every id against what it names. Checks in the browser
-  (`maxlength`, `required`, a script) are only a convenience, a hand built
-  request meets the same rules. A refusal is a clean 4xx or the normal
-  refusal flow (the form again, or a redirect with a flash) with a bounded
-  message, never a 500. A message quoting what a request sent cuts it, a
-  flash rides the session cookie and has to fit it.
+- The server validates every input itself on save: length, count, shape
+  and every id against what it names. It never forbids a character a
+  value can legitimately hold and stores the value as it came, never
+  escaped. Every output escapes it for its own format (HTML, Markdown,
+  plain text for the CLI, CSV, PDF, whatever comes), each format has its
+  own control characters and no input filter catches them all. Checks in
+  the browser (`maxlength`, `required`, a script) are only a convenience,
+  a hand built request meets the same rules. A refusal is a clean 4xx or
+  the normal refusal flow (the form again, or a redirect with a flash)
+  with a bounded message, never a 500. A message quoting what a request
+  sent cuts it, a flash rides the session cookie and has to fit it.
 - The local unix socket (`internal/localapi`) is the credential for local
   processes. It lives in a directory only the owner can enter, there are
   no tokens. `--as <id>` names the calling assistant, it identifies but
   does not authorize. Routes that change security or host settings
-  (approvals, compose actions, backup restore) refuse the local socket.
+  (approvals, compose actions, backup restore, sharing) refuse the local
+  socket.
+- A shared link (`internal/share`) is the one way in without a session.
+  Its routes (`/share/<token>/...`) stand outside the browser group, mirror
+  the owner's routes from one table that refuses every path no link may
+  ever reach (`neverForGuest`, of the assistants' tree only the reads of
+  `guestAssistantReads`), and bind each request to one resource of the
+  link: a project with its terminals and what the link grants there, or an
+  assistant with its conversation, the files its messages link, its jobs,
+  its triggers and the running coders of its jobs, read only. A guest's
+  POST carries a CSRF token derived from the link's token. A write stands
+  under the permission that grants it (`guestRoutes.write`), read from the
+  link on every request, refuses the local socket and changes only what was
+  made under the same link. The token is stored as its hash, compared in
+  constant time and never logged, the access log cuts it out. A link that
+  opens nothing, and a project or an assistant that is not on it, answer
+  the plain 404.
 - Actions an assistant may only take with the user's approval go through
   `internal/approval`. An approved run resolves its target again by name,
   nothing captured at the time of the request is trusted.
@@ -119,14 +139,14 @@ The layers are listed top down, a layer imports only the layers below it.
    into a service.
 3. **Domain Services**: One package per subject, `assistant`, `approval`,
    `coder` (one subpackage per coder CLI: `claude`, `copilot`,
-   `opencode`), `shell`, `terminal`, `project`, `docker`, `git`,
+   `opencode`), `shell`, `terminal`, `share`, `project`, `docker`, `git`,
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
    `update`, `askpass`, `activity`, `hostinfo`, `terminalstate` and `cost`
    (one ledger for every coder CLI, one source per CLI under it, `claude`,
    and the list prices by provider and model in `cost/price`).
 4. **Infrastructure**: `statefile`, `settings`, `recent`, `eventbus`,
    `localapi`, `detach`, `tmux`, `proctree`, `clirun`, `filesystem`, `netguard`,
-   `gitfacts`, `markdown`, `keys` and `config`. It imports no service.
+   `gitfacts`, `markdown`, `plaintext`, `keys` and `config`. It imports no service.
 
 ### Boundaries
 
@@ -173,6 +193,20 @@ templates plus ES modules.
   body scrolls, the page never does. A bar that has to stay in view, like
   Save, is a `.dc-work-foot` under the body, never sticky inside it, so it
   covers no row and no focused field.
+- **Guest Mode**: A page carries `.Access` (`render.Access`), the owner's
+  zero value or a guest's of a link, bound to the link's project the
+  request belongs to (`.Access.Project`) with what the link grants there.
+  A write control shows under `.Access.Can "<permission>"`, a surface of
+  the owner alone under `not .Access.Guest`, and every path a page links or
+  calls stands under `.Access.Base`, in scripts through `appPath`
+  (`@dc/http`). A guest never reaches the session, the owner's state or
+  news, and its `@dc/store` keys stand apart from the owner's. A guest's
+  assistant is the owner's bubbles (`chat_message.gohtml`) and stream
+  (`@dc/chat-stream`) under `dc-share-chat` between the owner's list column
+  (`assistant_ctx.gohtml`) and aside (`assistant_aside.gohtml`),
+  `dc-assistant` never runs for a guest. A guest's status line is the
+  owner's (`shell_status.gohtml`) without the spend, the songs and the update
+  check. What shows the owner that something works shows the guest the same.
 - **Templates**: They live in `internal/web/render/templates/*.gohtml`,
   view models in `internal/web/render`. One template serves every
   place a thing is shown (page, dialog, fragment, sheet). Do not render
@@ -204,7 +238,8 @@ templates plus ES modules.
   menu with row menus and long press (`@dc/contextmenu`), one row drag
   (`@dc/rowdrag`), one swipe (`@dc/swipe`), one token match (`@dc/filter`),
   one project palette (`@dc/project-palette` over the `project_palette_*`
-  templates), one tag filter over a project list (`@dc/tags`), one popup door
+  templates), one tag filter over a project list (`@dc/tags`), one terminal
+  theme table (`@dc/terminal`), one popup door
   (`@dc/dialog`, SweetAlert for dialogs only) and toasts via `@dc/toast`
   (Bootstrap toasts). New surfaces reuse these, never copy them. A tag is
   shown through `tags.gohtml`, wears its color as `dc-tag-<color>` and is

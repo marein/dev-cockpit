@@ -14,6 +14,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/restore"
+	"github.com/marein/dev-cockpit/internal/share"
 	"github.com/marein/dev-cockpit/internal/shell"
 	"github.com/marein/dev-cockpit/internal/statefile"
 	"github.com/marein/dev-cockpit/internal/tmux"
@@ -123,6 +124,7 @@ func deletionServer(t *testing.T, stateDir string, projects *project.Repository)
 		searchDrafts: newSearchDrafts(stateDir),
 		lineComments: newLineComments(stateDir),
 		deletes:      newProjectDeletes(stateDir),
+		shares:       share.NewStore(stateDir),
 	}
 	s.restorer = restore.New(filepath.Join(stateDir, "terminal-restore.json"), func() bool { return false },
 		nil, shells, tmux.New(), notifier, nil, func() []string { return nil })
@@ -197,11 +199,12 @@ func TestASuccessfulDeletionMarksTheProjectsNewsRead(t *testing.T) {
 }
 
 // An aborted deletion leaves the compose failure notification standing
-// unread: it is the one word about why nothing was removed. The stuck run
-// here is one the register still names while something holds its lock, whose
-// own deadline has long passed, so the wait gives it up and the deletion
-// refuses to work over it.
-func TestAnAbortedDeletionKeepsTheFailureNewsUnread(t *testing.T) {
+// unread: it is the one word about why nothing was removed. The project's
+// links stay revoked, they went before anything else. The stuck run here is
+// one the register still names while something holds its lock, whose own
+// deadline has long passed, so the wait gives it up and the deletion refuses
+// to work over it.
+func TestAnAbortedDeletionKeepsTheFailureNewsUnreadAndTheLinksRevoked(t *testing.T) {
 	root := t.TempDir()
 	appPath := filepath.Join(root, "app")
 	if err := os.MkdirAll(appPath, 0o755); err != nil {
@@ -238,6 +241,9 @@ func TestAnAbortedDeletionKeepsTheFailureNewsUnread(t *testing.T) {
 	}
 
 	s.notifier.Add(notify.DockerTarget("app"))
+	if _, _, err := s.shares.Create("Guest", linkTo("app"), time.Hour); err != nil {
+		t.Fatal(err)
+	}
 	p, err := projects.FindByName("app")
 	if err != nil {
 		t.Fatalf("find project: %v", err)
@@ -250,6 +256,9 @@ func TestAnAbortedDeletionKeepsTheFailureNewsUnread(t *testing.T) {
 	}
 	if !s.notifier.UnreadTargets()[notify.DockerTarget("app")] {
 		t.Fatal("the aborted deletion read the failure notification away")
+	}
+	if links := s.shares.List(); len(links) != 0 {
+		t.Fatalf("the aborted deletion brought links back: %+v", links)
 	}
 
 	// Let the adopted run end and report before the test's directories go, so
@@ -286,4 +295,26 @@ func TestAFinishedDeletionLeavesNothingOnDisk(t *testing.T) {
 	if view := restarted.view([]project.Project{{Name: "app"}}); len(view) != 0 {
 		t.Fatalf("the failure of a former process turned up again: %+v", view)
 	}
+}
+
+// newDeleteFixture is the compose fixture with what a project delete walks
+// through on top: the purge over shells, the per project state, the delete
+// register and the route itself.
+func newDeleteFixture(t *testing.T) *composeFixture {
+	t.Helper()
+	f := newComposeFixture(t)
+	fakeTmux(t, "11111111-1111-4111-8111-111111111111", t.TempDir())
+	s := f.s
+	s.cfg = config.Config{StateDir: f.stateDir}
+	s.shells = shell.NewShells(config.Config{}, tmux.New(), s.projects, nil)
+	s.quickOpen = filesystem.NewQuickOpenCache()
+	s.commitDrafts = newCommitDrafts(f.stateDir)
+	s.searchDrafts = newSearchDrafts(f.stateDir)
+	s.lineComments = newLineComments(f.stateDir)
+	s.shares = share.NewStore(f.stateDir)
+	s.deletes = newProjectDeletes(f.stateDir)
+	s.restorer = restore.New(filepath.Join(f.stateDir, "terminal-restore.json"), func() bool { return false },
+		nil, s.shells, tmux.New(), s.notifier, nil, func() []string { return nil })
+	f.router.POST("/projects/delete", s.handleDeletes(s.projectDeleteKind(), "project", s.handleProjectDelete))
+	return f
 }

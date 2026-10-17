@@ -126,3 +126,18 @@ export async function copyText(text) {
   focused?.focus?.({ preventScroll: true });
   return ok;
 }
+
+// copyPending copies a text that is still on its way. Safari lets a click
+// write the clipboard only from a write that starts inside the click, so the
+// write starts at once and its item waits for the text.
+export async function copyPending(pending) {
+  if (window.ClipboardItem && navigator.clipboard?.write) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": pending.then((text) => new Blob([text], { type: "text/plain" })) })]);
+      return true;
+    } catch {
+      void 0;
+    }
+  }
+  return copyText(await pending);
+}

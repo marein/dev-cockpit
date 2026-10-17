@@ -1,6 +1,7 @@
 import { labelNodes } from "@dc/contextmenu";
 import { resolveHostlessLinks, splitAddress } from "@dc/docker";
 import { onServerEvent } from "@dc/events";
+import { appPath, pagePath } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { getJSON, setJSON } from "@dc/store";
 
@@ -109,8 +110,8 @@ class StatusLinks extends HTMLElement {
       return;
     }
     this.inFlight = true;
-    const path = window.location.pathname + window.location.search;
-    fetch(`/docker/links?path=${encodeURIComponent(path)}`, { credentials: "same-origin", signal: this.ac.signal })
+    const path = pagePath() + window.location.search;
+    fetch(appPath(`/docker/links?path=${encodeURIComponent(path)}`), { credentials: "same-origin", signal: this.ac.signal })
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error("refresh failed"))))
       .then((html) => this.apply(html))
       .catch(() => {})

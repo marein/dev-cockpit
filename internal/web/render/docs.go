@@ -170,7 +170,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Point at a file",
 					Tag:      "Mention",
 					TagClass: "bg-blue-lt",
-					Desc:     `<kbd>@</kbd> at the start of a word in the message box lists the projects, worktrees included, and a picked project its files, both narrowed as you type like the editor's palettes. The arrows move, <kbd>Enter</kbd> or <kbd>Tab</kbd> picks, <kbd>Esc</kbd> closes, and <kbd>Backspace</kbd> right after the project or the arrow <i class="ti ti-chevron-left align-text-bottom" aria-hidden="true"></i> goes back to the projects; on a phone tap a row. A file lands as its absolute path, the first row before you type is the project's folder. An absolute path of a project's file links to that file in its project's editor, in your messages and in the answers, code included, and <code>:line</code>, <code>:line:column</code> or <code>:line-line</code> after it places the cursor; <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Shift</kbd> opens a new tab. A relative path, a bare name and a quoted path with a blank stay text, and an answer links once it is complete.`,
+					Desc:     `<kbd>@</kbd> at the start of a word in the message box lists the projects, worktrees included, and a picked project its files, both narrowed as you type like the editor's palettes. The arrows move, <kbd>Enter</kbd> or <kbd>Tab</kbd> picks, <kbd>Esc</kbd> closes, and <kbd>Backspace</kbd> right after the project or the arrow <i class="ti ti-chevron-left align-text-bottom" aria-hidden="true"></i> goes back to the projects; on a phone tap a row. A file lands as its absolute path, the first row before you type is the project's folder. An absolute path of a project's file links to that file in its project's editor, in your messages and in the answers, code included, and <code>:line</code>, <code>:line:column</code> or <code>:line-line</code> after it places the cursor; <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Shift</kbd> opens a new tab. A relative path, a bare name and a quoted path with a blank stay text, and an answer links once it is complete. The id of a running coder the assistant steers or steered, in full or its first eight characters, links to that coder.`,
 				},
 				{
 					Title:    "Talk to it",
@@ -188,7 +188,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "As many as you want",
 					Tag:      "Side by side",
 					TagClass: "bg-blue-lt",
-					Desc:     `The new-assistant button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts another one, asking which coder answers when more than one is installed. Each keeps its own thread and its own steered coders and they all stay live. Its row says the name, how many coders it holds and when it last spoke; its menu renames and deletes it, thread and files included.`,
+					Desc:     `The new-assistant button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts another one, asking which coder answers when more than one is installed. Each keeps its own thread and its own steered coders and they all stay live. Its row says the name, how many coders it holds and when it last spoke; its menu renames, shares and deletes it, thread and files included.`,
 				},
 				{
 					Title:    "Say the next thing right away",
@@ -424,7 +424,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Line comments",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "C"}}, {Caps: []string{"Ctrl", "Shift", "C"}}},
-					Desc:  `Click a line number, or the gutter beside it, for the line's menu: add or edit the comment, delete it, copy the path with the line, relative or through <em>absolute</em> in full, toggle the git blame, and with the blame on, the line's commit. A right click and a long-press open the same menu. Comments stick to their line while you edit, follow a rename, and are saved with the project, so they reach your other devices. The quoted line is the anchor: moved and standing in the file exactly once the comment follows it, otherwise it reads outdated with the number orange and struck through. <em>Line comments</em> in the editor menu lists every one of the project, with <em>Go to line</em>, <em>Edit</em>, <em>Delete</em>, <em>Copy as Markdown</em> and <em>Delete all comments</em>.`,
+					Desc:  `Click a line number, or the gutter beside it, for the line's menu: add or edit the comment, delete it, copy the path with the line, relative or through <em>absolute</em> in full, toggle the git blame, and with the blame on, the line's commit. A right click and a long-press open the same menu. Comments stick to their line while you edit, follow a rename, and are saved with the project, so they reach your other devices. The quoted line is the anchor: moved and standing in the file exactly once the comment follows it, otherwise it reads outdated with the number orange and struck through. <em>Line comments</em> in the editor menu lists every one of the project, with <em>Go to line</em>, <em>Edit</em>, <em>Delete</em>, <em>Copy as text</em> and <em>Delete all comments</em>. Each entry of the list shows its path on one line, a control character or line separator as its escape, and its note on one line below. A comment a guest wrote through a shared link carries the link's name: in the line's menu, in the dialog, as the first line of its entry in the list with the person icon <i class="ti ti-user align-text-bottom" aria-hidden="true"></i>, and at the start of its entry in the text. The text quotes each note under its entry line by line as written, code too. A line break, a control character or a line separator shows as its escape in a path or a code line, and in a note any of them but a plain line break, so no line leaves its entry.`,
 				},
 				{
 					Title: "Diff and blame a file",
@@ -700,6 +700,7 @@ func DocsTopics() []DocsTopic {
 				},
 			},
 		},
+		docsSharingTopic(),
 		{
 			Key:      "settings",
 			Title:    "Settings and data",

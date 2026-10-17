@@ -7,13 +7,18 @@ const legacyKeys = {
   "dc-editor-settings": "dev-cockpit.editor-settings",
 };
 
+// A guest of a shared project keeps what its pages remember apart from the
+// owner's, in the owner's own browser as well, so looking at the link never
+// moves the owner's editor or terminals.
+const own = document.querySelector('meta[name="dc-base"]')?.getAttribute("content") ? (key) => "dc-guest:" + key : (key) => key;
+
 function readItem(key) {
-  let value = window.localStorage.getItem(key);
+  let value = window.localStorage.getItem(own(key));
   if (value != null) {
     return value;
   }
   const legacy = legacyKeys[key];
-  if (!legacy) {
+  if (!legacy || own(key) !== key) {
     return null;
   }
   value = window.localStorage.getItem(legacy);
@@ -37,7 +42,7 @@ export function get(key, fallback = "") {
 
 export function set(key, value) {
   try {
-    window.localStorage.setItem(key, value);
+    window.localStorage.setItem(own(key), value);
   } catch (error) {
     void error;
   }
@@ -45,7 +50,7 @@ export function set(key, value) {
 
 export function remove(key) {
   try {
-    window.localStorage.removeItem(key);
+    window.localStorage.removeItem(own(key));
   } catch (error) {
     void error;
   }
@@ -67,7 +72,7 @@ export function getJSON(key, fallback = null) {
 
 export function setJSON(key, value) {
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    window.localStorage.setItem(own(key), JSON.stringify(value));
   } catch (error) {
     void error;
   }

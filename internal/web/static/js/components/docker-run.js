@@ -16,7 +16,7 @@ class DockerRun extends HTMLElement {
     this.stopButton?.addEventListener("click", () => void this.stop(), { signal: this.ac.signal });
     this.failures = 0;
     this.toBottom();
-    if (this.stopButton && !this.stopButton.hidden) this.schedule();
+    if (this.hasAttribute("follow") || (this.stopButton && !this.stopButton.hidden)) this.schedule();
   }
 
   disconnectedCallback() {

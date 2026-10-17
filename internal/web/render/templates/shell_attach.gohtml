@@ -3,11 +3,13 @@
 {{template "terminals_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
 <span class="dc-term-icon running d-lg-none" data-notify-target="{{.Shell.Identifier}}" title="Shell" aria-label="Shell"><i class="ti ti-terminal-2" aria-hidden="true"></i>{{template "news_dot.gohtml"}}</span>
-<dc-inline-rename class="d-flex min-w-0" rename-url="{{.RenameURL}}" name-url="/shells/{{.Shell.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
+{{if .RenameURL}}<dc-inline-rename class="d-flex min-w-0" rename-url="{{.RenameURL}}" name-url="{{.Access.Base}}/shells/{{.Shell.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
   <h1 class="dc-work-title dc-mono" data-rename-label role="button" tabindex="0" title="Click to rename">{{.Shell.Name}}</h1>
   <input type="text" class="form-control form-control-sm d-none" data-rename-input maxlength="120" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" aria-label="Shell name" value="{{.Shell.Name}}">
-</dc-inline-rename>
-{{if .ProjectName}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="/projects#project-{{.ProjectName}}" title="Back to {{.ProjectName}}">{{.ProjectName}}</a>{{end}}
+</dc-inline-rename>{{else}}<dc-live-name class="d-flex min-w-0" name-url="{{.Access.Base}}/shells/{{.Shell.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit">
+  <h1 class="dc-work-title dc-mono" data-name-label>{{.Shell.Name}}</h1>
+</dc-live-name>{{end}}
+{{if .ProjectName}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="{{.ProjectURL}}" title="Back to {{.ProjectName}}">{{.ProjectName}}</a>{{end}}
 <span class="flex-fill"></span>
 <div class="attach-settings dropdown">
   <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
@@ -22,7 +24,7 @@
   <div class="attach-frame min-w-0 w-100">
     <div class="attach-stage min-w-0 w-100">
       <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Shell.Identifier}}"
-                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}" scroll-history>
+                      stream-url="{{.StreamURL}}"{{with .ResizeURL}} resize-url="{{.}}"{{end}}{{if not .InputURL}} read-only{{end}} scroll-history>
         <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
       </terminal-attach>
       {{template "terminal_copy_surface.gohtml" (dict "ID" .Shell.Identifier "TextURL" .TextURL)}}
@@ -31,12 +33,12 @@
   </div>
 
   <div class="attach-footer min-w-0">
-    {{template "terminal_footer_shell.gohtml"}}
+    {{if .InputURL}}{{template "terminal_footer_shell.gohtml"}}{{else}}{{template "terminal_footer_watch.gohtml" (dict "Coder" false)}}{{end}}
   </div>
 </div>
 
-{{template "terminal_shortcuts_modal.gohtml"}}
+{{if .InputURL}}{{template "terminal_shortcuts_modal.gohtml"}}{{end}}
 
-<terminal-input terminal-id="{{.Shell.Identifier}}" input-url="{{.InputURL}}" scroll-history></terminal-input>
+{{if .InputURL}}<terminal-input terminal-id="{{.Shell.Identifier}}" input-url="{{.InputURL}}" scroll-history></terminal-input>{{end}}
 {{template "app_end.gohtml" .}}
 {{end}}

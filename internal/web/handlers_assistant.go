@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -142,7 +141,7 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 	}
 	data.Page = s.page(c, title, "assistants")
 	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
-	data.Triggers = s.assistantTriggersData(c, current.ID)
+	data.Triggers = s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, current.ID)
 	// The one number on the button that opens the aside: both kinds of standing
 	// work, because the aside holds both and the button is the only thing a
 	// phone sees of it.
@@ -216,7 +215,7 @@ func (s *Server) assistantData(current assistant.Instance, all bool) render.Assi
 	draft, _ := s.assistants.Draft(current.ID)
 	base := "/assistants/" + current.ID
 	messages, earlier, allURL := assistantWindow(s.assistantMessageViews(current, blocked != ""), base, all)
-	linkChatViews(messages, s.pathLinker().linkedText)
+	s.linkOwnerChat(messages, current.ID)
 	jobs, olderJobs := s.assistantJobViews(current.ID)
 	// Every assistant has a stream of its own, however many of them are open at
 	// once.
@@ -472,13 +471,6 @@ func (s *Server) assistantJobViews(owner string) ([]render.AssistantJobView, int
 		older = 0
 	}
 	return out, older
-}
-
-func (s *Server) streamFrame(ev assistant.StreamEvent) assistant.StreamEvent {
-	if ev.Kind == assistant.FrameStart {
-		ev.Model = modelDisplayName(ev.Model)
-	}
-	return ev
 }
 
 // handleAssistantAction is the one POST route of a conversation. It dispatches
@@ -988,8 +980,10 @@ func (s *Server) assistantDelete(c *gin.Context, id string) {
 
 // deleteAssistant removes an assistant for good, for the page and for an
 // approved delete alike, and answers the jobs it held, whose coders it hands
-// back to the user.
+// back to the user. Every link stops opening it first, so no guest reads it
+// while it goes, and a delete that fails after that keeps it off them.
 func (s *Server) deleteAssistant(id string) ([]assistant.Job, error) {
+	s.unshareAssistant(id)
 	held := s.watcher.OpenJobs(id)
 	if err := s.assistants.Delete(id); err != nil {
 		return nil, err
@@ -1090,129 +1084,6 @@ func (s *Server) handleAssistantUpload(c *gin.Context) {
 		saved = append(saved, file)
 	}
 	c.JSON(http.StatusOK, gin.H{"files": saved})
-}
-
-// handleAssistantMedia serves a file out of one assistant's workspace. It goes
-// through http.ServeContent, so a video seeks with range requests instead of
-// downloading from the start.
-//
-// The address carries the assistant, and the path is read inside that
-// assistant's own workspace, so one assistant's address serves that assistant's
-// files and nobody else's. Reading across stays possible where it belongs, on
-// disk, where an assistant reads another's workspace with its own file tools;
-// what is scoped here is the browser facing URL.
-func (s *Server) handleAssistantMedia(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := s.assistants.Get(id); err != nil {
-		c.String(http.StatusNotFound, err.Error())
-		return
-	}
-	rel := strings.TrimPrefix(c.Param("path"), "/")
-	target, err := s.workspace.ResolveWorkspaceFile(id, rel)
-	if err != nil {
-		c.String(http.StatusNotFound, err.Error())
-		return
-	}
-	c.Header("Cache-Control", "no-store")
-	c.Header("X-Content-Type-Options", "nosniff")
-	if c.Query("download") == "1" {
-		c.FileAttachment(target, filepath.Base(target))
-		return
-	}
-	c.File(target)
-}
-
-// assistantPingInterval is how often the conversation stream proves it is
-// alive with a frame the browser can see. The keepalive beside it is an SSE
-// comment on a much shorter beat, which holds the socket open but tells the
-// page nothing, and a visible frame every second would be noise on a phone.
-// Same 15 seconds as the ping on /events, and the client judges it the same
-// way: silent past 45 seconds means the socket died, which leaves room for one
-// missed ping. A variable so a test does not have to wait out the beat.
-var assistantPingInterval = 15 * time.Second
-
-// assistantStreamSnapshotHook runs, when set, right after the stream reads
-// the instance for its connect snapshot and before that snapshot goes out.
-// Nil in production, a test uses it to land a SetModels exactly there, after
-// the subscribe so the write's frame is not lost, before the snapshot is
-// written so the snapshot itself still carries the older picks.
-var assistantStreamSnapshotHook func(id string)
-
-// handleAssistantStream is one assistant's own SSE channel. Answer text
-// never travels the app wide event stream.
-func (s *Server) handleAssistantStream(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := s.assistants.Get(id); err != nil {
-		c.String(http.StatusNotFound, err.Error())
-		return
-	}
-	w := c.Writer
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	if _, ok := w.(http.Flusher); !ok {
-		c.String(http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
-	if err := writeSSERetry(w, time.Second); err != nil {
-		return
-	}
-	// Subscribe before reading the picks for the connect snapshot: a SetModels
-	// landing between the two would otherwise publish its frame before the
-	// subscriber exists, and the snapshot read afterwards would still carry
-	// the older picks, leaving the page on them until the next move or
-	// reconnect. Subscribed first, that save arrives as a fresh frame right
-	// behind the snapshot and wins on its own stamp.
-	snapshot, running, events, unsubscribe := s.assistants.Subscribe(id)
-	defer unsubscribe()
-	inst, err := s.assistants.Get(id)
-	if err != nil {
-		return
-	}
-	if assistantStreamSnapshotHook != nil {
-		assistantStreamSnapshotHook(id)
-	}
-	picks := s.modelsFrame(inst.CoderID, inst.ModelPicks())
-	if err := writeConversationEvent(w, assistant.StreamEvent{Kind: assistant.FrameModels, Models: &picks}); err != nil {
-		return
-	}
-	if running {
-		if err := writeConversationEvent(w, s.streamFrame(snapshot)); err != nil {
-			return
-		}
-	}
-
-	heartbeat := time.NewTicker(s.cfg.StreamHeartbeatInterval)
-	defer heartbeat.Stop()
-	ping := time.NewTicker(assistantPingInterval)
-	defer ping.Stop()
-	ctx := c.Request.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, ok := <-events:
-			if !ok {
-				return
-			}
-			if ev.Kind == assistant.FrameModels && ev.Models != nil {
-				frame := s.modelsFrame(inst.CoderID, *ev.Models)
-				ev.Models = &frame
-			}
-			if err := writeConversationEvent(w, s.streamFrame(ev)); err != nil {
-				return
-			}
-		case <-heartbeat.C:
-			if err := writeSSEKeepalive(w); err != nil {
-				return
-			}
-		case <-ping.C:
-			if err := writeConversationEvent(w, assistant.StreamEvent{Kind: assistant.FramePing}); err != nil {
-				return
-			}
-		}
-	}
 }
 
 // handleAssistantInstances serves the index of assistants as JSON, newest
@@ -1368,16 +1239,6 @@ func machineTime(t time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339)
-}
-
-// writeConversationEvent sends one stream frame as JSON under the "assistant"
-// event name.
-func writeConversationEvent(w http.ResponseWriter, ev assistant.StreamEvent) error {
-	payload, err := json.Marshal(ev)
-	if err != nil {
-		return err
-	}
-	return writeSSEvent(w, "assistant", string(payload))
 }
 
 // PublishConversations announces a coarse change of the conversation list.

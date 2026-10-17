@@ -66,7 +66,8 @@
       {{/* The actions stand where a steered coder's stand, under the row and
            outside its fold: the coder it waits for, the form that changes it,
            and the one that ends it. A spent trigger cannot be changed any
-           more, so only its removal is offered. */}}
+           more, so only its removal is offered. A guest only looks. */}}
+      {{if or .TargetURL .EditURL (not $.Access.Guest)}}
       <div class="d-flex flex-wrap gap-2 mt-2">
         {{if .TargetURL}}
         <a href="{{.TargetURL}}" class="btn btn-sm flex-fill" data-assistant-trigger-open>
@@ -78,6 +79,7 @@
           <i class="ti ti-pencil me-1"></i>Change
         </a>
         {{end}}
+        {{if not $.Access.Guest}}
         <form method="post" action="{{$.URL}}" class="flex-fill d-flex" data-ajax-refresh
               data-confirm="Remove &#34;{{.Heading}}&#34;? The assistant stops reacting to it. What it already did stays in the thread."
               data-confirm-button="Remove">
@@ -88,7 +90,9 @@
             <i class="ti ti-trash me-1"></i>Remove
           </button>
         </form>
+        {{end}}
       </div>
+      {{end}}
     </div>
     {{end}}
     {{if .Older}}
@@ -97,7 +101,7 @@
   </div>
   {{else}}
   <div class="py-2" data-assistant-triggers-empty>
-    <div class="text-secondary small">Nothing waiting. Ask the assistant to act on its own when a job ends, a coder asks or a schedule comes round, then it stands here.</div>
+    <div class="text-secondary small">Nothing waiting.{{if not $.Access.Guest}} Ask the assistant to act on its own when a job ends, a coder asks or a schedule comes round, then it stands here.{{end}}</div>
   </div>
   {{end}}
 </div>

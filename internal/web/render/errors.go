@@ -9,9 +9,11 @@ type ErrorPage struct {
 	Heading string
 	Message string
 
-	// CSRFToken and Jingle stay empty. html_head.gohtml evaluates both on
+	// CSRFToken and Jingle stay empty. html_head.gohtml evaluates them on
 	// every page, a model without the fields fails the whole error render.
 	// TestErrorPageRenders guards this contract.
 	CSRFToken string
 	Jingle    string
+	// Access is the owner's, the error page links nothing a guest could use.
+	Access Access
 }

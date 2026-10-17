@@ -13,6 +13,31 @@ export function csrfToken() {
   return cachedToken;
 }
 
+// The address every path of the cockpit stands under on this page: empty for
+// the owner, the link's own for a guest of a shared project. Read once from
+// the head like the token, a page never moves from one to the other.
+let cachedBase;
+
+function appBase() {
+  if (cachedBase === undefined) {
+    cachedBase = document.querySelector('meta[name="dc-base"]')?.getAttribute("content") || "";
+  }
+  return cachedBase;
+}
+
+export function appPath(path) {
+  return appBase() + path;
+}
+
+// pagePath is the path of this page below that address, the way a request
+// names the page it stands on: the access log writes a query out, and a
+// guest's address carries the link's token.
+export function pagePath() {
+  const base = appBase();
+  const path = window.location.pathname;
+  return base && (path === base || path.startsWith(base + "/")) ? path.slice(base.length) || "/" : path;
+}
+
 export function csrfHeaders(extra = {}) {
   const token = csrfToken();
   if (token) {

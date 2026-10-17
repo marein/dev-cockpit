@@ -1,0 +1,15 @@
+.dc-picker-list {
+  max-height: min(40vh, 20rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: 0.25rem;
+}
+@media (pointer: coarse) {
+  .dc-picker-list .editor-palette-row { min-height: 44px; }
+}
+@media (hover: none) {
+  .dc-picker-list .editor-palette-row:hover:not(.active) { background: none; }
+}
+.dc-picker-list .editor-palette-name { flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
+.dc-picker-list .editor-palette-rest { flex: 0 1 auto; overflow: visible; }
+.dc-picker-list .editor-palette-repo, .dc-picker-list .editor-palette-branch, .dc-picker-list .editor-palette-sub { white-space: normal; overflow-wrap: anywhere; }

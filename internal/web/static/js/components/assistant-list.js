@@ -115,9 +115,10 @@ class AssistantList extends HTMLElement {
     entry.querySelector("[data-memory-view]").hidden = false;
   }
 
-  // An assistant's row menu: open it, give it a name of its own, or delete it.
-  // Renaming is here and not on the page because with several of them the name
-  // is what the list is read by, and this is the list.
+  // An assistant's row menu: open it, give it a name of its own, share it, or
+  // delete it. Renaming is here and not on the page because with several of
+  // them the name is what the list is read by, and this is the list. Share
+  // opens the sharing settings with the assistant picked, like a project's.
   openRowMenu(row, x, y) {
     if (!row) return null;
     // A long press on the grip is both a drag and a menu; the menu wins.
@@ -139,6 +140,7 @@ class AssistantList extends HTMLElement {
           },
         },
         { label: "Rename", icon: "ti-pencil", action: () => void this.renameAssistant(url, name) },
+        { label: "Share", icon: "ti-share", href: `/settings/sharing?assistant=${encodeURIComponent(row.dataset.assistantInstance)}` },
         { label: "Delete", icon: "ti-trash", danger: true, action: () => void this.deleteAssistant(url, name) },
       ],
     });

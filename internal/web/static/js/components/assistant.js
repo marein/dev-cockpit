@@ -6,17 +6,11 @@ import { DoubleTap } from "@dc/doubletap";
 import { watchFileDrop } from "@dc/filedrop";
 import { resolveHostlessLinks } from "@dc/docker";
 import { SwipeNav, isCurrentPage, swipeBlockedAt, watchSwipe } from "@dc/swipe";
+import { ChatStream, appendLive, showTool as showToolLine, writeLive } from "@dc/chat-stream";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
 const ATTACH_ICONS = { image: "ti-photo", video: "ti-video", audio: "ti-microphone", file: "ti-paperclip" };
-
-// An assistant's stream sends a ping frame every 15s, the same life sign
-// /events carries, because the SSE keepalive is a comment and fires no event
-// here. Past this the stream counts as dead, with room for one missed ping.
-const STALE_MS = 45000;
-
-const RENDER_MARK = "\u2060";
 
 // How long the typing has to rest before the draft is saved. Short, because the
 // draft is its own small file on the server and saving it costs a few hundred
@@ -106,23 +100,6 @@ function lacksMessage(root, fresh) {
   return [...fresh.querySelectorAll("[data-assistant-message][data-message-id]")].some((node) => !have.has(node.getAttribute("data-message-id")));
 }
 
-function takeRenderMark(root) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let node = null;
-  let at = -1;
-  for (let cursor = walker.nextNode(); cursor; cursor = walker.nextNode()) {
-    const found = cursor.data.lastIndexOf(RENDER_MARK);
-    if (found >= 0) {
-      node = cursor;
-      at = found;
-    }
-  }
-  if (!node) return null;
-  const rest = node.splitText(at);
-  rest.data = rest.data.slice(RENDER_MARK.length);
-  return rest;
-}
-
 function composerHoldsUnsavedWords(surface, fresh) {
   const input = surface.querySelector("[data-assistant-input]");
   const freshInput = fresh.querySelector("[data-assistant-input]");
@@ -201,7 +178,7 @@ class Assistant extends HTMLElement {
     }, { signal });
     this.setupVoice(signal);
     document.addEventListener("visibilitychange", () => {
-      this.checkStream();
+      this.stream?.check();
       void this.catchUp();
     }, { signal });
     onServerEvent("draft", (event) => this.onDraftEvent(event.detail), { signal });
@@ -272,7 +249,8 @@ class Assistant extends HTMLElement {
     }
 
     this.setRunning(this.running);
-    this.openStream();
+    this.stream = new ChatStream(this.streamUrl, { onFrame: (frame) => this.onFrame(frame), onOpen: () => void this.catchUp() });
+    this.stream.open();
     this.stickToEnd();
     this.onInput();
     this.autoGrow();
@@ -537,7 +515,8 @@ class Assistant extends HTMLElement {
     this.speech = null;
     this.ac?.abort();
     this.ac = null;
-    this.closeStream();
+    this.stream?.close();
+    this.stream = null;
   }
 
   onKeydown(event) {
@@ -711,55 +690,7 @@ class Assistant extends HTMLElement {
     this.onInput();
   }
 
-  openStream() {
-    if (!this.streamUrl || this.source) return;
-    this.lastFrameAt = Date.now();
-    this.source = new EventSource(this.streamUrl);
-    // Every connection that had to be established again is a break, whether
-    // this element built it or the browser retried on its own, and a break is
-    // where a frame goes missing. That is the moment to catch up, and the only
-    // one besides a page coming back.
-    this.source.addEventListener("open", () => {
-      this.lastFrameAt = Date.now();
-      void this.catchUp();
-    });
-    this.source.addEventListener("assistant", (event) => {
-      let frame;
-      try {
-        frame = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      this.onFrame(frame);
-    });
-    this.source.addEventListener("error", () => {
-    });
-  }
-
-  closeStream() {
-    this.source?.close();
-    this.source = null;
-  }
-
-  // A socket that hangs open and silent, the classic phone that just woke up,
-  // never reports itself closed, and silence alone says nothing: an answer is
-  // silent while the model thinks. The ping is what separates the two, so the
-  // stream is only torn down and built again once that life sign stops.
-  checkStream() {
-    if (!this.source) return;
-    if (this.source.readyState === EventSource.CLOSED || Date.now() - this.lastFrameAt > STALE_MS) this.restartStream();
-  }
-
-  restartStream() {
-    if (document.visibilityState !== "visible") return;
-    this.closeStream();
-    this.openStream();
-  }
-
   onFrame(frame) {
-    if (!frame) return;
-    this.lastFrameAt = Date.now();
-    if (frame.kind === "ping") return;
     if (frame.kind === "models") {
       this.applyModels(frame.models, false);
       return;
@@ -861,18 +792,6 @@ class Assistant extends HTMLElement {
     return this.ensureBubble(messageId).querySelector("[data-assistant-text]");
   }
 
-  tail(body) {
-    let tail = body.querySelector("[data-assistant-tail]");
-    if (!tail) {
-      tail = document.createElement("span");
-      tail.setAttribute("data-assistant-tail", "");
-      const spot = takeRenderMark(body);
-      if (spot) spot.parentNode.insertBefore(tail, spot);
-      else body.append(tail);
-    }
-    return tail;
-  }
-
   setModel(messageId, model) {
     const name = this.ensureBubble(messageId).querySelector("[data-assistant-model]");
     if (!name) return;
@@ -885,25 +804,20 @@ class Assistant extends HTMLElement {
   setText(messageId, html, text) {
     const body = this.body(messageId);
     if (!body) return;
-    body.innerHTML = html || "";
+    writeLive(body, html, text);
     resolveHostlessLinks(body);
-    this.tail(body).textContent = text || "";
     this.stickToEnd();
   }
 
   appendText(messageId, text) {
     const body = this.body(messageId);
     if (!body) return;
-    this.tail(body).append(document.createTextNode(text));
+    appendLive(body, text);
     this.stickToEnd();
   }
 
   showTool(messageId, name) {
-    const line = this.ensureBubble(messageId).querySelector("[data-assistant-tool]");
-    if (!line) return;
-    line.classList.remove("d-none");
-    const label = line.querySelector("[data-assistant-tool-name]");
-    if (label) label.textContent = name || "";
+    showToolLine(this.ensureBubble(messageId), name);
   }
 
   modelPicks() {
@@ -1287,7 +1201,7 @@ class Assistant extends HTMLElement {
   startWatchdog(messageId) {
     this.stopWatchdog();
     this.pendingMessageId = messageId;
-    this.lastFrameAt = Date.now();
+    this.stream?.touch();
     this.watchdog = window.setInterval(() => void this.resync(), 3000);
   }
 
@@ -1306,7 +1220,7 @@ class Assistant extends HTMLElement {
       this.stopWatchdog();
       return;
     }
-    this.checkStream();
+    this.stream?.check();
   }
 
   // The one pull that repairs a break, after the stream was established again
@@ -2124,7 +2038,7 @@ class Assistant extends HTMLElement {
         if (this.adoptSent(bubble, payload.userMessageId, "queued")) {
           void this.replaceMessage(payload.userMessageId, "queued");
         }
-        this.checkStream();
+        this.stream?.check();
         return;
       }
       this.adoptSent(bubble, payload.userMessageId, "complete");
@@ -2177,7 +2091,7 @@ class Assistant extends HTMLElement {
     if (!messageId) return;
     this.ensureBubble(messageId);
     this.startWatchdog(messageId);
-    this.checkStream();
+    this.stream?.check();
   }
 
   async cancel() {

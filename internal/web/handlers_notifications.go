@@ -129,6 +129,11 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "linecomments", Data: map[string]string{"project": ""}}); err != nil {
 		return
 	}
+	// And the links of Settings › Sharing, which a page open through a gap
+	// pulls again.
+	if err := writeEnvelope(w, eventbus.Event{Type: "shares"}); err != nil {
+		return
+	}
 	// And a bare git signal, no project named. The git event is otherwise only
 	// published when something moves, and a move that fell into a gap is
 	// published never again: the same file changing further does not move the
@@ -176,7 +181,7 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	// own beat in the loop below. That ticker lives in this handler, so without
 	// a connected browser nothing ticks and nothing is read, and several tabs
 	// share one reading through the cache.
-	if err := writeEnvelope(w, eventbus.Event{Type: "host", Data: s.host.Stats()}); err != nil {
+	if err := writeEnvelope(w, s.hostEvent()); err != nil {
 		return
 	}
 
@@ -197,7 +202,7 @@ func (s *Server) handleEventStream(c *gin.Context) {
 				return
 			}
 		case <-hostBeat.C:
-			if err := writeEnvelope(w, eventbus.Event{Type: "host", Data: s.host.Stats()}); err != nil {
+			if err := writeEnvelope(w, s.hostEvent()); err != nil {
 				return
 			}
 		case ev := <-notifyEvents:
@@ -210,6 +215,11 @@ func (s *Server) handleEventStream(c *gin.Context) {
 			}
 		}
 	}
+}
+
+// hostEvent is the host reading as the stream carries it.
+func (s *Server) hostEvent() eventbus.Event {
+	return eventbus.Event{Type: "host", Data: s.host.Stats()}
 }
 
 func writeEnvelope(w http.ResponseWriter, ev eventbus.Event) error {

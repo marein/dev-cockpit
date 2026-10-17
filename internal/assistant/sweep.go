@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -76,3 +77,19 @@ func orphanDirs(root string, known map[string]bool) []string {
 	}
 	return out
 }
+
+// Gone reports an assistant whose directory is not on disk, which no
+// assistant that lives is without. A transcript that cannot be read leaves
+// the directory standing, so it never reads as gone, and neither does a
+// directory the stat fails on for any other reason.
+func (s *Store) Gone(id string) bool {
+	if !ValidID(id) {
+		return true
+	}
+	_, err := os.Lstat(s.InstanceDir(id))
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// Gone reports an assistant that is deleted for certain, however it went,
+// and not one that only cannot be read right now.
+func (s *Service) Gone(id string) bool { return s.store.Gone(id) }

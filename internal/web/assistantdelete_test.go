@@ -18,6 +18,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/settings"
+	"github.com/marein/dev-cockpit/internal/share"
 )
 
 // sessionTurnCoder runs a turn the way a coder runs a command: in a session of
@@ -75,6 +76,7 @@ func TestASelfDeleteDoesNotWaitForTheCommandThatAsked(t *testing.T) {
 		watcher:    assistant.NewWatcher(assistants, assistant.NewJobs(assistant.NewStore(stateDir)), nil, nil),
 		notifier:   notify.NewService(filepath.Join(stateDir, "notifications.json"), nil),
 		bus:        eventbus.New(),
+		shares:     share.NewStore(stateDir),
 	}
 	s.settings = settings.New(filepath.Join(stateDir, "settings.json"))
 	setApprovalAsks(s.settings, approvalAssistantDelete, false)

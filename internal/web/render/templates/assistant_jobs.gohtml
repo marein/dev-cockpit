@@ -36,10 +36,10 @@
              way there: the coder's name opens the coder, the project's name
              opens the project. */}}
         <div class="min-w-0 flex-fill">
-          <div class="fw-medium text-truncate"><a class="text-reset text-decoration-none" href="{{.URL}}" data-assistant-job-coder-link>{{.Name}}</a></div>
+          <div class="fw-medium text-truncate">{{if .URL}}<a class="text-reset text-decoration-none" href="{{.URL}}" data-assistant-job-coder-link>{{.Name}}</a>{{else}}{{.Name}}{{end}}</div>
           {{/* Only a list of everybody's jobs names the assistant; on one
                assistant's own page the answer is always the same. */}}
-          <div class="text-secondary small text-truncate">{{if .Owner}}{{.Owner}}{{if .Project}} · {{end}}{{end}}{{if .Project}}<a class="link-secondary text-decoration-none" href="/projects#project-{{.Project}}" data-assistant-job-project-link>{{.Project}}</a>{{end}}</div>
+          <div class="text-secondary small text-truncate">{{if .Owner}}{{.Owner}}{{if .Project}} · {{end}}{{end}}{{if and .Project $.Access.Guest}}{{.Project}}{{else if .Project}}<a class="link-secondary text-decoration-none" href="/projects#project-{{.Project}}" data-assistant-job-project-link>{{.Project}}</a>{{end}}</div>
         </div>
         <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" data-bs-toggle="collapse" data-bs-target="#assistant-job-{{.Terminal}}-details" aria-expanded="false" aria-controls="assistant-job-{{.Terminal}}-details" aria-label="Details" title="Details" data-assistant-job-fold><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
       </div>
@@ -67,16 +67,21 @@
            project, and then the coder is handed back or taken on again. The
            row wraps, so the actions stand side by side in the inline aside and
            under each other in the phone's sheet. They sit outside the fold
-           above them, so they stand whether it is open or shut. */}}
+           above them, so they stand whether it is open or shut. A guest
+           only looks, where the link opens the coder or its project. */}}
+      {{if or .URL .EditorURL (not $.Access.Guest)}}
       <div class="d-flex flex-wrap gap-2 mt-2">
+        {{if .URL}}
         <a href="{{.URL}}" class="btn btn-sm flex-fill" data-assistant-job-open>
           <i class="ti ti-terminal-2 me-1"></i>Open coder
         </a>
+        {{end}}
         {{if .EditorURL}}
         <a href="{{.EditorURL}}" class="btn btn-sm flex-fill" data-assistant-job-editor>
           <i class="ti ti-code me-1"></i>Open editor
         </a>
         {{end}}
+        {{if not $.Access.Guest}}
         {{if .Open}}
         <form method="post" action="{{$.JobsURL}}" class="flex-fill d-flex" data-ajax-refresh
               data-confirm="Release &#34;{{.Name}}&#34;? The coder keeps working, nothing checks on it any more. It is yours again."
@@ -101,7 +106,9 @@
           </button>
         </form>
         {{end}}
+        {{end}}
       </div>
+      {{end}}
     </div>
     {{end}}
     {{if .JobsOlder}}
@@ -109,7 +116,7 @@
     {{end}}
   </div>
   {{else}}
-  <div class="text-secondary small py-2" data-assistant-jobs-empty>Nothing steered. Ask the assistant to keep an eye on a coder and say when it is done, then it stands here.</div>
+  <div class="text-secondary small py-2" data-assistant-jobs-empty>Nothing steered.{{if not $.Access.Guest}} Ask the assistant to keep an eye on a coder and say when it is done, then it stands here.{{end}}</div>
   {{end}}
 </div>
 {{end}}

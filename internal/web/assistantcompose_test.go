@@ -24,6 +24,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/settings"
+	"github.com/marein/dev-cockpit/internal/share"
 )
 
 // composeFixture is a server with the pieces an owned compose run touches: a
@@ -76,6 +77,7 @@ func newComposeFixture(t *testing.T) *composeFixture {
 		bus:           eventbus.New(),
 		settings:      store,
 		askpassBroker: broker,
+		shares:        share.NewStore(stateDir),
 	}
 	s.gitPromptNoticed = map[string]bool{}
 	s.approvals = s.newApprovals(stateDir)
@@ -645,12 +647,13 @@ func TestAStartNamesTheAddressesOfTheReadingAfterItsEnd(t *testing.T) {
 	if err != nil || len(current.Messages) == 0 {
 		t.Fatalf("no note in the thread: %v", err)
 	}
-	note := current.Messages[len(current.Messages)-1].Content
+	message := current.Messages[len(current.Messages)-1]
+	note := message.Content
 	if want := "Answers on: [shop.example.com](<//shop.example.com>), [:8080](<http://:8080>)"; !strings.HasSuffix(note, want) {
 		t.Fatalf("the note reads:\n%s\nwant it to end in:\n%s", note, want)
 	}
 	// The route is a real link, the port one the page completes with its host.
-	html := string(f.s.assistantMarkdown(f.owner, note))
+	html := string(f.s.assistantMessageView(f.owner, message, false, true, current.CoderID).HTML)
 	if !strings.Contains(html, `<a href="//shop.example.com">shop.example.com</a>`) || !strings.Contains(html, `<a href="http://:8080">:8080</a>`) {
 		t.Fatalf("the note renders:\n%s", html)
 	}

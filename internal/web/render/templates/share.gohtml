@@ -1,0 +1,254 @@
+{{/* Settings › Sharing is the list of links, one row per link with what it
+     opens and when it ends. New link and a row's Edit open their forms in the
+     create dialog over the list, and stand as pages of their own without
+     scripts. The list follows every write of the links (dc-share-links). */}}
+{{define "settings_sharing.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Sharing</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <p class="text-secondary">A link opens projects and assistants to somebody without a login, read only. For a project, the guest sees every file, <code>.env</code> and ignored files included, the git history, the line comments, every coder and shell live and the containers with their logs. For an assistant, the guest sees its whole conversation live and the running coders it steers or steered. The guest changes nothing, except line comments on a project that allows Comment. A link ends at its expiry, when you revoke it, or when its last project or assistant is gone.</p>
+  <dc-share-links class="d-block"{{with .Open}} data-open="{{.}}"{{end}}>
+    {{template "share_list.gohtml" .}}
+  </dc-share-links>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* The rows stand on one grid from md up, under a head whose last column
+     holds an invisible copy of Edit, so the head's columns end where the
+     rows' do. Below md a row stacks into a card: its name, what it opens,
+     then its expiry beside Edit. Every name wraps, none is cut. */}}
+{{define "share_list.gohtml"}}
+<div data-share-list>
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <h3 class="card-title mb-0">Links</h3>
+    {{if .Shares}}<span class="badge bg-secondary-lt" data-share-count>{{len .Shares}}</span>{{end}}
+    <a class="btn btn-primary ms-auto" href="/settings/sharing/new" data-share-new-link><i class="ti ti-plus me-1" aria-hidden="true"></i>New link</a>
+  </div>
+  {{if .Shares}}
+  <div class="card">
+    <div class="card-header d-none d-md-block py-2 small text-secondary">
+      <div class="row g-2 align-items-center">
+        <div class="col-4">Name</div>
+        <div class="col">Opens</div>
+        <div class="col-3 text-end">Expires</div>
+        <div class="col-auto invisible" aria-hidden="true"><span class="btn btn-sm py-0"><i class="ti ti-pencil me-1"></i>Edit</span></div>
+      </div>
+    </div>
+    <div class="list-group list-group-flush">
+      {{range .Shares}}
+      <div class="list-group-item py-2" id="share-{{.ID}}" data-share-row="{{.ID}}">
+        <div class="row g-2 align-items-center">
+          <div class="col-12 col-md-4 min-w-0">
+            <div class="fw-medium text-break" data-share-name>{{.Name}}</div>
+            <div class="small text-secondary">Created <dc-time datetime="{{.CreatedAt}}" relative></dc-time></div>
+          </div>
+          <div class="col-12 col-md min-w-0">
+            <div class="small d-flex flex-wrap column-gap-3 row-gap-1">
+              {{range .Resources}}
+              <span class="d-inline-flex align-items-baseline gap-1 min-w-0" data-share-{{.Kind}}="{{.Target}}">
+                <i class="ti {{if eq .Kind "assistant"}}ti-sparkles{{else}}ti-folder{{end}} text-secondary flex-none" aria-hidden="true"></i>
+                <span class="text-break">{{.Name}}{{range .Permissions}}{{if .On}} <i class="ti {{.Icon}} text-primary" title="{{.Label}}" aria-label="{{.Label}}" data-share-grant="{{.Value}}"></i>{{end}}{{end}}</span>
+              </span>
+              {{end}}
+            </div>
+          </div>
+          <div class="col col-md-3 small text-md-end {{if .Soon}}text-warning{{else}}text-secondary{{end}}" data-share-expires{{if .Soon}} data-share-soon{{end}}>
+            {{if .Soon}}<i class="ti ti-hourglass-low me-1" aria-hidden="true"></i>{{end}}<span class="d-md-none">Expires </span><dc-time datetime="{{.ExpiresAt}}"></dc-time>
+          </div>
+          <div class="col-auto">
+            <a class="btn btn-sm" href="{{.EditURL}}" aria-label="Edit {{.Name}}" data-share-edit><i class="ti ti-pencil me-1" aria-hidden="true"></i>Edit</a>
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{else}}
+  <div class="card">
+    <div class="empty" data-share-empty>
+      <div class="empty-icon"><i class="ti ti-share fs-1" aria-hidden="true"></i></div>
+      <p class="empty-title">No links yet</p>
+      <p class="empty-subtitle text-secondary">Create one with New link.</p>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{define "share_new.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="/settings/sharing" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title text-truncate">{{with .Created}}{{.Name}}{{else}}New link{{end}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{if .Created}}{{template "share_created.gohtml" .}}{{else}}{{template "share_new_form.gohtml" .}}{{end}}
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* What a new link opens is one dropdown for every kind, each pick listed
+     under it at once with its switches, and the expiry is a number with its
+     unit, the moment it gives standing under them. */}}
+{{define "share_new_form.gohtml"}}
+<form method="post" action="/settings/sharing/new{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-share-new{{if .Modal}} data-form-title="New link" data-form-wait="Creating the link…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <dc-share-form class="d-block {{if .Modal}}modal-body{{else}}card-body{{end}}">
+    {{if .Opens.Offers}}
+    <div class="mb-3">
+      <label class="form-label required" for="share-name">Name</label>
+      <input type="text" class="form-control" id="share-name" name="name" maxlength="{{.NameMax}}" placeholder="Who the link is for" autocomplete="off" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label required" for="{{.Opens.ID}}">Opens</label>
+      {{template "picker.gohtml" .Opens}}
+      <div class="list-group mt-2" data-share-entries{{if not .Entries}} hidden{{end}}>
+        {{range .Entries}}{{template "share_entry.gohtml" (dict "R" .)}}{{end}}
+      </div>
+      {{range .Offers}}<template data-share-entry="{{.Key}}">{{template "share_entry.gohtml" (dict "R" .)}}</template>{{end}}
+    </div>
+    {{template "share_expiry.gohtml" (dict "Required" true "Focus" false "Amount" .Amount "Unit" .Unit "Units" .Units "At" .ExpiresAt "Stored" "")}}
+    {{else}}
+    <p class="text-secondary mb-0" data-share-nothing>There is no project or assistant to share.</p>
+    {{end}}
+  </dc-share-form>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>{{else}}<a class="btn btn-ghost-secondary" href="/settings/sharing">Cancel</a>{{end}}
+    {{if .Opens.Offers}}<button type="submit" class="btn btn-primary">Create link</button>{{end}}
+  </div>
+</form>
+{{end}}
+
+{{/* One project or assistant in a dialog's list of what a link opens: its
+     kind, its full name, what a project grants and its remove. One on the
+     link (Remove, the id of its toggle) names itself for the save and comes
+     off with Save, one just picked comes off with its pick. */}}
+{{define "share_entry.gohtml"}}{{$r := .R}}
+<div class="list-group-item py-2 px-3" data-share-{{$r.Kind}}="{{$r.Target}}"{{if .Remove}} data-share-resource{{else}} data-share-picked="{{$r.Key}}"{{end}}>
+  {{if .Remove}}<input type="hidden" name="resource" value="{{$r.Key}}">{{end}}
+  <div class="d-flex align-items-start gap-2">
+    <i class="ti {{if eq $r.Kind "assistant"}}ti-sparkles{{else}}ti-folder{{end}} text-secondary flex-none mt-1" aria-hidden="true"></i>
+    <div class="flex-fill min-w-0" data-share-resource-body>
+      <div class="text-break" data-share-resource-name>{{$r.Name}}</div>
+      {{if eq $r.Kind "project"}}
+      <div class="d-flex flex-wrap align-items-center column-gap-3 small text-secondary">
+        <span>Project</span>
+        {{range $r.Permissions}}
+        <label class="form-switch d-inline-flex align-items-center gap-2 ps-0 mb-0" title="{{.Hint}}">
+          <input class="form-check-input m-0" type="checkbox" name="grant:{{.Value}}" value="{{$r.Target}}"{{if .On}} checked{{end}} data-share-grant="{{.Value}}">
+          <span>{{.Label}}</span>
+        </label>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="small text-secondary">Assistant, read only</div>
+      {{end}}
+    </div>
+    {{if .Remove}}
+    <input type="checkbox" class="btn-check" name="drop" value="{{$r.Key}}" id="{{.Remove}}" autocomplete="off" data-share-remove>
+    <label class="btn btn-sm btn-icon btn-ghost-danger flex-none" for="{{.Remove}}" title="Remove from the link" aria-label="Remove {{$r.Name}} from the link"><i class="ti ti-x" aria-hidden="true"></i></label>
+    {{else}}
+    <button type="button" class="btn btn-sm btn-icon btn-ghost-danger flex-none" title="Remove from the link" aria-label="Remove {{$r.Name}} from the link" data-share-unpick="{{$r.Key}}"><i class="ti ti-x" aria-hidden="true"></i></button>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+{{/* The expiry of a new link and of a standing one: a wide number and a
+     narrow unit, the moment they give under them. A standing link's number
+     starts empty and keeps the expiry it has (Stored), a number counts anew
+     from the save. In its dialog the number takes the focus (Focus): a
+     switch or a cross would take it otherwise, the first field there. */}}
+{{define "share_expiry.gohtml"}}
+<div>
+  <label class="form-label{{if .Required}} required{{end}}" for="share-amount">Expires after</label>
+  <div class="input-group">
+    <input type="number" class="form-control" id="share-amount" name="amount" value="{{if .Amount}}{{.Amount}}{{end}}" min="1" max="999" step="1" inputmode="numeric"{{if .Required}} required{{else}} placeholder="Unchanged"{{end}}{{if .Focus}} autofocus{{end}} data-share-amount>
+    <select class="form-select w-auto flex-grow-0" name="unit" aria-label="Unit" data-share-unit>
+      {{range .Units}}<option value="{{.Value}}"{{if eq .Value $.Unit}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  </div>
+  <div class="form-hint" data-share-expiry{{with .Stored}} data-share-stored="{{.}}"{{end}}><span data-share-expiry-at>Expires <dc-time datetime="{{.At}}"></dc-time><span data-share-expiry-save hidden>, counted from when you save</span>. </span>At most 30 days.</div>
+</div>
+{{end}}
+
+{{/* A link just made, this once: the dialog swaps the form for it, the page
+     shows it in the form's place. */}}
+{{define "share_created.gohtml"}}
+{{with .Created}}
+<div data-form-view data-form-title="{{.Name}}" data-share-created>
+  <div class="{{if $.Modal}}modal-body{{else}}card-body{{end}}">
+    <p>Anyone with this link opens {{range $i, $o := .Opens}}{{if $i}}, {{end}}<span class="fw-medium text-break">{{.Name}}</span>{{with .Grants}} <span class="badge bg-secondary-lt" data-share-created-grants>{{.}}</span>{{end}}{{end}} until <dc-time datetime="{{.ExpiresAt}}"></dc-time>.{{if not .Granted}} Everything is read only.{{else if .ReadOnly}} The rest is read only.{{end}}</p>
+    <dc-copy-field class="input-group">
+      <input type="text" class="form-control font-monospace" value="{{.URL}}" readonly aria-label="Share link" data-share-url>
+      <button type="button" class="btn" data-copy><i class="ti ti-copy me-1" aria-hidden="true"></i>Copy</button>
+    </dc-copy-field>
+    <div class="form-hint">The link is shown only now. What you add later with Edit opens under the same link.</div>
+  </div>
+  <div class="{{if $.Modal}}modal-footer{{else}}card-footer d-flex justify-content-end{{end}}">
+    {{if $.Modal}}<button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>{{else}}<a class="btn btn-primary" href="/settings/sharing">Done</a>{{end}}
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "share_edit.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="/settings/sharing" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title text-truncate">{{.Name}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{template "share_edit_form.gohtml" .}}
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* A link's Edit: what it opens, each project with its grants, each with
+     its remove, which takes it off on Save; Add from the same dropdown New
+     link picks from, each pick listed with the rest at once with its
+     switches; the expiry. A link keeps its name, the form has no field for it
+     and the save reads none. Revoke is a form of its own and asks first. */}}
+{{define "share_edit_form.gohtml"}}
+<form method="post" action="{{.URL}}{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-share-edit-form{{if .Modal}} data-form-title="{{.Name}}" data-form-wait="Saving the link…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="save">
+  {{if .Modal}}<template data-form-sub>Created <dc-time datetime="{{.CreatedAt}}" relative></dc-time>. The name cannot be changed.</template>{{end}}
+  <dc-share-form class="d-block {{if .Modal}}modal-body{{else}}card-body{{end}}">
+    {{if not .Modal}}<p class="small text-secondary">Created <dc-time datetime="{{.CreatedAt}}" relative></dc-time>. The name cannot be changed.</p>{{end}}
+    <div class="mb-3">
+      <div class="form-label">Opens</div>
+      <div class="list-group" data-share-entries>
+        {{range $i, $r := .Resources}}{{template "share_entry.gohtml" (dict "R" $r "Remove" (printf "share-remove-%s-%d" $.ID $i))}}{{end}}
+      </div>
+      {{range .Offers}}<template data-share-entry="{{.Key}}">{{template "share_entry.gohtml" (dict "R" .)}}</template>{{end}}
+    </div>
+    {{if .Add.Offers}}
+    <div class="mb-3">
+      <label class="form-label" for="{{.Add.ID}}">Add</label>
+      {{template "picker.gohtml" .Add}}
+    </div>
+    {{end}}
+    {{template "share_expiry.gohtml" (dict "Required" false "Focus" .Modal "Amount" 0 "Unit" .Unit "Units" .Units "At" .ExpiresAt "Stored" .ExpiresAt)}}
+  </dc-share-form>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex gap-2{{end}}">
+    <button type="submit" class="btn btn-outline-danger me-auto" form="share-revoke-{{.ID}}" data-share-revoke>Revoke</button>
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>{{else}}<a class="btn btn-ghost-secondary" href="/settings/sharing">Cancel</a>{{end}}
+    <button type="submit" class="btn btn-primary" data-share-save>Save</button>
+  </div>
+</form>
+<form method="post" action="{{.URL}}" id="share-revoke-{{.ID}}" data-confirm="Revoke the link &quot;{{.Name}}&quot;? It stops working at once." data-confirm-button="Revoke" hidden>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="revoke">
+</form>
+{{end}}

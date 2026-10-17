@@ -5,21 +5,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func TestLineCommentsRoundtrip(t *testing.T) {
 	l := newLineComments(t.TempDir())
-	saved, changed, err := l.Save("p", lineComment{Path: "b.txt", Line: 3, LineText: "code", Text: "a note"})
+	saved, changed, err := l.Save("p", lineComment{Path: "b.txt", Line: 3, LineText: "code", Text: "a note"}, commentWriter{})
 	if err != nil || !changed {
 		t.Fatalf("first save: changed=%v err=%v", changed, err)
 	}
 	if saved.ID == "" || saved.UpdatedAt.IsZero() {
 		t.Fatalf("saved comment carries no id or timestamp: %+v", saved)
 	}
-	l.Save("p", lineComment{Path: "a.txt", Line: 9, Text: "later file, listed first"})
-	l.Save("p", lineComment{Path: "b.txt", Line: 1, Text: "earlier line"})
+	l.Save("p", lineComment{Path: "a.txt", Line: 9, Text: "later file, listed first"}, commentWriter{})
+	l.Save("p", lineComment{Path: "b.txt", Line: 1, Text: "earlier line"}, commentWriter{})
 	list := l.List("p")
 	if len(list) != 3 {
 		t.Fatalf("list holds %d comments", len(list))
@@ -34,21 +35,21 @@ func TestLineCommentsRoundtrip(t *testing.T) {
 
 func TestLineCommentsSaveUpdatesById(t *testing.T) {
 	l := newLineComments(t.TempDir())
-	saved, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 3, Text: "note"})
-	if _, changed, _ := l.Save("p", saved); changed {
+	saved, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 3, Text: "note"}, commentWriter{})
+	if _, changed, _ := l.Save("p", saved, commentWriter{}); changed {
 		t.Fatal("same comment reported as changed")
 	}
 	moved := saved
 	moved.Path = "renamed.txt"
 	moved.Line = 5
-	if _, changed, _ := l.Save("p", moved); !changed {
+	if _, changed, _ := l.Save("p", moved, commentWriter{}); !changed {
 		t.Fatal("a moved comment reported nothing changed")
 	}
 	list := l.List("p")
 	if len(list) != 1 || list[0].Path != "renamed.txt" || list[0].Line != 5 {
 		t.Fatalf("update did not land: %+v", list)
 	}
-	gone, changed, err := l.Save("p", lineComment{ID: "missing", Path: "a.txt", Line: 1, Text: "x"})
+	gone, changed, err := l.Save("p", lineComment{ID: "missing", Path: "a.txt", Line: 1, Text: "x"}, commentWriter{})
 	if err != nil || changed || gone.ID != "" {
 		t.Fatalf("an unknown id was resurrected: %+v changed=%v err=%v", gone, changed, err)
 	}
@@ -57,32 +58,32 @@ func TestLineCommentsSaveUpdatesById(t *testing.T) {
 func TestLineCommentsCap(t *testing.T) {
 	l := newLineComments(t.TempDir())
 	for i := 0; i < maxLineCommentsPerProject; i++ {
-		if _, _, err := l.Save("p", lineComment{Path: "a.txt", Line: i + 1, Text: "n"}); err != nil {
+		if _, _, err := l.Save("p", lineComment{Path: "a.txt", Line: i + 1, Text: "n"}, commentWriter{}); err != nil {
 			t.Fatalf("save %d refused: %v", i, err)
 		}
 	}
-	if _, _, err := l.Save("p", lineComment{Path: "a.txt", Line: 999, Text: "over"}); err == nil {
+	if _, _, err := l.Save("p", lineComment{Path: "a.txt", Line: 999, Text: "over"}, commentWriter{}); err == nil {
 		t.Fatal("the cap did not refuse")
 	}
 	existing := l.List("p")[0]
 	existing.Text = "edited at the cap"
-	if _, changed, err := l.Save("p", existing); err != nil || !changed {
+	if _, changed, err := l.Save("p", existing, commentWriter{}); err != nil || !changed {
 		t.Fatalf("editing at the cap refused: changed=%v err=%v", changed, err)
 	}
 }
 
 func TestLineCommentsMove(t *testing.T) {
 	l := newLineComments(t.TempDir())
-	a, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 3, LineText: "old", Text: "note"})
-	b, _, _ := l.Save("p", lineComment{Path: "b.txt", Line: 7, LineText: "keep", Text: "other file"})
-	if changed := l.Move("p", "a.txt", []lineComment{{ID: a.ID, Line: 3, LineText: "old"}}); changed {
+	a, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 3, LineText: "old", Text: "note"}, commentWriter{})
+	b, _, _ := l.Save("p", lineComment{Path: "b.txt", Line: 7, LineText: "keep", Text: "other file"}, commentWriter{})
+	if changed := l.Move("p", "a.txt", []lineComment{{ID: a.ID, Line: 3, LineText: "old"}}, commentWriter{}); changed {
 		t.Fatal("an unmoved position reported as changed")
 	}
 	if changed := l.Move("p", "a.txt", []lineComment{
 		{ID: a.ID, Line: 5, LineText: "new"},
 		// b lives in another file, the move must not reach it.
 		{ID: b.ID, Line: 1, LineText: "hijack"},
-	}); !changed {
+	}, commentWriter{}); !changed {
 		t.Fatal("a moved position reported nothing changed")
 	}
 	list := l.List("p")
@@ -96,9 +97,9 @@ func TestLineCommentsMove(t *testing.T) {
 
 func TestLineCommentsRename(t *testing.T) {
 	l := newLineComments(t.TempDir())
-	a, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 1, Text: "file note"})
-	b, _, _ := l.Save("p", lineComment{Path: "dir/deep/b.txt", Line: 2, Text: "folder note"})
-	c, _, _ := l.Save("p", lineComment{Path: "director/c.txt", Line: 3, Text: "prefix trap"})
+	a, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 1, Text: "file note"}, commentWriter{})
+	b, _, _ := l.Save("p", lineComment{Path: "dir/deep/b.txt", Line: 2, Text: "folder note"}, commentWriter{})
+	c, _, _ := l.Save("p", lineComment{Path: "director/c.txt", Line: 3, Text: "prefix trap"}, commentWriter{})
 	if l.Rename("p", "a.txt", "a.txt") {
 		t.Fatal("a rename onto itself reported a change")
 	}
@@ -128,12 +129,12 @@ func TestLineCommentsRename(t *testing.T) {
 
 func TestLineCommentsRemoveAndClear(t *testing.T) {
 	l := newLineComments(t.TempDir())
-	a, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 1, Text: "one"})
-	l.Save("p", lineComment{Path: "a.txt", Line: 2, Text: "two"})
-	if n := l.Remove("p", nil); n != 0 {
+	a, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 1, Text: "one"}, commentWriter{})
+	l.Save("p", lineComment{Path: "a.txt", Line: 2, Text: "two"}, commentWriter{})
+	if n := l.Remove("p", pickIDs()); n != 0 {
 		t.Fatalf("removing nothing reported %d", n)
 	}
-	if n := l.Remove("p", []string{a.ID, "missing"}); n != 1 {
+	if n := l.Remove("p", pickIDs(a.ID, "missing")); n != 1 {
 		t.Fatalf("removing a standing comment reported %d", n)
 	}
 	if list := l.List("p"); len(list) != 1 || list[0].Text != "two" {
@@ -153,8 +154,8 @@ func TestLineCommentsRemoveAndClear(t *testing.T) {
 func TestLineCommentsOneFilePerProject(t *testing.T) {
 	dir := t.TempDir()
 	l := newLineComments(dir)
-	p, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 1, Text: "one"})
-	l.Save("q", lineComment{Path: "b.txt", Line: 2, Text: "other project"})
+	p, _, _ := l.Save("p", lineComment{Path: "a.txt", Line: 1, Text: "one"}, commentWriter{})
+	l.Save("q", lineComment{Path: "b.txt", Line: 2, Text: "other project"}, commentWriter{})
 	for _, name := range []string{"p.json", "q.json"} {
 		if _, err := os.Stat(filepath.Join(dir, "line-comments", name)); err != nil {
 			t.Fatalf("project file %s: %v", name, err)
@@ -171,7 +172,7 @@ func TestLineCommentsOneFilePerProject(t *testing.T) {
 	}
 	// Removing the last comment takes the file with it, like clear does.
 	q := l.List("q")[0]
-	if n := l.Remove("q", []string{q.ID}); n != 1 {
+	if n := l.Remove("q", pickIDs(q.ID)); n != 1 {
 		t.Fatalf("removing q's comment reported %d", n)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "line-comments", "q.json")); !errors.Is(err, fs.ErrNotExist) {
@@ -180,23 +181,33 @@ func TestLineCommentsOneFilePerProject(t *testing.T) {
 	_ = p
 }
 
-func TestLineCommentsRemoveByPaths(t *testing.T) {
+// pickIDs picks the comments of the ids given, pickPaths those of the files
+// the path filters match, the way a delete names them.
+func pickIDs(ids ...string) func(lineComment) bool {
+	return func(c lineComment) bool { return slices.Contains(ids, c.ID) }
+}
+
+func pickPaths(patterns ...string) func(lineComment) bool {
+	return func(c lineComment) bool { return matchesAnyCommentPath(patterns, c.Path) }
+}
+
+func TestLineCommentsRemoveByPathFilters(t *testing.T) {
 	l := newLineComments(t.TempDir())
-	l.Save("p", lineComment{Path: "internal/a.go", Line: 1, Text: "in the folder"})
-	l.Save("p", lineComment{Path: "internal/deep/b.go", Line: 2, Text: "deeper"})
-	l.Save("p", lineComment{Path: "internals/x.go", Line: 3, Text: "similar name"})
-	l.Save("p", lineComment{Path: "main.go", Line: 4, Text: "a file"})
-	if n := l.RemoveByPaths("p", []string{"internal/", "main.go"}); n != 3 {
+	l.Save("p", lineComment{Path: "internal/a.go", Line: 1, Text: "in the folder"}, commentWriter{})
+	l.Save("p", lineComment{Path: "internal/deep/b.go", Line: 2, Text: "deeper"}, commentWriter{})
+	l.Save("p", lineComment{Path: "internals/x.go", Line: 3, Text: "similar name"}, commentWriter{})
+	l.Save("p", lineComment{Path: "main.go", Line: 4, Text: "a file"}, commentWriter{})
+	if n := l.Remove("p", pickPaths("internal/", "main.go")); n != 3 {
 		t.Fatalf("the ored filters removed %d", n)
 	}
 	list := l.List("p")
 	if len(list) != 1 || list[0].Path != "internals/x.go" {
 		t.Fatalf("the folder prefix reached past the folder: %+v", list)
 	}
-	if n := l.RemoveByPaths("p", []string{"gone"}); n != 0 {
+	if n := l.Remove("p", pickPaths("gone")); n != 0 {
 		t.Fatalf("an unknown path removed %d", n)
 	}
-	if n := l.RemoveByPaths("p", []string{"**/x.go"}); n != 1 {
+	if n := l.Remove("p", pickPaths("**/x.go")); n != 1 {
 		t.Fatalf("the glob removed %d", n)
 	}
 }

@@ -30,7 +30,7 @@ func (s *Server) handleFileLinks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The words could not be read."})
 		return
 	}
-	linker := s.fileLinker(ref.CWD)
+	linker := s.fileLinker(c, ref.CWD)
 	answer := gin.H{"links": linker.wordLinks(req.Words)}
 	if req.Names {
 		names, version := linker.bareNames(req.Version)

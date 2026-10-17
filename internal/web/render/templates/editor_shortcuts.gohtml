@@ -22,7 +22,7 @@
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>O</kbd></span>
           </div>
           <div class="dc-shortcuts-note">Tapping bare Shift twice opens it too.</div>
-          <div class="dc-shortcuts-row">
+          {{if .Access.Can "files"}}<div class="dc-shortcuts-row">
             <span>Replace in files</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></span>
           </div>
@@ -30,7 +30,7 @@
             <span>Replace the marked match</span>
             <span class="dc-shortcuts-keys"><kbd>Shift</kbd>+<kbd>Enter</kbd></span>
           </div>
-          <div class="dc-shortcuts-note">In the replace list it writes one match and marks the next.</div>
+          <div class="dc-shortcuts-note">In the replace list it writes one match and marks the next.</div>{{end}}
           <div class="dc-shortcuts-row">
             <span>Open the marked row without leaving the palette</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span>
@@ -54,10 +54,10 @@
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></span>
           </div>
           <div class="dc-shortcuts-note">An unsaved file asks first.</div>
-          <div class="dc-shortcuts-row">
+          {{if .Access.Can "files"}}<div class="dc-shortcuts-row">
             <span>Save</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>S</kbd></span>
-          </div>
+          </div>{{end}}
           <div class="dc-shortcuts-row">
             <span>Go to definition</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>B</kbd></span>
@@ -74,10 +74,10 @@
             <span>Git blame</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd></span>
           </div>
-          <div class="dc-shortcuts-row">
+          {{if .Access.Can "comments"}}<div class="dc-shortcuts-row">
             <span>Line comment</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd></span>
-          </div>
+          </div>{{end}}
           <div class="dc-shortcuts-row">
             <span>Preview</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd></span>
@@ -86,16 +86,16 @@
             <span>Reveal in tree</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></span>
           </div>
-          <div class="dc-shortcuts-row">
+          {{if .Access.Can "files"}}<div class="dc-shortcuts-row">
             <span>Rename the file</span>
             <span class="dc-shortcuts-keys"><kbd>F2</kbd></span>
-          </div>
+          </div>{{end}}
           <div class="dc-shortcuts-note">These act on the open file, the preview only where one exists.</div>
-          <div class="dc-shortcuts-row">
+          {{if .Access.Can "git-local"}}<div class="dc-shortcuts-row">
             <span>Commit</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span>
           </div>
-          <div class="dc-shortcuts-note">In the message field <kbd>Ctrl</kbd>+<kbd>Enter</kbd> commits.</div>
+          <div class="dc-shortcuts-note">In the message field <kbd>Ctrl</kbd>+<kbd>Enter</kbd> commits.</div>{{end}}
           <div class="dc-shortcuts-row">
             <span>Git</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></span>
@@ -113,9 +113,9 @@
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></span>
           </div>
         </div>
-        <div class="mt-3">
+        {{if not .Access.Guest}}<div class="mt-3">
           <a href="/docs#editor" class="btn btn-outline-secondary w-100">All shortcuts and gestures</a>
-        </div>
+        </div>{{end}}
       </div>
     </div>
   </div>

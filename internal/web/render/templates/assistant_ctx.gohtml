@@ -6,29 +6,33 @@
      the phone's sheet, which is this same column. The column is
      a dc-assistant-list, so it refreshes itself on the assistant event from
      /ctx/assistants and its rows carry the assistant menu; the phone's sheet
-     adopts the same element. */}}
+     adopts the same element. A guest's column is this one over the link's
+     assistants under the link's address, refreshing alike, without the menu,
+     the grip, the memory and the control that makes one. */}}
 {{define "assistant_ctx.gohtml"}}
-<dc-assistant-list class="dc-ctx d-print-none" list-url="/ctx/assistants?path={{urlquery .Path}}" history data-assistant-rows>
+<dc-assistant-list class="dc-ctx d-print-none" list-url="{{.Access.Base}}/ctx/assistants?path={{urlquery .Path}}"{{if not .Access.Guest}} history{{end}} data-assistant-rows>
   <div class="dc-ctx-head">
     <button type="button" class="btn btn-icon btn-ghost-secondary dc-work-toggle" data-dc-focus="work" aria-label="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></button>
     <h1 class="dc-ctx-title">Assistants</h1>
+    {{if not .Access.Guest}}
     <div class="dc-ctx-tools">
       <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="offcanvas" data-bs-target="#assistant-memory" aria-label="Memory" title="What the assistants know about you" data-assistant-memory-button><i class="ti ti-brain" aria-hidden="true"></i></button>
       {{if .Available}}{{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "ContextPercent" 0 "NoRing" true "NewClass" "btn btn-icon btn-ghost-secondary" "Prefix" .IDPrefix)}}{{end}}
     </div>
+    {{end}}
   </div>
   {{template "ctx_filter.gohtml" (dict "Placeholder" "Filter assistants…")}}
   <div class="dc-ctx-body">
     {{if .Available}}{{template "assistant_new_forms.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "PostURL" .PostURL "CSRFToken" .CSRFToken "Prefix" .IDPrefix)}}{{end}}
     <div data-assistant-body>
-      {{if not .Available}}
+      {{if and (not .Available) (not .Access.Guest)}}
       <div class="p-3 text-secondary small">No installed coder can run an assistant right now.</div>
       {{else if .Assistants}}
       <nav class="list-group list-group-flush dc-rows" aria-label="Assistants">
-        {{range .Assistants}}{{template "assistant_ctx_row.gohtml" (dict "Card" . "Active" (eq .ID $.ActiveID))}}{{end}}
+        {{range .Assistants}}{{template "assistant_ctx_row.gohtml" (dict "Card" . "Active" (eq .ID $.ActiveID) "Guest" $.Access.Guest)}}{{end}}
       </nav>
       {{else}}
-      <div class="p-3 text-secondary small">No assistant yet. The button above starts one.</div>
+      <div class="p-3 text-secondary small">No assistant yet.{{if not .Access.Guest}} The button above starts one.{{end}}</div>
       {{end}}
     </div>
   </div>
@@ -53,11 +57,14 @@
     <span class="d-flex align-items-center gap-2 min-w-0"><span class="dc-trunc">{{template "assistant_title.gohtml" .Title}}</span>{{if or .OpenJobs .Unfinished}}<span class="d-flex align-items-center gap-2 ms-auto flex-shrink-0">{{if .OpenJobs}}<span class="badge bg-purple-lt" title="Steers {{.OpenJobs}} coder{{if ne .OpenJobs 1}}s{{end}}"><i class="ti ti-steering-wheel me-1" aria-hidden="true"></i>{{.OpenJobs}}</span>{{end}}{{if .Unfinished}}<span class="badge bg-orange-lt">Unfinished</span>{{end}}</span>{{end}}</span>
     <span class="text-secondary small dc-trunc">{{.CoderLabel}} · {{.Messages}} message{{if ne .Messages 1}}s{{end}}{{if .Updated}} · <dc-time datetime="{{.Updated}}"></dc-time>{{end}}</span>
   </span>
+  {{if not $.Guest}}
   <span class="terminal-tab-menu" role="button" tabindex="-1" aria-label="Assistant actions" title="Actions" data-assistant-menu><i class="ti ti-dots" aria-hidden="true"></i></span>
   {{/* The grip is the phone's way into the drag and stands where the strip's
        stands, at the end of the row behind the three dots: a touch anywhere
-       else scrolls the list, a mouse drags the whole row. */}}
+       else scrolls the list, a mouse drags the whole row. A guest's row has
+       neither, it only opens the assistant. */}}
   <span class="dc-row-grip d-lg-none" data-assistant-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+  {{end}}
 </a>
 {{end}}
 {{end}}

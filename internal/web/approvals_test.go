@@ -19,15 +19,10 @@ import (
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
-	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/docker"
-	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/notify"
-	"github.com/marein/dev-cockpit/internal/restore"
 	"github.com/marein/dev-cockpit/internal/settings"
-	"github.com/marein/dev-cockpit/internal/shell"
-	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 var composeApprovalField = "approval-" + approvalComposeActions
@@ -556,27 +551,6 @@ func TestAnAssistantCannotApproveItself(t *testing.T) {
 	}
 	f.decide(t, q, false, false)
 	f.waitApprovalNotes(t, f.owner, 1)
-}
-
-// newDeleteFixture is the compose fixture with what a project delete walks
-// through on top: the purge over shells, the per project state, the delete
-// register and the route itself.
-func newDeleteFixture(t *testing.T) *composeFixture {
-	t.Helper()
-	f := newComposeFixture(t)
-	fakeTmux(t, "11111111-1111-4111-8111-111111111111", t.TempDir())
-	s := f.s
-	s.cfg = config.Config{StateDir: f.stateDir}
-	s.shells = shell.NewShells(config.Config{}, tmux.New(), s.projects, nil)
-	s.quickOpen = filesystem.NewQuickOpenCache()
-	s.commitDrafts = newCommitDrafts(f.stateDir)
-	s.searchDrafts = newSearchDrafts(f.stateDir)
-	s.lineComments = newLineComments(f.stateDir)
-	s.deletes = newProjectDeletes(f.stateDir)
-	s.restorer = restore.New(filepath.Join(f.stateDir, "terminal-restore.json"), func() bool { return false },
-		nil, s.shells, tmux.New(), s.notifier, nil, func() []string { return nil })
-	f.router.POST("/projects/delete", s.handleDeletes(s.projectDeleteKind(), "project", s.handleProjectDelete))
-	return f
 }
 
 // deleteAs posts the delete of the fixture's project over the local socket,
