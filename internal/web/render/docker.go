@@ -29,6 +29,20 @@ type DockerRunData struct {
 	Back string
 }
 
+// DockerLogsData feeds the read only logs of one container, its last Tail
+// lines, the page a guest of the shared project reads them on.
+type DockerLogsData struct {
+	Page
+	Project   string
+	Container string
+	Running   bool
+	Status    string
+	Tail      int
+	Output    string
+	OutputURL string
+	Back      string
+}
+
 // Failed reports whether the run has something to complain about, the one
 // thing that colors the status line.
 func (d DockerRunData) Failed() bool { return d.Run.Failure != "" }

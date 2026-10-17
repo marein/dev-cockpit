@@ -133,45 +133,6 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 	c.HTML(http.StatusOK, "coders_new.gohtml", data)
 }
 
-func (s *Server) handleCoderAttach(c *gin.Context) {
-	id := c.Param("id")
-	co, running, err := s.resolveRunning(id)
-	if err != nil {
-		s.redirectWithFlash(c, "/projects", "", err.Error())
-		return
-	}
-	// A grouped session lives on the split page; every link to its own page
-	// lands there with its pane focused.
-	if url, ok := s.splitPageURL(running.TabGroup, running.Identifier); ok {
-		c.Redirect(http.StatusSeeOther, url)
-		return
-	}
-	files, err := co.Coder().SessionRepository().ListFiles(running.Identifier)
-	if err != nil {
-		s.redirectWithFlash(c, "/projects", "", err.Error())
-		return
-	}
-	projectName := s.projects.ProjectNameFor(running.CWD)
-	s.terminalFocused(running.Identifier, projectName)
-	page := s.page(c, pageTitle(running.Name, projectName), "terminals")
-	page.HasTabStrip = true
-	c.HTML(http.StatusOK, "coder_attach.gohtml", render.CoderAttachData{
-		Page:            page,
-		Running:         running,
-		Identifier:      running.Identifier,
-		Coder:           co.ID(),
-		Launcher:        coder.LauncherForSession(co.Coder(), running.Identifier),
-		ProjectName:     projectName,
-		Files:           files,
-		MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
-		StreamURL:       "/coders/" + running.Identifier + "/stream",
-		ResizeURL:       "/coders/" + running.Identifier + "/resize",
-		InputURL:        "/coders/" + running.Identifier + "/input",
-		TextURL:         "/coders/" + running.Identifier + "/copy",
-		ConversationURL: "/coders/" + running.Identifier + "/conversation",
-	})
-}
-
 // handleCoderName returns just the current coder name as plain text, the
 // counterpart of handleShellName. The attach header pulls it on a terminals
 // event, so a rename made inside the coder CLI lands in the heading and the

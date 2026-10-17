@@ -4,7 +4,7 @@
      view, a right click opens the row's actions, the keyboard gestures of the
      strip work as before. The plus menu sits in the head. */}}
 {{define "terminals_ctx.gohtml"}}
-<terminal-tabs class="dc-ctx d-print-none" data-tabs-url="/terminal-tabs" data-tabs-vertical>
+<terminal-tabs class="dc-ctx d-print-none" data-tabs-url="{{.Access.Base}}/terminal-tabs" data-tabs-vertical{{if .Access.Guest}} data-tabs-guest{{end}}>
   <div class="dc-ctx-head">
     <button type="button" class="btn btn-icon btn-ghost-secondary dc-work-toggle" data-dc-focus="work" aria-label="Back to the terminal"><i class="ti ti-arrow-left" aria-hidden="true"></i></button>
     <h1 class="dc-ctx-title">Terminals</h1>

@@ -13,6 +13,18 @@ export function csrfToken() {
   return cachedToken;
 }
 
+// The address every path of the cockpit stands under on this page: empty for
+// the owner, the link's own for a guest of a shared project. Read once from
+// the head like the token, a page never moves from one to the other.
+let cachedBase;
+
+export function appPath(path) {
+  if (cachedBase === undefined) {
+    cachedBase = document.querySelector('meta[name="dc-base"]')?.getAttribute("content") || "";
+  }
+  return cachedBase + path;
+}
+
 export function csrfHeaders(extra = {}) {
   const token = csrfToken();
   if (token) {

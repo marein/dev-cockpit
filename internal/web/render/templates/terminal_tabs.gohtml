@@ -1,6 +1,6 @@
 {{/* The strip fragment. */}}
 {{define "terminal_tabs.gohtml"}}
-<terminal-tabs class="d-print-none" data-tabs-url="/terminal-tabs">
+<terminal-tabs class="d-print-none" data-tabs-url="{{.Access.Base}}/terminal-tabs"{{if .Access.Guest}} data-tabs-guest{{end}}>
   {{template "terminal_tabs_core.gohtml" .}}
 </terminal-tabs>
 {{end}}
@@ -67,11 +67,11 @@
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
       </span>
-      <span class="terminal-tab-close" data-tab-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
+      {{if or (not $.Access.Guest) (and .Coder ($.Access.Can "terminals"))}}<span class="terminal-tab-close" data-tab-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
         <i class="ti ti-x" aria-hidden="true"></i>
-      </span>
-      <span class="terminal-tab-menu d-lg-none" data-tab-menu role="button" tabindex="-1" aria-label="Options for {{.Name}}" title="Options"><i class="ti ti-dots" aria-hidden="true"></i></span>
-      <span class="terminal-tab-grip d-lg-none" data-tab-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>
+      </span>{{end}}
+      {{if not $.Access.Guest}}<span class="terminal-tab-menu d-lg-none" data-tab-menu role="button" tabindex="-1" aria-label="Options for {{.Name}}" title="Options"><i class="ti ti-dots" aria-hidden="true"></i></span>
+      <span class="terminal-tab-grip d-lg-none" data-tab-grip aria-hidden="true"><i class="ti ti-grip-vertical"></i></span>{{end}}
     </a>
     {{end}}
     {{end}}
@@ -81,7 +81,7 @@
 
 {{/* The plus menu: new coder or shell, the assistant, the editor, the
      inactive coders to resume. Cmd+T opens it. */}}
-{{define "terminal_tabs_new.gohtml"}}
+{{define "terminal_tabs_new.gohtml"}}{{if .Access.Can "terminals"}}
   <div class="dropdown terminal-tabs-new">
     <button type="button" class="btn btn-icon btn-ghost-secondary terminal-tabs-new-btn" data-tabs-new-menu data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" aria-label="New coder or shell" title="New coder or shell (Cmd+T)">
       <i class="ti ti-plus"></i>
@@ -93,7 +93,7 @@
       <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="shell" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
         <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
       </a>
-      {{if .QuickNav.HasInactiveCoders}}
+      {{if and .QuickNav.HasInactiveCoders (not .Access.Guest)}}
       <div class="dropdown-divider"></div>
       <h6 class="dropdown-header">Inactive coders</h6>
       <div data-tabs-resume-projects>
@@ -123,6 +123,7 @@
            empty state that makes the first one; and one editor link per
            project sorted client side like the resume groups. Never shown in
            the menu, which offers only what creates a terminal. */}}
+      {{if not .Access.Guest}}
       <div class="d-none">
         {{if not .QuickNav.Assistants}}
         <a data-tabs-assistant href="/assistants" title="Assistants">
@@ -140,6 +141,7 @@
         <a data-editor-project="{{$p.Name}}"{{with $p.SearchTags}} data-editor-tags="{{join . " "}}"{{end}} data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}" href="{{$p.EditorURL}}" tabindex="-1"><span class="terminal-tab-icon dc-term-icon" aria-hidden="true"><i class="ti ti-code"></i></span> {{if $p.Tags}}<span class="terminal-switcher-name dc-tagged"><span class="text-truncate">{{$p.Name}}</span>{{template "tag_pie.gohtml" $p.Tags}}</span>{{else}}<span class="terminal-switcher-name text-truncate">{{$p.Name}}</span>{{end}} <span class="terminal-switcher-project text-truncate">Editor</span></a>
         {{end}}
       </div>
+      {{end}}
     </div>
   </div>
-{{end}}
+{{end}}{{end}}

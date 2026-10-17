@@ -202,7 +202,10 @@ function linkItem(link) {
   };
 }
 
-export function containerMenuItems(info, { onShell } = {}) {
+// readOnly leaves out every entry that acts, for a guest of a shared
+// project: what stays are the addresses and, where the server offers them, the
+// read only logs.
+export function containerMenuItems(info, { onShell, readOnly = false } = {}) {
   const items = [];
   // No status line: what the daemon calls the uptime is a snapshot of the last
   // cache refresh and ages badly, and the icon color already says running,
@@ -212,6 +215,7 @@ export function containerMenuItems(info, { onShell } = {}) {
     items.push({ divider: true });
   }
   items.push(...linkItems(info.links));
+  if (info.logs) items.push({ label: "Logs", icon: "ti-file-text", href: info.logs });
   if (info.running && info.cli !== false && onShell) {
     items.push({ label: "Shell", icon: "ti-terminal-2", action: () => void onShell(info, "shell") });
     items.push({ label: "Logs", icon: "ti-file-text", action: () => void onShell(info, "logs-shell") });
@@ -224,6 +228,7 @@ export function containerMenuItems(info, { onShell } = {}) {
       },
     });
   }
+  if (readOnly) return items;
   items.push({ divider: true });
   if (info.running) {
     items.push({ label: "Restart", icon: "ti-refresh", warn: true, action: () => void lifecycleAction(info.id, "restart", info.name) });
@@ -247,7 +252,7 @@ export function containerMenuItems(info, { onShell } = {}) {
 // many there are, and opening it opens the same menu again with that
 // container's addresses and a way back (onDrill). Picking the first of a
 // dozen hosts for somebody is precisely what the cockpit cannot know.
-export function projectMenuItems({ project, containers = [], stacks = [], actions = [], onLogs, onDrill, back = true } = {}) {
+export function projectMenuItems({ project, containers = [], stacks = [], actions = [], onLogs, onDrill, back = true, readOnly = false } = {}) {
   const items = [];
   containers.forEach((container) => {
     const links = container.links || [];
@@ -274,12 +279,12 @@ export function projectMenuItems({ project, containers = [], stacks = [], action
   });
   stacks.forEach((stack) => {
     if (items.length) items.push({ divider: true });
-    items.push(...stackMenuItems(stack, project, actions, onLogs, back));
+    items.push(...stackMenuItems(stack, project, actions, onLogs, back, readOnly));
   });
   return items;
 }
 
-function stackMenuItems(stack, project, actions, onLogs, back) {
+function stackMenuItems(stack, project, actions, onLogs, back, readOnly) {
   const items = [];
   const suffix = stack.label ? ` (${stack.label})` : "";
   items.push({
@@ -306,7 +311,7 @@ function stackMenuItems(stack, project, actions, onLogs, back) {
       href: back ? withReturn(stack.run.url) : stack.run.url,
     });
   }
-  if (stack.busy) return items;
+  if (stack.busy || readOnly) return items;
   if (!actions.length) {
     items.push({ label: "No compose actions configured.", icon: "ti-plug-off", disabled: true });
     items.push({ label: "Restore the default actions", icon: "ti-restore", action: () => void restoreActions() });

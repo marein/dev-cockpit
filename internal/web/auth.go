@@ -193,6 +193,9 @@ func (s *Server) assistantName(id string) string {
 }
 
 func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
+	if g, ok := guestOf(c); ok {
+		return s.guestPage(c, g, title, activeTab)
+	}
 	sess := ginsessions.Default(c)
 	message, _ := sess.Get(flashMessageKey).(string)
 	level, _ := sess.Get(flashLevelKey).(string)

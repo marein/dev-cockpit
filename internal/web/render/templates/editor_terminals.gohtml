@@ -7,9 +7,9 @@
           title="{{.Name}}">
     <span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if .Steered}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
     <span class="editor-term-tab-name text-truncate">{{.Name}}</span>
-    <span class="editor-term-tab-close" data-term-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
+    {{if or (not $.Access.Guest) (and .Coder ($.Access.Can "terminals"))}}<span class="editor-term-tab-close" data-term-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
       <i class="ti ti-x" aria-hidden="true"></i>
-    </span>
+    </span>{{end}}
   </button>
   {{end}}
 </div>
@@ -17,7 +17,7 @@
   {{range .Sessions}}
   <div class="editor-term-pane attach-stage" data-term-pane="{{.ID}}" data-term-kind="{{.Kind}}"
        data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}>
-    {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL)}}
+    {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL "Typing" (ne .InputURL ""))}}
   </div>
   {{end}}
 </div>

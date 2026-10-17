@@ -70,35 +70,6 @@ func (s *Server) handleShellCreate(c *gin.Context) {
 	s.createLanded(c, "/shells/"+id, "", "")
 }
 
-func (s *Server) handleShellAttach(c *gin.Context) {
-	id := c.Param("id")
-	sh, err := s.shells.ResolveRunning(id)
-	if err != nil {
-		s.redirectWithFlash(c, "/projects", "", err.Error())
-		return
-	}
-	// A grouped shell lives on the split page; every link to its own page
-	// lands there with its pane focused.
-	if url, ok := s.splitPageURL(sh.TabGroup, sh.Identifier); ok {
-		c.Redirect(http.StatusSeeOther, url)
-		return
-	}
-	projectName := s.projects.ProjectNameFor(sh.CWD)
-	s.terminalFocused(sh.Identifier, projectName)
-	page := s.page(c, pageTitle(sh.Name, projectName), "terminals")
-	page.HasTabStrip = true
-	c.HTML(http.StatusOK, "shell_attach.gohtml", render.ShellAttachData{
-		Page:        page,
-		Shell:       sh,
-		ProjectName: projectName,
-		StreamURL:   "/shells/" + sh.Identifier + "/stream",
-		ResizeURL:   "/shells/" + sh.Identifier + "/resize",
-		InputURL:    "/shells/" + sh.Identifier + "/input",
-		TextURL:     "/shells/" + sh.Identifier + "/copy",
-		RenameURL:   "/shells/" + sh.Identifier + "/rename",
-	})
-}
-
 func (s *Server) handleShellRename(c *gin.Context) {
 	sh, err := s.shells.Rename(c.Param("id"), c.PostForm("name"))
 	if err != nil {

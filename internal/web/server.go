@@ -37,6 +37,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/restore"
 	"github.com/marein/dev-cockpit/internal/settings"
+	"github.com/marein/dev-cockpit/internal/share"
 	"github.com/marein/dev-cockpit/internal/shell"
 	"github.com/marein/dev-cockpit/internal/update"
 	"github.com/marein/dev-cockpit/internal/voice"
@@ -168,7 +169,9 @@ type Server struct {
 	// approvals are the actions assistants asked for that wait for the
 	// user's approval.
 	approvals *approval.Service
-	handler   http.Handler
+	// shares are the links a guest opens one project through.
+	shares  *share.Store
+	handler http.Handler
 }
 
 // localCallKey marks a request that arrived on the local socket, see
@@ -236,6 +239,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		voice:           voiceService,
 		plugins:         plugins,
 		deletes:         newProjectDeletes(cfg.StateDir),
+		shares:          share.NewStore(cfg.StateDir),
 		loginLimiter: newLoggingLoginLimiter(
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
@@ -303,7 +307,7 @@ func (s *Server) newHandler() (http.Handler, error) {
 	if err := r.SetTrustedProxies(s.cfg.TrustedProxies); err != nil {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}
-	r.Use(gin.Logger(), gin.CustomRecovery(s.recoveryHandler))
+	r.Use(gin.LoggerWithWriter(redactingWriter{gin.DefaultWriter}), gin.CustomRecoveryWithWriter(redactingWriter{gin.DefaultErrorWriter}, s.recoveryHandler))
 	// No WithMinLength: gin-contrib/gzip (<= v1.2.6) drops its buffered prefix
 	// when a single write of minLength+ bytes arrives while the buffer is still
 	// below the threshold, truncating responses whose head is small chunks

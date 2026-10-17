@@ -422,6 +422,16 @@ func (s *Shells) AttachStream(rawID, rawCols, rawRows string) (terminal.Attachme
 	return s.streams.Attach(sh.TmuxSession, rawCols, rawRows)
 }
 
+// WatchStream opens a view on a shell that only reads, for a guest of a
+// shared project: it leaves the pane's size and the owner's browsers alone.
+func (s *Shells) WatchStream(rawID string) (*terminal.View, terminal.Attachment, error) {
+	sh, err := s.ResolveRunning(rawID)
+	if err != nil {
+		return nil, terminal.Attachment{}, err
+	}
+	return s.streams.Watch(sh.TmuxSession)
+}
+
 // RefreshStream returns a new snapshot when another browser reset this stream.
 func (s *Shells) RefreshStream(name string, generation int64) (terminal.Attachment, bool) {
 	return s.streams.Refresh(name, generation)

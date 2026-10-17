@@ -14,6 +14,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/project"
@@ -29,21 +30,25 @@ import (
 // conversation's bubbles carry them in their markup. The assistant's chat lies
 // in no project, its bubbles link the absolute paths of every project's files.
 
-// fileLinker links the mentions of the files of one project.
+// fileLinker links the mentions of the files of one project, into the editor
+// under base, a guest's link or the owner's root.
 type fileLinker struct {
 	refs    *filesystem.FileRefs
 	project string
 	root    string
+	base    string
 }
 
-// fileLinker answers the linker of a terminal in cwd, nil for one outside
-// every project, which links nothing.
-func (s *Server) fileLinker(cwd string) *fileLinker {
+// fileLinker answers the linker of a terminal in cwd for the request c, nil
+// for one outside every project, which links nothing.
+func (s *Server) fileLinker(c *gin.Context, cwd string) *fileLinker {
 	p, ok := s.projectAt(cwd)
 	if !ok {
 		return nil
 	}
-	return projectLinker(p)
+	l := projectLinker(p)
+	l.base = accessOf(c).Base
+	return l
 }
 
 func projectLinker(p project.Project) *fileLinker {
@@ -98,7 +103,7 @@ func (l *pathLinker) linkedText(text string) string {
 		}
 		end := start + ref.End
 		b.WriteString(template.HTMLEscapeString(text[at:start]))
-		b.WriteString(fileAnchor(linker.project, ref, text[start:end]))
+		b.WriteString(fileAnchor(editorFileURL(linker.project, ref), text[start:end]))
 		at = end
 	}
 	b.WriteString(template.HTMLEscapeString(text[at:]))
@@ -170,7 +175,7 @@ func (l *fileLinker) newestFileLinks(text string, cols int) (links []fileLink) {
 	for _, span := range l.rowSpans(text[from:], cols) {
 		start, end := from+span.start, from+span.end
 		units += filesystem.UTF16Len(text[at:start])
-		link := fileLink{Start: units, End: units + filesystem.UTF16Len(text[start:end]), Href: editorFileURL(l.project, span.ref)}
+		link := fileLink{Start: units, End: units + filesystem.UTF16Len(text[start:end]), Href: l.base + editorFileURL(l.project, span.ref)}
 		links = append(links, link)
 		at, units = end, link.End
 	}
@@ -244,16 +249,16 @@ func (l *fileLinker) linkedText(text string) string {
 	at := 0
 	for _, ref := range l.refs.Find(text) {
 		b.WriteString(template.HTMLEscapeString(text[at:ref.Start]))
-		b.WriteString(fileAnchor(l.project, ref, text[ref.Start:ref.End]))
+		b.WriteString(fileAnchor(l.base+editorFileURL(l.project, ref), text[ref.Start:ref.End]))
 		at = ref.End
 	}
 	b.WriteString(template.HTMLEscapeString(text[at:]))
 	return b.String()
 }
 
-// fileAnchor is the link of a mention that shows as shown.
-func fileAnchor(project string, ref filesystem.FileRef, shown string) string {
-	return `<a href="` + template.HTMLEscapeString(editorFileURL(project, ref)) + `" data-file-link>` + template.HTMLEscapeString(shown) + "</a>"
+// fileAnchor is the link to href of a mention that shows as shown.
+func fileAnchor(href, shown string) string {
+	return `<a href="` + template.HTMLEscapeString(href) + `" data-file-link>` + template.HTMLEscapeString(shown) + "</a>"
 }
 
 // fileSpan is the bytes of a text one mention shows, or one row's part of a

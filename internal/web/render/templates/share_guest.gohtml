@@ -1,0 +1,20 @@
+{{/* A guest's areas of a link's projects, the rail on a wide screen and the
+     tab bar on a phone: the editor of the project the page belongs to, or of
+     the link's first one, and the terminals, under the link's address.
+     Nothing of the owner's cockpit stands here. */}}
+{{define "guest_rail.gohtml"}}
+<nav class="dc-rail d-print-none" aria-label="Areas">
+  <span class="dc-rail-mark" title="Shared read only" aria-label="Shared read only"><i class="ti ti-share icon" aria-hidden="true"></i></span>
+  <a class="dc-rail-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="{{template "guest_editor_href" .}}"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
+  <a class="dc-rail-btn{{if eq .ActiveTab "terminals"}} active{{end}}" href="{{.Access.Base}}/terminals"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i><span>Terminals</span></a>
+</nav>
+{{end}}
+
+{{define "guest_tabbar.gohtml"}}
+<nav class="dc-tabbar d-print-none" aria-label="Areas">
+  <a class="dc-tabbar-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="{{template "guest_editor_href" .}}"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
+  <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "terminals"}} active{{end}}" data-ctx-area="terminals"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i><span>Terminals</span></button>
+</nav>
+{{end}}
+
+{{define "guest_editor_href"}}{{.Access.Base}}{{with .Access.Project}}/projects/{{.}}/editor{{end}}{{end}}

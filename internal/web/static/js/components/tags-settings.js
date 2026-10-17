@@ -1,4 +1,3 @@
-import { escapeHtml } from "@dc/dom";
 import { matchesTokens } from "@dc/filter";
 
 const tidy = (text) => text.trim().split(/\s+/).filter(Boolean).join(" ");
@@ -333,9 +332,7 @@ class TagsSettings extends HTMLElement {
   }
 
   // ask puts the question a save that removes tags asks on the form, the
-  // cockpit's data-confirm, naming the projects they come off. The question
-  // becomes the dialog's title, which SweetAlert reads as HTML, so a tag's
-  // name is escaped there; the line under it is plain text.
+  // cockpit's data-confirm, naming the projects they come off.
   ask(removed) {
     const form = this.form;
     if (removed.length === 0) {
@@ -346,7 +343,7 @@ class TagsSettings extends HTMLElement {
     }
     const carriers = [...new Set(removed.flatMap((row) => this.state(row).carriers))].sort();
     const one = removed.length === 1;
-    form.dataset.confirm = one ? `Remove tag "${escapeHtml(removed[0].dataset.loadedName)}"?` : `Remove ${removed.length} tags?`;
+    form.dataset.confirm = one ? `Remove tag "${removed[0].dataset.loadedName}"?` : `Remove ${removed.length} tags?`;
     form.dataset.confirmText = carriers.length === 0
       ? `No project carries ${one ? "it" : "them"}.`
       : `${one ? "It comes" : "They come"} off ${counted(carriers.length, "project", "projects")}: ${carriers.join(", ")}.`;

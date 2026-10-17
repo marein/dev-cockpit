@@ -3,7 +3,6 @@ package web
 import (
 	"errors"
 	"io/fs"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -30,7 +29,7 @@ func userFacingError(c *gin.Context, err error) string {
 		linkErr *os.LinkError
 	)
 	if errors.As(err, &pathErr) || errors.As(err, &linkErr) {
-		log.Printf("%s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+		logRequestError(c, err)
 		return "The operation could not be completed."
 	}
 	return err.Error()

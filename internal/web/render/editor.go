@@ -96,6 +96,7 @@ type EditorTerminalsData struct {
 	Sessions  []EditorTerminal
 	Inactive  []EditorInactiveCoder
 	CSRFToken string
+	Access    Access
 }
 
 // EditorInactiveCoder is one resumable coder in the panel's + menu.

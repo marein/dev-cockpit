@@ -700,6 +700,7 @@ func DocsTopics() []DocsTopic {
 				},
 			},
 		},
+		docsSharingTopic(),
 		{
 			Key:      "settings",
 			Title:    "Settings and data",

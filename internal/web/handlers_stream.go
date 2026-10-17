@@ -32,11 +32,21 @@ func (s *Server) handleCoderStream(c *gin.Context) {
 		c.String(http.StatusNotFound, err.Error())
 		return
 	}
+	s.applyStreamTheme(c)
 	s.streamTerminal(c, co, id)
 }
 
 func (s *Server) handleShellStream(c *gin.Context) {
+	s.applyStreamTheme(c)
 	s.streamTerminal(c, s.shells, c.Param("id"))
+}
+
+// applyStreamTheme takes the scheme colors a browser of the owner sends along
+// with its stream. It sits in the owner's handlers and not in streamTerminal,
+// which a guest of a shared project streams through as well, and a guest
+// never changes the terminal's theme.
+func (s *Server) applyStreamTheme(c *gin.Context) {
+	s.updateTerminalTheme(c.Query("bg"), c.Query("fg"))
 }
 
 func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
@@ -58,7 +68,6 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	}
 
 	query := c.Request.URL.Query()
-	s.updateTerminalTheme(query.Get("bg"), query.Get("fg"))
 	attached, err := src.AttachStream(id, query.Get("cols"), query.Get("rows"))
 	if err != nil {
 		_ = writeSSEvent(w, "terminal-error", userFacingError(c, err))
@@ -67,6 +76,9 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 	defer src.DetachStream(attached.Session)
 	offset := attached.Offset
 	generation := attached.Generation
+	// shown is the attachment whose size the browser holds now, the one a
+	// change of the modes is sent with.
+	shown := attached
 	if err := writeSSEvent(w, "terminal-size", sizePayload(attached)); err != nil {
 		return
 	}
@@ -107,6 +119,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 		if refreshed, ok := src.RefreshStream(attached.Session, generation); ok {
 			offset = refreshed.Offset
 			generation = refreshed.Generation
+			shown = refreshed
 			if err := writeSSEvent(w, "terminal-size", sizePayload(refreshed)); err != nil {
 				return
 			}
@@ -123,6 +136,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 			if snap, ok := src.Resnapshot(attached.Session); ok {
 				offset = snap.Offset
 				generation = snap.Generation
+				shown = snap
 				if err := writeSSEvent(w, "terminal-size", sizePayload(snap)); err != nil {
 					return
 				}
@@ -141,7 +155,7 @@ func (s *Server) streamTerminal(c *gin.Context, src terminalStream, id string) {
 				modesReadAt = time.Now()
 				if fresh, ok := src.StreamModes(attached.Session); ok && fresh != modes {
 					modes = fresh
-					if err := writeSSEvent(w, "terminal-size", modePayload(attached, fresh)); err != nil {
+					if err := writeSSEvent(w, "terminal-size", modePayload(shown, fresh)); err != nil {
 						return
 					}
 				}

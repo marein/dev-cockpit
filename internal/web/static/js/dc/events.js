@@ -1,3 +1,5 @@
+import { appPath } from "@dc/http";
+
 // Single server to client event stream. One EventSource to /events carries every
 // server push as a {type, data} envelope under the SSE event name "dc"; each frame
 // is re-dispatched as a dc:<type> CustomEvent on document, so any custom element
@@ -8,7 +10,7 @@
 // on demand the first time a component imports it; the notification bell imports
 // it and sits on every app page, so the stream is up wherever a coder or shell lives.
 
-const STREAM_URL = "/events";
+const STREAM_URL = appPath("/events");
 // A dead-but-not-closed socket (a frozen background tab, a silently dropped NAT
 // mapping) never fires an error, so the watchdog treats the stream as stale when no
 // frame arrives within STALE_MS. The server sends a "ping" frame every 15s, so a

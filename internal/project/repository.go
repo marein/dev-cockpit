@@ -217,6 +217,11 @@ func (r *Repository) enrichProjects(projects []Project) {
 	}
 }
 
+// ErrMissing is what ValidatePath answers for a project that does not exist,
+// so a caller can tell a project gone from disk apart from one that could not
+// be read.
+var ErrMissing = errors.New("Selected project does not exist")
+
 // ValidatePath checks that raw is a non-symlink project directly under the root.
 func (r *Repository) ValidatePath(raw string) (string, error) {
 	workdir := strings.TrimSpace(raw)
@@ -229,7 +234,7 @@ func (r *Repository) ValidatePath(raw string) (string, error) {
 	}
 	info, err := os.Lstat(workdir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("Selected project does not exist: %s", workdir)
+		return "", fmt.Errorf("%w: %s", ErrMissing, workdir)
 	}
 	if err != nil {
 		// A path the host could not even look up is longer than it takes or

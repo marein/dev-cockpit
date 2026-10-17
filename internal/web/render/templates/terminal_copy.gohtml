@@ -6,9 +6,9 @@
      one frame: a coder's recorded conversation as bubbles, pulled from
      ConversationURL, and plain text, a shell's history or a coder's screen,
      pulled from TextURL. A coder's view ends in one line at the frame's foot,
-     outside the scroller, saying that typing goes to the terminal. The
-     terminal-copy element fills it when it opens and takes the snapshot away
-     when it closes. */}}
+     outside the scroller, saying that typing goes to the terminal, when
+     somebody may type there (Typing). The terminal-copy element fills it when
+     it opens and takes the snapshot away when it closes. */}}
 {{define "terminal_copy_surface.gohtml"}}
 <terminal-copy class="dc-copy" terminal-id="{{.ID}}" text-url="{{.TextURL}}"{{if .ConversationURL}} conversation-url="{{.ConversationURL}}"{{end}} hidden>
   <div class="dc-copy-head">
@@ -29,7 +29,7 @@
     <pre class="dc-copy-text" data-copy-text hidden></pre>
     <div class="text-center py-5" data-copy-waiting hidden><div class="spinner-border text-secondary" role="status"></div></div>
   </div>
-  {{if .ConversationURL}}<div class="flex-shrink-0 text-center text-secondary small px-2 py-1" data-copy-hint>Read and copy here, type in the terminal. Chatting in this view may come later.</div>{{end}}
+  {{if and .ConversationURL .Typing}}<div class="flex-shrink-0 text-center text-secondary small px-2 py-1" data-copy-hint>Read and copy here, type in the terminal. Chatting in this view may come later.</div>{{end}}
 </terminal-copy>
 {{end}}
 

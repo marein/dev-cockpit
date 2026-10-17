@@ -1,0 +1,137 @@
+{{define "settings_sharing.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Sharing</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <p class="text-secondary">A link opens projects read only to somebody without a login: every file, <code>.env</code> and ignored files included, the git history, the line comments, every coder and shell live and the containers with their logs. Nothing can be changed through it. A link ends at its expiry, when it is revoked here and when its last project goes.</p>
+
+  {{with .Created}}
+  <div class="card mb-4" data-share-created>
+    <div class="card-body">
+      <p>Anyone with this link sees {{range $i, $p := .Projects}}{{if $i}}, {{end}}<span class="fw-medium">{{$p}}</span>{{end}} read only until <dc-time datetime="{{.ExpiresAt}}"></dc-time>.</p>
+      <dc-copy-field class="input-group">
+        <input type="text" class="form-control font-monospace" value="{{.URL}}" readonly aria-label="Share link" data-share-url>
+        <button type="button" class="btn" data-copy><i class="ti ti-copy me-1" aria-hidden="true"></i>Copy</button>
+      </dc-copy-field>
+      <div class="form-hint">The link is shown this once. A project added to it below opens under the same link.</div>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="mb-5" id="share-new">
+    {{if and (eq $.FlashProject "share-new") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+    <h3 class="card-title">New link</h3>
+    {{if .Projects}}
+    <form method="post" action="/settings/sharing" data-share-new>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="form" value="create">
+      <div class="row g-3 mb-3">
+        <div class="col-sm-6">
+          <label class="form-label required" for="share-project">Project</label>
+          <select class="form-select" id="share-project" name="project" required>
+            {{range .Projects}}<option value="{{.}}"{{if eq . $.Pick}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label" for="share-name">Name</label>
+          <input type="text" class="form-control" id="share-name" name="name" maxlength="{{.NameMax}}" placeholder="For whom it is" autocomplete="off">
+        </div>
+      </div>
+      <label class="form-label required" for="share-amount">Expires after</label>
+      <div class="input-group">
+        <input type="number" class="form-control" id="share-amount" name="amount" value="1" min="1" max="999" step="1" required>
+        <select class="form-select" name="unit" aria-label="Unit">
+          {{range .Units}}<option value="{{.Value}}"{{if eq .Value "hours"}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+      </div>
+      <div class="form-hint mb-3">At most 30 days. More projects go on a link once it stands.</div>
+      <button type="submit" class="btn btn-primary">Make link</button>
+    </form>
+    {{else}}
+    <p class="text-secondary">There is no project to share yet.</p>
+    {{end}}
+  </div>
+
+  <h3 class="card-title">Links</h3>
+  {{range .Shares}}
+  {{$link := .}}
+  <div class="card mb-3" id="share-{{.ID}}" data-share-row="{{.ID}}">
+    <div class="card-header">
+      <div class="min-w-0 flex-fill">
+        <div class="card-title text-truncate" data-share-name>{{if .Name}}{{.Name}}{{else}}<span class="text-secondary">Unnamed link</span>{{end}}</div>
+        <div class="text-secondary small">Made <dc-time datetime="{{.CreatedAt}}" relative></dc-time>, expires <dc-time datetime="{{.ExpiresAt}}"></dc-time></div>
+      </div>
+      <div class="card-actions">
+        <form method="post" action="/settings/sharing" data-confirm="Revoke {{if .Name}}the link &quot;{{.Name}}&quot;{{else}}this link{{end}}? It stops working at once." data-confirm-button="Revoke">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="form" value="revoke">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <button type="submit" class="btn btn-sm btn-outline-danger" data-share-revoke>Revoke</button>
+        </form>
+      </div>
+    </div>
+    {{if and (eq $.FlashProject (printf "share-%s" .ID)) $.Flash.Message}}<div class="card-body pb-0">{{template "settings_section_flash" $}}</div>{{end}}
+    <div class="list-group list-group-flush">
+      {{range .Projects}}
+      <div class="list-group-item d-flex align-items-center gap-2" data-share-project="{{.Name}}">
+        <i class="ti ti-folder text-secondary" aria-hidden="true"></i>
+        <a class="flex-fill min-w-0 text-reset text-truncate" href="/projects/{{.Name}}/editor">{{.Name}}</a>
+        <span class="badge bg-secondary-lt" data-share-grants>{{.Grants}}</span>
+        <form method="post" action="/settings/sharing"{{if eq (len $link.Projects) 1}} data-confirm="&quot;{{.Name}}&quot; is the link's only project. Removing it ends the link." data-confirm-button="Remove"{{end}}>
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="form" value="remove">
+          <input type="hidden" name="id" value="{{$link.ID}}">
+          <input type="hidden" name="project" value="{{.Name}}">
+          <button type="submit" class="btn btn-sm btn-icon btn-ghost-danger" aria-label="Remove {{.Name}} from the link" title="Remove from the link" data-share-remove><i class="ti ti-x" aria-hidden="true"></i></button>
+        </form>
+      </div>
+      {{end}}
+    </div>
+    <div class="card-body">
+      {{if .Addable}}
+      <form method="post" action="/settings/sharing" class="d-flex gap-2 mb-3" data-share-add>
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="form" value="add">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <select class="form-select" name="project" aria-label="Project to add">
+          {{range .Addable}}<option value="{{.}}"{{if eq . $link.Pick}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+        <button type="submit" class="btn flex-shrink-0">Add project</button>
+      </form>
+      {{end}}
+      <form method="post" action="/settings/sharing" data-share-update>
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="form" value="update">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <div class="row g-2 align-items-end">
+          <div class="col-sm">
+            <label class="form-label" for="share-name-{{.ID}}">Name</label>
+            <input type="text" class="form-control" id="share-name-{{.ID}}" name="name" value="{{.Name}}" maxlength="{{$.NameMax}}" placeholder="For whom it is" autocomplete="off">
+          </div>
+          <div class="col-sm">
+            <label class="form-label" for="share-amount-{{.ID}}">Expires after</label>
+            <div class="input-group">
+              <input type="number" class="form-control" id="share-amount-{{.ID}}" name="amount" min="1" max="999" step="1" placeholder="Unchanged">
+              <select class="form-select" name="unit" aria-label="Unit">
+                {{range $.Units}}<option value="{{.Value}}"{{if eq .Value "hours"}} selected{{end}}>{{.Label}}</option>{{end}}
+              </select>
+            </div>
+          </div>
+          <div class="col-sm-auto">
+            <button type="submit" class="btn">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty" data-share-empty>
+    <div class="empty-icon"><i class="ti ti-share fs-1" aria-hidden="true"></i></div>
+    <p class="empty-title">No link stands</p>
+  </div>
+  {{end}}
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

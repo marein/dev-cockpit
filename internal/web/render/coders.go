@@ -59,6 +59,7 @@ type CoderAttachData struct {
 	Coder           string // owning coder id
 	Launcher        string
 	ProjectName     string // owning project, empty when CWD is outside the projects root
+	ProjectURL      string
 	Files           []filesystem.File
 	MaxUploadSizeMB string
 	Error           string

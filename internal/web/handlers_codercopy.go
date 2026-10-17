@@ -4,7 +4,6 @@ import (
 	"errors"
 	"html/template"
 	"io/fs"
-	"log"
 	"net/http"
 	"strings"
 
@@ -26,7 +25,7 @@ func (s *Server) handleCoderConversation(c *gin.Context) {
 		c.String(http.StatusNotFound, userFacingError(c, err))
 		return
 	}
-	renderCoderConversation(c, co, id, s.fileLinker(running.CWD))
+	renderCoderConversation(c, co, id, s.fileLinker(c, running.CWD))
 }
 
 // renderCoderConversation answers the page for a running session. A record
@@ -42,7 +41,7 @@ func renderCoderConversation(c *gin.Context, co *coder.Manager, id string, links
 	case errors.Is(err, fs.ErrNotExist):
 		data.Note = "Nothing was said yet."
 	case err != nil:
-		log.Printf("%s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+		logRequestError(c, err)
 		data.Note = userFacingError(c, err)
 	case len(conversation.Messages) == 0:
 		data.Note = "Nothing was said yet."

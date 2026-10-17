@@ -58,5 +58,5 @@ func (s *Server) handleTerminalCopy(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	c.JSON(http.StatusOK, terminalCopy{Text: text, Links: s.fileLinker(ref.CWD).newestFileLinks(text, cols), Kind: ref.Kind, Screen: true})
+	c.JSON(http.StatusOK, terminalCopy{Text: text, Links: s.fileLinker(c, ref.CWD).newestFileLinks(text, cols), Kind: ref.Kind, Screen: true})
 }

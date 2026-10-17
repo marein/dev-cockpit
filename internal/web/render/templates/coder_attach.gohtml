@@ -2,13 +2,14 @@
 {{template "app_start.gohtml" .}}
 {{template "terminals_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
-<dc-steered-mark class="d-inline-flex d-lg-none" src="/coders/{{.Running.Identifier}}/steered">
+{{if .Access.Guest}}<span class="dc-term-icon running d-lg-none" aria-hidden="true">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}</span>{{else}}<dc-steered-mark class="d-inline-flex d-lg-none" src="/coders/{{.Running.Identifier}}/steered">
   {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Launcher" .Launcher "Steered" (index $.Steered .Running.Identifier) "Working" (index $.Working .Running.Identifier)) -}}
-</dc-steered-mark>
-<dc-live-name class="d-flex min-w-0" name-url="/coders/{{.Running.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit"{{with coderRename .Coder}} rename-id="{{$.Running.Identifier}}" rename-mode="{{.}}" coder-label="{{coderLabel $.Coder}}"{{end}}>
-  <h1 class="dc-work-title dc-mono" data-name-label{{if coderRename .Coder}} role="button" tabindex="0" title="Click to rename"{{end}}>{{.Running.Name}}</h1>
+</dc-steered-mark>{{end}}
+{{$rename := ""}}{{if .Access.Can "terminals"}}{{$rename = coderRename .Coder}}{{end}}
+<dc-live-name class="d-flex min-w-0" name-url="{{.Access.Base}}/coders/{{.Running.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit"{{with $rename}} rename-id="{{$.Running.Identifier}}" rename-mode="{{.}}" coder-label="{{coderLabel $.Coder}}"{{end}}>
+  <h1 class="dc-work-title dc-mono" data-name-label{{if $rename}} role="button" tabindex="0" title="Click to rename"{{end}}>{{.Running.Name}}</h1>
 </dc-live-name>
-{{if .ProjectName}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="/projects#project-{{.ProjectName}}" title="Back to {{.ProjectName}}">{{.ProjectName}}</a>{{end}}
+{{if .ProjectName}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="{{.ProjectURL}}" title="Back to {{.ProjectName}}">{{.ProjectName}}</a>{{end}}
 <span class="flex-fill"></span>
 <div class="attach-settings dropdown">
   <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
@@ -26,28 +27,27 @@
          front of it. */}}
     <div class="attach-stage min-w-0 w-100">
       <terminal-attach id="terminal" class="attach-terminal min-w-0 w-100 position-relative" terminal-id="{{.Identifier}}"
-                      stream-url="{{.StreamURL}}" resize-url="{{.ResizeURL}}">
+                      stream-url="{{.StreamURL}}"{{with .ResizeURL}} resize-url="{{.}}"{{end}}{{if not .InputURL}} read-only{{end}}>
         <terminal-scroll-zone active aria-hidden="false"></terminal-scroll-zone>
       </terminal-attach>
-      {{template "terminal_copy_surface.gohtml" (dict "ID" .Identifier "TextURL" .TextURL "ConversationURL" .ConversationURL)}}
+      {{template "terminal_copy_surface.gohtml" (dict "ID" .Identifier "TextURL" .TextURL "ConversationURL" .ConversationURL "Typing" (ne .InputURL ""))}}
     </div>
     <terminal-swipe-nav aria-hidden="true"></terminal-swipe-nav>
   </div>
 
   <div class="attach-footer min-w-0">
-    {{template "terminal_footer_coder.gohtml" "#coder-files-modal"}}
+    {{if .InputURL}}{{template "terminal_footer_coder.gohtml" "#coder-files-modal"}}{{else}}{{template "terminal_footer_watch.gohtml" (dict "Coder" true)}}{{end}}
   </div>
 </div>
 
-{{template "terminal_shortcuts_modal.gohtml"}}
+{{if .InputURL}}{{template "terminal_shortcuts_modal.gohtml"}}{{end}}
 
-<div class="modal modal-blur fade" id="coder-files-modal" tabindex="-1" aria-labelledby="coder-files-modal-title-{{.Identifier}}" aria-hidden="true" data-coder-files-modal>
+{{if .InputURL}}<div class="modal modal-blur fade" id="coder-files-modal" tabindex="-1" aria-labelledby="coder-files-modal-title-{{.Identifier}}" aria-hidden="true" data-coder-files-modal>
   <div class="modal-dialog modal-lg modal-dialog-centered">
     {{template "coder_files_modal.gohtml" .}}
   </div>
 </div>
 
-
-<terminal-input terminal-id="{{.Identifier}}" input-url="{{.InputURL}}"></terminal-input>
+<terminal-input terminal-id="{{.Identifier}}" input-url="{{.InputURL}}"></terminal-input>{{end}}
 {{template "app_end.gohtml" .}}
 {{end}}

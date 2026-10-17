@@ -9,6 +9,7 @@
   <script>(()=>{let s="";try{s=window.localStorage.getItem("dc-theme")||""}catch(e){}const f=s==="light"||s==="dark"?s:"";(f?f==="dark":window.matchMedia("(prefers-color-scheme:dark)").matches)&&document.documentElement.setAttribute("data-bs-theme","dark");if(!f)return;const m=document.querySelector('meta[name="theme-color"][media*="'+f+'"]');m&&document.querySelectorAll('meta[name="theme-color"]').forEach((t)=>t.setAttribute("content",m.getAttribute("content")))})();</script>
   <meta name="csrf-token" content="{{.CSRFToken}}">
   <meta name="dc-jingle" content="{{.Jingle}}">
+  <meta name="dc-base" content="{{.Access.Base}}">
   <meta name="dc-build" content="{{assetBuild}}">
   <title>{{if .Title}}{{.Title}} - {{end}}{{$appName}}</title>
   <link rel="icon" href="{{asset "/favicon.svg"}}" type="image/svg+xml">
@@ -76,6 +77,8 @@
       "@dc/pull": "{{asset "/js/dc/pull.js"}}",
       "@dc/cost-chart": "{{asset "/js/dc/cost-chart.js"}}",
       "@dc/tags": "{{asset "/js/dc/tags.js"}}",
+      "@dc/terminal": "{{asset "/js/dc/terminal.js"}}",
+      "@dc/single-flight": "{{asset "/js/dc/single-flight.js"}}",
       "dc-notifications": "{{asset "/js/components/notifications.js"}}",
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
@@ -106,6 +109,7 @@
       "dc-inline-rename": "{{asset "/js/components/inline-rename.js"}}",
       "dc-live-name": "{{asset "/js/components/live-name.js"}}",
       "dc-time": "{{asset "/js/components/dc-time.js"}}",
+      "dc-copy-field": "{{asset "/js/components/copy-field.js"}}",
       "dc-theme-cycle": "{{asset "/js/components/theme-cycle.js"}}",
       "dc-ctx-sheet": "{{asset "/js/components/ctx-sheet.js"}}",
       "dc-editor": "{{asset "/js/components/editor.js"}}",
@@ -243,7 +247,7 @@
 <body class="dc-body">
   <div data-page-content>
   <div class="dc-app" data-area="{{.ActiveTab}}">
-  {{if .User}}{{template "shell_rail.gohtml" .}}{{end}}
+  {{if .User}}{{template "shell_rail.gohtml" .}}{{else if .Access.Guest}}{{template "guest_rail.gohtml" .}}{{end}}
 {{end}}
 
 {{define "app_end.gohtml"}}
@@ -259,9 +263,11 @@
   {{if .User}}
   {{template "shell_status.gohtml" .}}
   {{template "shell_tabbar.gohtml" .}}
+  {{else if .Access.Guest}}
+  {{template "guest_tabbar.gohtml" .}}
   {{end}}
   </div>
-  {{if .User}}{{template "ctx_sheet.gohtml" .}}{{template "assistant_memory_sheet.gohtml" .}}{{end}}
+  {{if .User}}{{template "ctx_sheet.gohtml" .}}{{template "assistant_memory_sheet.gohtml" .}}{{else if .Access.Guest}}{{template "ctx_sheet.gohtml" .}}{{end}}
   {{if and .User (not .HasTabStrip)}}{{template "terminal_tabs_switcher.gohtml" .}}{{end}}
   </div>
   <div class="toast-container position-fixed top-0 end-0 p-3" data-dc-toasts></div>

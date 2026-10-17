@@ -2,7 +2,7 @@ import { areaKey, keepCtxScroll } from "@dc/ctx";
 import { syncAnimations } from "@dc/dom";
 import { onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
-import { getJSON } from "@dc/http";
+import { appPath, getJSON } from "@dc/http";
 import * as projectSort from "@dc/project-sort";
 import { get, set } from "@dc/store";
 import { narrow, swapBar, tagFilter } from "@dc/tags";
@@ -111,7 +111,7 @@ class CtxSheet extends HTMLElement {
     const spinner = fresh ? window.setTimeout(() => { if (live()) this.panel.replaceChildren(this.placeholder(area, "loading")); }, 150) : 0;
     let doc = null;
     try {
-      const response = await fetch(`/ctx/${encodeURIComponent(area)}?path=${encodeURIComponent(path)}`, { credentials: "same-origin", headers: { Accept: "text/html" } });
+      const response = await fetch(appPath(`/ctx/${encodeURIComponent(area)}?path=${encodeURIComponent(path)}`), { credentials: "same-origin", headers: { Accept: "text/html" } });
       if (!response.ok) throw new Error(`The list answered ${response.status}`);
       doc = new DOMParser().parseFromString(await response.text(), "text/html");
       // A list that fills in after the open would push the rows below it, so

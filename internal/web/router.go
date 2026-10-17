@@ -43,6 +43,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	r.Any("/sessions/*rest", legacyRedirect)
 	r.Any("/resumable/*rest", legacyRedirect)
 
+	s.registerShareRoutes(r)
+
 	browser := r.Group("/", s.csrfMiddleware())
 	browser.GET("/login", s.handleLoginGet)
 	browser.POST("/login", s.handleLoginPost)
@@ -243,6 +245,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/projects/worktrees", s.handleSettingsProjectsWorktreesSave)
 	auth.GET(settingsTagsPath, s.handleSettingsProjectsTags)
 	auth.POST(settingsTagsPath, s.handleSettingsProjectsTagsSave)
+	auth.GET(settingsSharingPath, s.handleSettingsSharing)
+	auth.POST(settingsSharingPath, s.handleSettingsSharingSave)
 	auth.GET("/settings/notifications", s.handleSettingsNotifications)
 	auth.POST("/settings/notifications", s.handleSettingsNotificationsSave)
 	// The assistant's settings sit behind a tab like the editor's, so the page

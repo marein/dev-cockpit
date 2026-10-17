@@ -6,10 +6,12 @@
 <dc-editor class="editor"
      data-editor-name="{{.Project.Name}}"
      data-editor-project-path="{{.Project.Path}}"
+     data-editor-grants="{{.Access.Grants}}"{{if .Access.Guest}}
+     data-editor-guest{{end}}
      data-editor-max-kib="{{.MaxEditKiB}}"
      data-editor-diff-max-lines="{{.DiffMaxLines}}"
      data-editor-diff-max-kib="{{.DiffMaxKiB}}"
-     data-editor-autosave="{{if .Autosave}}1{{end}}"
+     data-editor-autosave="{{if and .Autosave (.Access.Can "files")}}1{{end}}"
      data-editor-lsp="{{.LSPExts}}"
      data-editor-lsp-names="{{.LSPNames}}"
      data-editor-terminal="{{.Terminal}}"
@@ -158,7 +160,7 @@
             <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
               <i class="ti ti-refresh"></i>
             </button>
-            <div class="dropdown d-flex">
+            {{if .Access.Can "terminals"}}<div class="dropdown d-flex">
               <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-editor-term-plus data-bs-toggle="dropdown" aria-expanded="false" aria-label="New coder or shell" title="New coder or shell (Cmd+T)">
                 <i class="ti ti-plus"></i>
               </button>
@@ -171,7 +173,7 @@
                 </button>
                 <div data-editor-term-resume-host></div>
               </div>
-            </div>
+            </div>{{end}}
             <div class="dropdown d-flex">
               <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">
                 <i class="ti ti-settings"></i>
@@ -205,9 +207,9 @@
         <div class="editor-term-body" data-editor-term-body>
           <div class="editor-term-empty text-secondary small p-3" data-editor-term-empty hidden>
             <i class="ti ti-terminal-2 me-1"></i>No terminals are running in this project.
-            <button type="button" class="btn btn-sm btn-outline-secondary ms-2" data-editor-term-new-empty>
+            {{if .Access.Can "terminals"}}<button type="button" class="btn btn-sm btn-outline-secondary ms-2" data-editor-term-new-empty>
               <i class="ti ti-plus me-1"></i>New shell
-            </button>
+            </button>{{end}}
           </div>
         </div>
       </div>
@@ -368,7 +370,7 @@
   </div>
 </dc-editor>
 
-{{template "editor_shortcuts_modal.gohtml"}}
+{{template "editor_shortcuts_modal.gohtml" .}}
 
 {{template "app_end.gohtml" .}}
 {{end}}

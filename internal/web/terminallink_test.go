@@ -51,7 +51,7 @@ func TestTerminalLinkTarget(t *testing.T) {
 		{"file:///etc/passwd", ""},
 		{"http://localhost" + demo + "/a.go", ""},
 	} {
-		if got := s.terminalLinkTarget(tc.url); got != tc.want {
+		if got := s.terminalLinkTarget(tc.url, func(string) bool { return true }); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.url, got, tc.want)
 		}
 	}

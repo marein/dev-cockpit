@@ -12,11 +12,11 @@
 <div class="dc-empty">
   <i class="ti ti-terminal-2" aria-hidden="true"></i>
   <div class="dc-empty-title">Nothing is running yet</div>
-  <div class="mb-3">Start a coder or a shell in one of your projects, it opens right here.</div>
+  {{if .Access.Guest}}<div>No project on this link runs a coder or a shell. One that starts shows up here.</div>{{else}}<div class="mb-3">Start a coder or a shell in one of your projects, it opens right here.</div>
   <div class="btn-list justify-content-center">
     <a href="/coders/new" class="btn btn-primary"><i class="ti ti-robot me-1" aria-hidden="true"></i> New coder</a>
     <a href="/shells/new" class="btn btn-outline-primary"><i class="ti ti-terminal-2 me-1" aria-hidden="true"></i> New shell</a>
-  </div>
+  </div>{{end}}
 </div>
 {{template "app_end.gohtml" .}}
 {{end}}

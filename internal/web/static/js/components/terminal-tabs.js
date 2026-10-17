@@ -71,11 +71,11 @@ class TerminalTabs extends HTMLElement {
       });
     }
     this.strip.addEventListener("wheel", (event) => this.onWheel(event), { signal, passive: false });
-    this.wireDrag(signal);
+    if (!this.hasAttribute("data-tabs-guest")) this.wireDrag(signal);
     this.strip.addEventListener("click", (event) => this.onClick(event), { signal, capture: true });
     // The row menu on the right click and on the touch long press, the shared
     // gesture every list column carries.
-    wireRowMenus(this.strip, ".terminal-tab, .terminal-tab-member", (row, x, y) => {
+    if (!this.hasAttribute("data-tabs-guest")) wireRowMenus(this.strip, ".terminal-tab, .terminal-tab-member", (row, x, y) => {
       if (!row) return false;
       this.openRowMenu(row, x, y);
       return true;
@@ -550,7 +550,7 @@ class TerminalTabs extends HTMLElement {
     }
     if ((event.key === "x" || event.key === "X") && (event.ctrlKey || event.metaKey)
       && event.shiftKey && !event.altKey && !event.repeat && !this.switcher) {
-      if (this.switcherOnly) return;
+      if (this.switcherOnly || this.hasAttribute("data-tabs-guest")) return;
       const active = this.strip.querySelector(".terminal-tab.active");
       if (!active) return;
       event.preventDefault();

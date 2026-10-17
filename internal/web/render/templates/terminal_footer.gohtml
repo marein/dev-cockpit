@@ -129,3 +129,27 @@
       </button>
     </div>
 {{end}}
+
+{{/* The footer of a terminal watched without typing, a guest's: the copy
+     view and the stream's refresh. Coder picks the conversation's copy. */}}
+{{define "terminal_footer_watch.gohtml"}}
+    <div class="attach-mobile">
+      <div class="attach-controls min-w-0">
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-copy aria-label="Copy" title="{{if .Coder}}Copy from the conversation{{else}}Copy text from this terminal{{end}}">
+          <i class="ti {{if .Coder}}ti-messages{{else}}ti-copy{{end}}"></i>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
+          <i class="ti ti-refresh"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="attach-desktop">
+      <button type="button" class="btn btn-ghost-secondary" data-terminal-copy aria-label="Copy" title="{{if .Coder}}Copy from the conversation{{else}}Copy text from this terminal{{end}}">
+        <i class="ti {{if .Coder}}ti-messages{{else}}ti-copy{{end}}"></i>
+      </button>
+      <button type="button" class="btn btn-ghost-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
+        <i class="ti ti-refresh"></i>
+      </button>
+    </div>
+{{end}}
