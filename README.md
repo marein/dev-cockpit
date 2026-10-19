@@ -99,6 +99,18 @@ Each area of the cockpit is described below.
 </details>
 
 <details>
+  <summary>Sharing</summary>
+
+  ### Sharing
+
+  * **Links**: Share projects and assistants with granular permissions, through a secure, expiring named link
+    that needs no login.
+  * **Projects**: A guest sees the files, git history, line comments, coders and shells live, and the
+    containers with their logs. A link can allow comments, written under its name.
+  * **Assistants**: A guest sees the conversation live, the jobs and triggers, and the coders the assistant steers.
+</details>
+
+<details>
   <summary>Notifications</summary>
 
   ### Notifications

@@ -329,7 +329,10 @@ templates plus ES modules.
   missing or wrong, ask the user and update it.
 - After a change, run `gofmt`, `go vet` and `go test` for the touched
   packages, then build, restart the instance and check its health, then
-  run the e2e runner of the feature. Restart before any browser test.
+  run the e2e runner of the feature. A change to a page a guest sees
+  too, the editor, the terminals, the assistants, docker or the status
+  line, also runs `project-share.js` and `assistant-share.js`. Restart
+  before any browser test.
 - e2e tests are executable Playwright runners in `tests/e2e/`, one per
   feature, run headless in Docker (`dc-e2e` image, `--network host`).
   Setup, commands, the per feature index and conventions are in
