@@ -1,9 +1,16 @@
 # The text to speech engine, Piper on CPU, built on this host on first use.
 # Deliberately never pulled as a prebuilt image with the engine inside:
-# whoever builds holds the licenses. The install is pinned and the image tag
-# hashes this file, so the engine only ever updates when this file changes.
+# whoever builds holds the licenses. Every package the install pulls is
+# pinned, dependencies included, and the image tag hashes this file, so the
+# engine only ever updates when this file changes.
 FROM python:3.12-slim
-RUN pip install --no-cache-dir piper-tts==1.3.0
+RUN pip install --no-cache-dir \
+  flatbuffers==25.12.19 \
+  numpy==2.5.4 \
+  onnxruntime==1.31.0 \
+  packaging==26.3 \
+  piper-tts==1.3.0 \
+  protobuf==7.36.2
 # The API is one file. The voices download into DC_MODEL_DIR, the host bind
 # that lets them survive the container, and load before the server binds its
 # port, so the port answering is the readiness signal. /synthesize takes the
