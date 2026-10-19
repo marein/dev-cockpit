@@ -3036,7 +3036,11 @@ async function init(root) {
         continue;
       }
     }
-    if (group.activePath) markTreeSelection(group.activePath);
+    // The disk moving keeps the row somebody picked, the folder a create, an
+    // upload or a paste lands in, while that row is still there.
+    const kept = selected && treeEl.querySelector(`.editor-item[data-path="${CSS.escape(selected.path)}"]`);
+    if (kept) setSelected(selected.path, selected.isDir, kept);
+    else if (group.activePath) markTreeSelection(group.activePath);
   }
 
   // reloadDirRows redraws one folder's rows. The project root is the tree box

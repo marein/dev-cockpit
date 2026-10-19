@@ -1,4 +1,5 @@
 const L = require("./lib");
+const terminalTabsSwitcher = require("./terminal-tabs-switcher");
 const { assert, sleep, BASE } = L;
 
 // Terminal tabs: the desktop tab strip attached to the terminal on the attach
@@ -140,7 +141,7 @@ const { assert, sleep, BASE } = L;
 // run writes the cosmetic @dc_tab_pos option onto real sessions too; unset
 // with `tmux set-option -u -t <session> @dc_tab_pos` if that matters.
 
-L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
+L.runFeature("TERMINAL-TABS", async ({ engine, browser, page, run, mobilePage }) => {
   const tag = `tt-${Date.now().toString(36)}`;
   const project = `zztc-${tag}`;
   const shellUrls = [];
@@ -907,6 +908,8 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
 
       await page.focus(tabSel(ids[2]));
       await page.keyboard.press("ContextMenu");
+      // WebKit raises no contextmenu for the menu key, so it gets the one Chromium raises there.
+      if (engine === "webkit") await page.dispatchEvent(tabSel(ids[2]), "contextmenu");
       await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
       at = await focused();
       assert(at.index === 0 && !at.bell, `the menu key opened the menu on row ${at.index}, bell ${at.bell}`);
@@ -1084,12 +1087,20 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       // tab has none. Reducing it in the DOM leaves the path an instance with
       // one terminal takes, without touching a session this runner did not
       // create; the refresh that would undo it is held off while a close is
-      // confirming.
-      const removed = await page.$$eval(
-        `terminal-tabs .terminal-tab:not([data-tab-id="${soloId}"])`,
-        (els) => { els.forEach((el) => el.remove()); return els.length; },
-      );
-      assert((await tabOrder()).length === 1, `the strip still holds ${(await tabOrder()).length} tabs after removing ${removed}`);
+      // confirming. A pull already out paints the removed tabs back, so they
+      // go on a quiet strip and have to stay gone through a short settle.
+      const quietCount = () => page.evaluate(() => {
+        const strip = document.querySelector("terminal-tabs");
+        return strip.inFlight || strip.dirty ? -1 : strip.querySelectorAll(".terminal-tab").length;
+      });
+      let left = -1;
+      for (let attempt = 0; attempt < 3 && left !== 1; attempt += 1) {
+        await page.waitForFunction(() => !document.querySelector("terminal-tabs").inFlight && !document.querySelector("terminal-tabs").dirty, null, { timeout: 8000 });
+        await page.$$eval(`terminal-tabs .terminal-tab:not([data-tab-id="${soloId}"])`, (els) => els.forEach((el) => el.remove()));
+        await sleep(600);
+        left = await quietCount();
+      }
+      assert(left === 1, `the strip did not stay at one tab on a quiet strip, ${left} (-1 is a pull still out)`);
       await page.click(`${tabSel(soloId)} [data-tab-close]`);
       await L.confirmSwal(page);
       // Without a neighbour the close hands over to /terminals, and the entry
@@ -1102,13 +1113,15 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForSelector("terminal-tabs", { state: "attached", timeout: 8000 });
       const body = await page.textContent("body");
       assert(!/Method not allowed/i.test(body), "the landing is an error page");
-      // The close stops the coder, it stays resumable: drop it too.
+      // The close stops the coder, it stays resumable: drop it too, from
+      // another page, or the landing that shows it leaves for its neighbour
+      // and the next navigation cuts that one off.
+      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(tabSel(ids[0]), { state: "attached", timeout: 8000 });
       await page.evaluate(async (id) => {
         const token = document.querySelector('meta[name="csrf-token"]').content;
         await fetch(`/coders/${id}/delete`, { method: "POST", headers: { "X-CSRF-Token": token, Accept: "application/json" } });
       }, soloId);
-      await page.goto(shellUrls[0], { waitUntil: "domcontentloaded" });
-      await page.waitForSelector(tabSel(ids[0]), { state: "attached", timeout: 8000 });
     });
 
     await run("a stopped coder is resumable from the + menu (grouped by project) and from the switcher", async () => {
@@ -1386,6 +1399,8 @@ L.runFeature("TERMINAL-TABS", async ({ browser, page, run, mobilePage }) => {
       await page.waitForURL((u) => u.pathname === rows[0].url, { timeout: 8000 });
       await page.waitForSelector("dc-assistant[ready]", { timeout: 8000 });
     });
+
+    await terminalTabsSwitcher({ run, page, project, ids });
 
     await run("the strip stays hidden on coarse pointer (mobile) clients", async () => {
       const mp = await mobilePage();

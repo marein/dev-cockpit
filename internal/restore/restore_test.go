@@ -118,14 +118,17 @@ func restoring(t *testing.T, ready func(string, time.Duration) bool) (*Service, 
 	return s, path
 }
 
+// settle waits for the startup goroutine's last step, the snapshot written
+// again once it let go of it. Returning on the release alone let that write
+// land in the test's directory while its cleanup removed it.
 func settle(t *testing.T, s *Service) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		s.mu.Lock()
-		holding := s.holding
+		written := !s.holding && s.last != nil
 		s.mu.Unlock()
-		if !holding {
+		if written {
 			return
 		}
 		if time.Now().After(deadline) {

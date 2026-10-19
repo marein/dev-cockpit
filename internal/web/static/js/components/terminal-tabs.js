@@ -17,6 +17,8 @@ import { openFormModal } from "dc-form-modal";
 
 const RESUME_FOLD_LIMIT = 3;
 
+const switcherKey = ({ dataset: d }) => [d.switcherToggle, d.switcherResume, d.switcherId || d.switcherUrl].join("\n");
+
 class TerminalTabs extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -86,9 +88,9 @@ class TerminalTabs extends HTMLElement {
     document.addEventListener("pointerdown", () => this.tap.reset(), { signal, capture: true });
     document.addEventListener("dc-renamed", (event) => this.onRenamed(event.detail || {}), { signal });
     // A coder or shell started, stopped, was renamed or reordered somewhere (this
-    // device or another one): pull the fresh strip.
-    onServerEvent("terminals", () => this.refresh(), { signal });
-    onServerEvent("assistant", () => this.refresh(), { signal });
+    // device or another one), or a project the switcher and the resume groups
+    // list came or went: pull the fresh strip.
+    for (const type of ["terminals", "assistant", "projects"]) onServerEvent(type, () => this.refresh(), { signal });
     // The + menu's create entries and the editor link carry the page's
     // project context, which on a split page is the focused member's. The
     // fragment pull already reports the active island as ?focus; what was
@@ -948,31 +950,29 @@ class TerminalTabs extends HTMLElement {
     this.tryRefresh();
   }
 
+  // The place is held by a row, not by pixels: the marked row while in view,
+  // else the top row, keeps its offset. Revealing the mark undid a wheel scroll.
   rebuildSwitcher() {
     const sw = this.switcher;
     if (!sw) return;
-    const key = (row) => {
-      if (!row) return "";
-      if (row.dataset.switcherToggle) return "t:" + row.dataset.switcherToggle;
-      if (row.dataset.switcherResume) return "r:" + row.dataset.switcherResume;
-      return "a:" + (row.dataset.switcherId || row.dataset.switcherUrl || "");
-    };
-    const previous = key(sw.visible[sw.index]);
-    const { cycleRows, listNodes, sections, groupLabels } = this.buildSwitcherLists();
     const list = sw.overlay.querySelector(".terminal-switcher-list");
-    const scrollTop = list.scrollTop;
+    const top = list.getBoundingClientRect().top;
+    const rect = (row) => row.getBoundingClientRect();
+    const inView = (row) => row && rect(row).bottom > top && rect(row).top < top + list.clientHeight;
+    const anchorAt = inView(sw.visible[sw.index]) ? sw.index : sw.visible.findIndex((row) => rect(row).bottom > top);
+    const offset = anchorAt === -1 ? 0 : rect(sw.visible[anchorAt]).top - top;
+    const keys = sw.visible.map(switcherKey);
+    const { cycleRows, listNodes, sections, groupLabels } = this.buildSwitcherLists();
     list.replaceChildren(...listNodes, sw.empty);
-    sw.rows = cycleRows;
-    sw.sections = sections;
-    sw.groupLabels = groupLabels;
-    sw.visible = sw.rows.slice();
-    this.applyFilter();
-    list.scrollTop = scrollTop;
-    const kept = sw.visible.findIndex((row) => key(row) === previous);
-    if (kept !== -1) {
-      sw.index = kept;
-      this.paintSelection();
-    }
+    Object.assign(sw, { rows: cycleRows, sections, groupLabels });
+    this.filterSwitcher();
+    const fresh = new Map(sw.visible.map((row, index) => [switcherKey(row), index]));
+    const nearest = (at) => keys.flatMap((_, d) => [keys[at + d], keys[at - d]])
+      .map((key) => fresh.get(key)).find((hit) => hit !== undefined) ?? -1;
+    sw.index = Math.max(nearest(sw.index), 0);
+    this.paintSelection(false);
+    const anchor = sw.visible[nearest(anchorAt)];
+    if (anchor) list.scrollTop += rect(anchor).top - top - offset;
   }
 
   // refresh marks the strip dirty and pulls the fresh strip and menu when nothing
@@ -1065,8 +1065,15 @@ class TerminalTabs extends HTMLElement {
   applyFilter(fromInput) {
     const sw = this.switcher;
     if (!sw) return;
-    const query = sw.input.value.trim();
     const selected = sw.visible[sw.index];
+    this.filterSwitcher();
+    sw.index = Math.max(fromInput ? -1 : sw.visible.indexOf(selected), 0);
+    this.paintSelection();
+  }
+
+  filterSwitcher() {
+    const sw = this.switcher;
+    const query = sw.input.value.trim();
     const ranks = new Map();
     for (const row of sw.rows) {
       let rank;
@@ -1083,15 +1090,8 @@ class TerminalTabs extends HTMLElement {
     }
     sw.visible = this.rankSwitcherGroups(sw.rows, ranks).filter((row) => !row.hidden);
     sw.empty.hidden = sw.visible.length > 0;
-    for (const section of sw.sections) {
-      section.node.hidden = !sw.visible.some((row) => row.dataset.switcherSection === section.key);
-    }
-    for (const label of sw.groupLabels) {
-      label.node.hidden = !sw.visible.some((row) => row.dataset.switcherGroup === label.key);
-    }
-    const kept = fromInput ? -1 : sw.visible.indexOf(selected);
-    sw.index = kept === -1 ? 0 : kept;
-    this.paintSelection();
+    for (const { node, key } of sw.sections) node.hidden = !sw.visible.some((row) => row.dataset.switcherSection === key);
+    for (const { node, key } of sw.groupLabels) node.hidden = !sw.visible.some((row) => row.dataset.switcherGroup === key);
     syncAnimations(sw.overlay);
   }
 
@@ -1120,7 +1120,7 @@ class TerminalTabs extends HTMLElement {
     return ordered;
   }
 
-  paintSelection() {
+  paintSelection(reveal = true) {
     const sw = this.switcher;
     if (!sw) return;
     const selected = sw.visible[sw.index];
@@ -1128,7 +1128,7 @@ class TerminalTabs extends HTMLElement {
       row.classList.toggle("selected", row === selected);
       row.setAttribute("aria-selected", row === selected ? "true" : "false");
     }
-    selected?.scrollIntoView({ block: "nearest" });
+    if (reveal) selected?.scrollIntoView({ block: "nearest" });
   }
 
   moveSelection(delta) {

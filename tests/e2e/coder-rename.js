@@ -33,6 +33,7 @@ L.runFeature("CODER-RENAME", async ({ engine, page, run }) => {
     let text = "";
     for (let i = 0; i < 60; i++) {
       text = await mirror();
+      L.assertNoLogin(text);
       if (text.includes("❯")) return;
       await sleep(1000);
     }

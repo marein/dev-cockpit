@@ -33,7 +33,12 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(SHOTS_DIR, name), fullPage: false });
 }
 
-L.runFeature("COPY VIEW", async ({ page, run, mobilePage }) => {
+L.runFeature("COPY VIEW", async ({ engine, ctx, page, run, mobilePage }) => {
+  // WebKit grants no clipboard read, there the copy is what the page wrote.
+  if (engine !== "chromium") await ctx.addInitScript(L.recordCopies);
+  const copied = () => page.evaluate((read) => (read
+    ? navigator.clipboard.readText()
+    : (window.__copies || []).filter((c) => c.ok).at(-1)?.text ?? ""), engine === "chromium");
   const tag = `copy-${Date.now().toString(36)}`;
   const mark = tag.slice(-4).toUpperCase();
   const project = `zztc-${tag}`;
@@ -47,6 +52,7 @@ L.runFeature("COPY VIEW", async ({ page, run, mobilePage }) => {
     let text = "";
     for (let i = 0; i < 60; i += 1) {
       text = await mirror(p);
+      L.assertNoLogin(text);
       if (text.includes("❯") || /shortcuts|for help/i.test(text)) return;
       await sleep(1000);
     }
@@ -212,11 +218,11 @@ L.runFeature("COPY VIEW", async ({ page, run, mobilePage }) => {
       await page.locator(`${sel} [data-role="coder"]`).last().locator("[data-copy-message]").click();
       await sleep(300);
       assert(await page.locator(`${sel} [data-copy-message][data-copied] .ti-check`).count() === 1, "the copied message's button does not say so");
-      const one = await page.evaluate(() => navigator.clipboard.readText());
+      const one = await copied();
       assert(one === `SECOND${mark} OK`, `one message copied as ${JSON.stringify(one)}`);
       await page.click(`${sel} [data-copy-all]`);
       await sleep(300);
-      const all = await page.evaluate(() => navigator.clipboard.readText());
+      const all = await copied();
       assert(all.startsWith("user:\n") && all.includes(`coder:\nFIRST${mark} OK`) && all.endsWith(`coder:\nSECOND${mark} OK`), `Copy all: ${all.slice(0, 120)} … ${all.slice(-120)}`);
       assert(!all.includes(`42XY${mark}`), "Copy all carries a tool result");
       return `${all.split("\n\n").length} blocks`;
@@ -410,7 +416,7 @@ L.runFeature("COPY VIEW", async ({ page, run, mobilePage }) => {
       assert((await page.evaluate(() => localStorage.getItem("dc-copy-lines"))) === "2000", "the lines choice was not kept");
       await page.click(`${sel} [data-copy-all]`);
       await sleep(300);
-      const all = await page.evaluate(() => navigator.clipboard.readText());
+      const all = await copied();
       assert(all.includes(`HIST${mark}-1\n`) && all.includes(`HIST${mark}-80`), `Copy all: ${all.slice(-160)}`);
       await page.click(".attach-settings > button");
       await page.selectOption('terminal-setting-select[setting="font-size"] select', "18");

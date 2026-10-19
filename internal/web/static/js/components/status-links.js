@@ -105,6 +105,7 @@ class StatusLinks extends HTMLElement {
   // is about, resolved the same way as at render. A pull answered after a
   // navigation swapped this element away is dropped.
   refresh() {
+    if (!this.ac) return;
     if (this.inFlight) {
       this.dirty = true;
       return;

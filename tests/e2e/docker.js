@@ -928,6 +928,10 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     const api = await apiClient();
     try {
       await page.context().setOffline(true);
+      // The emulation fails new requests only and an open stream keeps
+      // flowing, so the stop would arrive while the pull it asks for fails and
+      // nothing reconnects. A line that drops cuts the stream as well.
+      await page.evaluate(() => window.stop());
       await sleep(1500);
       const stopped = await api.post(`/docker/${containerId}/stop`);
       assert(stopped.ok(), `stopping the container answered ${stopped.status()}`);

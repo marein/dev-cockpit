@@ -1,4 +1,5 @@
 const L = require("./lib");
+const fileLinksTouch = require("./file-links-touch");
 const { assert, sleep, BASE } = L;
 
 // File links: a path of an existing file of the terminal's project, relative
@@ -440,23 +441,32 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
   });
 
   await run("live terminal: top -d 0.5 re-sorting its rows asks next to nothing, never about a word without a letter", async () => {
+    // top lists the host's processes, and on a busy host names it never
+    // showed keep coming in, each rightly asked about once. So it lists four
+    // loops of this shell alone, each working 60ms a second at its own phase,
+    // which re-sorts them from one frame to the next.
     await freshShellPage(page);
     const asks = [];
     const onRequest = (req) => { if (req.url().endsWith("/file-links")) asks.push({ at: Date.now(), words: req.postDataJSON().words }); };
     page.on("request", onRequest);
-    await shell(page, "clear; top -d 0.5");
+    await shell(page, "clear; p=; for n in 2 4 6 8; do (sleep 0.$n; while :; do t=${EPOCHREALTIME/./}; while (( ${EPOCHREALTIME/./} - t < 60000 )); do :; done; sleep 0.9; done) & p=$p${p:+,}$!; done; top -d 0.5 -p $p");
     await waitLine(page, "top - ");
     await sleep(2500);
     const from = Date.now();
-    await sleep(4000);
+    const orders = new Set();
+    while (Date.now() - from < 4000) {
+      orders.add((await mirror(page, "#terminal")).split("\n").filter((line) => /^\s*\d+\s+\S+\s+\d+\s/.test(line)).map((line) => line.trim().split(/\s+/)[0]).join());
+      await sleep(250);
+    }
     page.off("request", onRequest);
     await input(page, shellUrl, { prompt: "q" });
-    await shell(page, "clear");
+    await shell(page, "kill ${p//,/ }; clear");
     const late = asks.filter((a) => a.at >= from);
     const letterless = asks.flatMap((a) => a.words).filter((word) => !/\p{L}/u.test(word));
+    assert(orders.size > 1, `top never re-sorted its rows: ${[...orders].join(" | ")}`);
     assert(late.length <= 1, `top asked ${late.length} times in 4s: ${JSON.stringify(late.map((a) => a.words))}`);
     assert(!letterless.length, `top asked about ${JSON.stringify(letterless)}`);
-    return `${late.length} requests in 4s`;
+    return `${late.length} requests in 4s, ${orders.size} row orders`;
   });
 
   await run("live terminal: a word is asked about once, however often it is printed or redrawn", async () => {
@@ -656,9 +666,26 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
   });
 
   await run("copy view: 50,000 lines dense with paths and addresses answer within a second and render every link", async () => {
+    // tmux gives a pane the history-limit standing when it is created, 2000
+    // unless a configuration raises it, so the 50,000 lines get a shell made
+    // under a raised one and the server's own value goes back right after.
     await freshShellPage(page);
+    const limit = mark();
+    await shell(page, `o=$(tmux show-options -gv history-limit) && tmux set-option -g history-limit 60000 && clear && echo ${limit.sh} $o`);
+    await waitLine(page, `${limit.m} `);
+    const kept = (await mirror(page, "#terminal")).split("\n").find((line) => line.startsWith(`${limit.m} `)).split(" ")[1];
+    let bigUrl = "";
+    try {
+      bigUrl = await L.createShell(page, project);
+    } finally {
+      await shell(page, `tmux set-option -g history-limit ${kept}`);
+    }
+    await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
+    const held = mark();
+    await shell(page, `clear; echo ${held.sh} $(tmux display-message -p '#{history_limit}')`, bigUrl);
+    await waitLine(page, `${held.m} 60000`);
     const { m, sh } = mark();
-    await shell(page, `clear; seq 50000 | sed 's|.*|m${marks}m ${FILE}:& https://example.invalid/&|'; echo ${sh}done`);
+    await shell(page, `clear; seq 50000 | sed 's|.*|m${marks}m ${FILE}:& https://example.invalid/&|'; echo ${sh}done`, bigUrl);
     await waitLine(page, `${m}done`);
     await page.locator("[data-terminal-copy]:visible").first().click();
     await page.waitForSelector("terminal-copy [data-copy-text] a", { state: "visible", timeout: 15000 });
@@ -679,6 +706,7 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
     assert(counts.files === data.links.length && counts.files > 4000, `${counts.files} file links rendered, the answer named ${data.links.length}`);
     assert(counts.last === `${FILE}:50000` && counts.href === editorHref("file=src%2Fapp.py&line=50000"), `the newest link is ${JSON.stringify(counts)}`);
     await page.locator("terminal-copy [data-copy-close]").first().click();
+    await L.deleteShell(page, bigUrl);
     return `${counts.all} links, ${counts.files} files, answer in ${serverMs}ms`;
   });
 
@@ -727,65 +755,7 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
     await opens(page, () => page.locator("terminal-copy [data-copy-log] code a[data-file-link]").first().click(), { path: FILE, line: 3, col: 7 });
   });
 
-  // ---- touch, 360px -------------------------------------------------------------
-
-  const phone = async () => {
-    const mp = await mobilePage();
-    await mp.setViewportSize({ width: 360, height: 760 });
-    return mp;
-  };
-  const printOnPhone = async (mp, lines, last) => {
-    await freshShellPage(mp);
-    await shell(mp, `clear; seq 12; ${lines}`);
-    await waitLine(mp, last);
-  };
-
-  await run("touch: a tap on a printed path opens it at its line and column", async () => {
-    const mp = await phone();
-    const { m, sh } = mark();
-    await printOnPhone(mp, `printf '%s %s\\n' ${sh} 'tap ${LINKED}'`, m);
-    await mp.evaluate(() => document.activeElement?.blur());
-    const at = await cellOf(mp, m, LINKED);
-    await opens(mp, () => mp.touchscreen.tap(at.x, at.y), { path: FILE, line: 3, col: 7 });
-  });
-
-  await run("touch: a path the terminal wrapped over four rows keeps the terminal and its links after a reload, at 360px", async () => {
-    const mp = await phone();
-    const { m, sh } = mark();
-    await printOnPhone(mp, `c=$(tput cols); d=deep/$(printf "%0$((3*c))d" 0); mkdir -p $d && touch $d/file.txt && printf '%s %s\\n%s\\n%s\\n%s\\n' ${sh}w $c $d/file.txt notes.txt ${sh}e`, `${m}e`);
-    const cols = Number((await mirror(mp, "#terminal")).split("\n").find((line) => line.startsWith(`${m}w`)).split(" ")[1]);
-    for (const [needle, down, path] of [["deep", 1, `deep/${"0".repeat(3 * cols)}/file.txt`], ["notes.txt", 5, "notes.txt"]]) {
-      await freshShellPage(mp);
-      await waitLine(mp, `${m}e`);
-      await mp.evaluate(() => document.activeElement?.blur());
-      const at = await cellOf(mp, `${m}w`, needle, { row: down });
-      await opens(mp, () => mp.touchscreen.tap(at.x, at.y), { path });
-    }
-  });
-
-  await run("touch: a tap on the rest of a path a program partly overwrote opens nothing", async () => {
-    const mp = await phone();
-    const { m, sh } = mark();
-    await printOnPhone(mp, overwriteTail(m, sh), `${m}k`);
-    await waitLine(mp, `${m} src/zz.txt`);
-    await mp.evaluate(() => document.activeElement?.blur());
-    const rest = await cellOf(mp, m, "src/");
-    await mp.touchscreen.tap(rest.x, rest.y);
-    await stays(mp, "a tap on the rest of an overwritten path");
-    await mp.evaluate(() => document.activeElement?.blur());
-    const fresh = await cellOf(mp, `${m}k`, "notes.txt");
-    await opens(mp, () => mp.touchscreen.tap(fresh.x, fresh.y), { path: "notes.txt" });
-  });
-
-  await run("touch: a tap on a file link in the copy view opens the editor", async () => {
-    const mp = await phone();
-    const { m, sh } = mark();
-    await printOnPhone(mp, `printf '%s %s\\n' ${sh} 'copy ${LINKED}'`, m);
-    await mp.locator("[data-terminal-copy]:visible").first().tap();
-    const link = mp.locator(`terminal-copy a[data-file-link]:text-is("${LINKED}")`).last();
-    await link.waitFor({ state: "visible", timeout: 10000 });
-    await opens(mp, () => link.tap(), { path: FILE, line: 3, col: 7 });
-  });
+  await fileLinksTouch({ run, mobilePage, shell, waitLine, mirror, mark, cellOf, opens, stays, freshShellPage, overwriteTail, LINKED, FILE });
 
   await run("cleanup: coder, shells and projects deleted", async () => {
     if (coderUrl) await L.stopSession(page, coderUrl);

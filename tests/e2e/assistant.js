@@ -1537,6 +1537,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
   // for the microphone, and the runner answers the transcription route itself,
   // so no speech engine ever starts.
   await run("the button beside the box is the microphone on an empty composer and the send on words or a file", async () => {
+    if (!(await page.evaluate(() => "MediaRecorder" in window))) return "skipped, this engine has no MediaRecorder, so the composer offers no microphone";
     await idle(page);
     const id = await page.locator("dc-assistant").getAttribute("assistant-id");
     const face = () => page.locator("[data-assistant-send] i").getAttribute("class");
@@ -1723,6 +1724,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
   // left throws the clip away and a slide up locks it. The touches come in
   // over the devtools protocol, the one way a finger can stay down.
   await run("on a phone a tap on the microphone only says how, a hold records and the slides cancel or lock", async () => {
+    if (!(await page.evaluate(() => "MediaRecorder" in window))) return "skipped, this engine has no MediaRecorder, so the composer offers no microphone";
     const id = await page.locator("dc-assistant").getAttribute("assistant-id");
     const mp = await mobilePage();
     await openConversation(mp, id);
@@ -2033,6 +2035,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
   });
 
   await run("on a phone a swipe on the transcript steps through the assistants, never over a selection, a field or a code block", async () => {
+    if (engine !== "chromium") return "skipped, the touch gesture goes through CDP, which is chromium only";
     const mp = await mobilePage();
     await openConversation(mp, chatID);
     await idle(mp);
@@ -2172,6 +2175,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
   // (a second finger, touchcancel, a context menu, a selection) ends it
   // without a switch, and a field inside the transcript keeps its own drag.
   await run("on a phone a swipe waits with a pending pill, chains from it, and gives up when the gesture is taken away", async () => {
+    if (engine !== "chromium") return "skipped, the touch gesture goes through CDP, which is chromium only";
     const mp = await mobilePage();
     await openConversation(mp, chatID);
     await idle(mp);
@@ -2395,6 +2399,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
   // that compares the query again reads the open row's plain address as
   // another page and loads it.
   await run("a step or a swipe back onto the open assistant keeps ?all=1 and loads nothing", async () => {
+    if (engine !== "chromium") return "skipped, the touch gesture goes through CDP, which is chromium only";
     const round = async (p, label, steps) => {
       await p.goto(`${BASE}/assistants/${chatID}?all=1`, { waitUntil: "domcontentloaded" });
       await dismissUpdate(p);
@@ -3105,6 +3110,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
   // (a phone may deliver it later than the drag's own swallow lasts) is played
   // as a tap on the grip.
   await run("a finger sorts the list by a row's grip and opens nothing", async () => {
+    if (engine !== "chromium") return "skipped, the touch gesture goes through CDP, which is chromium only";
     const mp = await mobilePage();
     await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(mp);

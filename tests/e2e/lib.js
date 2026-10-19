@@ -14,9 +14,11 @@ function isCdnNoise(t) {
 }
 
 // WebKit reports a same-origin request that a navigation aborted mid-flight (the
-// /events stream connect, the /update/check poll, the page's one /time
-// measurement, the editor's terminals fragment pull, an assistant's pull of
-// its own answer) as a page error ending in "due to access control checks".
+// /events stream connect, the /update/check and /costs/status polls, the
+// page's one /time measurement, the editor's terminals fragment pull and its
+// renewal of what it watches on disk, an assistant's pull of its own answer,
+// a terminal's lookup of the words it printed, which catches its own failure)
+// as a page error ending in "due to access control checks".
 // That is a browser artifact of racing navigations on the throwaway
 // instance, not an app defect, so it joins the non-gating noise bucket. The
 // filter stays narrow so a real access control failure on an app route still
@@ -27,13 +29,17 @@ function isCdnNoise(t) {
 // **end** of the URL: dc-project-list answers a projects event by pulling the
 // page itself (`refreshProjectList`, a fetch that already carries its own
 // catch), and a runner navigating on while that pull is out leaves this error
-// behind. Naming it in the list would swallow every project scoped route under
+// behind. An assistant's page pulls itself the same way (`syncFromServer`),
+// and so does a split page whose members moved (`refreshPage`) and the tab
+// strip on a terminals event (`tryRefresh`, whose writes under
+// `/terminal-tabs/` still gate). Naming it in the list would swallow every project scoped route under
 // it, `/projects/<name>/editor/…` included, which is exactly where a real
 // access control failure would have to gate.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|git\/prompt|time|editor\/(terminals|docker|lsp\/(status|source)|list|file|git\/changes))\b.*due to access control checks/.test(t)
-    || /\/projects(\?\S*)? due to access control checks/.test(t)
-    || /\/assistants\/[^/\s]+\/messages\/[^/\s]+ due to access control checks/.test(t);
+  return /\/(events|update\/check|costs\/status|git\/prompt|time|editor\/(terminals|docker|lsp\/(status|source)|list|file|watch|git\/changes))\b.*due to access control checks/.test(t)
+    || /\/(projects|terminal-tabs|assistants\/[^/\s?]+|splits\/[^/\s?]+)(\?\S*)? due to access control checks/.test(t)
+    || /\/assistants\/[^/\s]+\/messages\/[^/\s]+ due to access control checks/.test(t)
+    || /\/(shells|coders)\/[^/\s]+\/file-links due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];
@@ -489,6 +495,14 @@ function recordCopies() {
 
 function assert(c, m) { if (!c) throw new Error(m); }
 
+// claude's first setup and its login menu mark their first entry with the
+// same ❯ its prompt starts with, so a wait for the prompt reads them as
+// ready. An instance whose HOME holds no claude login shows them, see the
+// README.
+function assertNoLogin(text) {
+  assert(!/Choose the text style|Select login method/.test(text), `claude asks for a login, the instance's HOME holds none: ${JSON.stringify(text.slice(-200))}`);
+}
+
 // CHECK narrows a runner to the checks whose name contains one of a comma
 // separated list of substrings (case insensitive), matched against the
 // check's own name as passed to run(), before an engine prefix joins it in
@@ -563,6 +577,6 @@ module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
-  makeRunner, report, assert, recordCopies,
+  makeRunner, report, assert, assertNoLogin, recordCopies,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

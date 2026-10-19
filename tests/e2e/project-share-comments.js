@@ -163,9 +163,14 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       const duo = `duo-${fx.tag}`;
       await form.locator('[name="name"]').fill(duo);
       const made = await madeLink(page, form);
-      assert(made.says.includes(`${fx.second} Read, comment until`) && made.says.includes("The rest is read only."), `the new link reads ${JSON.stringify(made.says)}`);
+      // The dialog sends its projects by name and the link keeps that order,
+      // so the tag decides which of the two stands first.
+      const sent = [fx.project, fx.second].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1));
+      const grants = (names) => names.map((name) => `${name} ${name === fx.project ? "Read only" : "Read, comment"}`).join(",");
+      const opens = sent.map((name) => (name === fx.second ? `${name} Read, comment` : name)).join(", ");
+      assert(made.says.includes(`opens ${opens} until`) && made.says.includes("The rest is read only."), `the new link reads ${JSON.stringify(made.says)}`);
       let row = (await sharingRows(page)).find((r) => r.name === duo);
-      assert(row && row.projects.join(",") === `${fx.project} Read only,${fx.second} Read, comment`, `the link lists ${JSON.stringify(row)}`);
+      assert(row && row.projects.join(",") === grants(sent), `the link lists ${JSON.stringify(row)}`);
       const edit = await editLink(page, row.id);
       await pick(edit, fx.other);
       const added = edit.locator(`[data-share-entries] [data-share-picked="project:${fx.other}"] [data-share-grant="comments"]`);
@@ -173,7 +178,7 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       await added.check();
       await saveEdit(page, edit);
       row = (await sharingRows(page)).find((r) => r.name === duo);
-      assert(row && row.projects.join(",") === `${fx.project} Read only,${fx.second} Read, comment,${fx.other} Read, comment`, `after the save the link lists ${JSON.stringify(row)}`);
+      assert(row && row.projects.join(",") === grants([...sent, fx.other]), `after the save the link lists ${JSON.stringify(row)}`);
       const revoked = await postAs(page, `/settings/sharing/${row.id}`, { form: "revoke" });
       assert(revoked.ok, `revoking the link answered ${revoked.status}`);
     });

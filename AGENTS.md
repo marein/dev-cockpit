@@ -334,7 +334,8 @@ templates plus ES modules.
   line, also runs `project-share.js` and `assistant-share.js`. Restart
   before any browser test.
 - e2e tests are executable Playwright runners in `tests/e2e/`, one per
-  feature, run headless in Docker (`dc-e2e` image, `--network host`).
+  feature, run headless in Docker (`dc-e2e` image, in its own network
+  namespace, so container starts on the host abort nothing in flight).
   Setup, commands, the per feature index and conventions are in
   `tests/e2e/README.md`. Do not use curl, it skips client JS, SSE, forms.
 - Runners drive throwaway instances with their own state directory,

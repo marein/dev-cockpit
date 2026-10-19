@@ -455,12 +455,29 @@ L.runFeature("TERMINAL", async ({ engine, page, run, mobilePage, bag }) => {
       await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
       await sleep(500);
       // Wrap-around: swiping right on the leftmost tab rotates to the last one.
-      const order2 = await mp.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId));
-      assert(order2[0] === firstId && order2[order2.length - 1] === secondId, `strip must start and end with ours for the wrap check: ${order2}`);
-      await swipe(1);
-      await mp.waitForURL(new RegExp(secondId), { timeout: 8000 });
-      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
-      await sleep(500);
+      // Terminals this runner did not start may stand in the strip, so for this
+      // leg its two stand at both ends with the others in their order between
+      // them, and the strip goes back as it stood.
+      const strip = () => mp.$$eval("terminal-tabs .terminal-tab", (els) => els.map((e) => e.dataset.tabId));
+      const putOrder = (ids) => mp.evaluate(async (list) => {
+        const token = document.querySelector('meta[name="csrf-token"]').content;
+        const r = await fetch("/terminal-tabs/order", { method: "POST", headers: { "X-CSRF-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ ids: list }) });
+        return r.status;
+      }, ids);
+      const stood = await strip();
+      const wrapped = [firstId, ...stood.filter((id) => id !== firstId && id !== secondId), secondId];
+      assert(await putOrder(wrapped) === 204, "the strip order was refused");
+      try {
+        await mp.waitForFunction((want) => [...document.querySelectorAll("terminal-tabs .terminal-tab")].map((e) => e.dataset.tabId).join() === want, wrapped.join(), { timeout: 8000 });
+        const order2 = await strip();
+        assert(order2[0] === firstId && order2[order2.length - 1] === secondId, `strip must start and end with ours for the wrap check: ${order2}`);
+        await swipe(1);
+        await mp.waitForURL(new RegExp(secondId), { timeout: 8000 });
+        await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 10000 });
+        await sleep(500);
+      } finally {
+        assert(await putOrder(stood) === 204, "the strip order was not put back");
+      }
     });
 
     // On a slow line the pill stays as the pending indicator until the page

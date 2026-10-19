@@ -44,6 +44,7 @@ const { assert, sleep } = L;
           await sleep(2000);
           continue;
         }
+        L.assertNoLogin(text);
         if (text.includes("❯") || /shortcuts|for help/i.test(text)) { ready = true; break; }
         await sleep(1000);
       }
@@ -109,6 +110,7 @@ const { assert, sleep } = L;
           await page.keyboard.press("Enter");
           continue;
         }
+        L.assertNoLogin(text);
         if (text.includes("❯") || /shortcuts|for help/i.test(text)) { ready = true; break; }
       }
       assert(ready, `claude not ready in the shell, mirror tail: ${text.slice(-200)}`);

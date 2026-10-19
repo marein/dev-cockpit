@@ -114,7 +114,9 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
     await pg.mouse.move(from.x + 40, from.y + from.height / 2);
     await pg.mouse.down();
     await pg.mouse.move(from.x + 55, from.y + from.height / 2, { steps: 3 });
-    await pg.mouse.move(toSel ? to.x + Math.min(60, to.width / 2) : to.x, toSel ? to.y + to.height / 2 : to.y, { steps: 14 });
+    // WebKit fires only dragenter on the step that reaches the target, and a
+    // drop needs a dragover there, which a real hand always adds.
+    for (const [dx, steps] of [[0, 14], [2, 1]]) await pg.mouse.move((toSel ? to.x + Math.min(60, to.width / 2) : to.x) + dx, toSel ? to.y + to.height / 2 : to.y, { steps });
     await sleep(250);
     const state = await pg.evaluate(() => ({
       highlight: document.querySelector(".editor-item.editor-drop")?.dataset.path
@@ -1268,7 +1270,8 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert((await diskOf(`${dir}/note.md`)).includes(needle), "another file was written while the job was refused");
 
       // Saved, the same press writes everything and the open tab follows the
-      // disk without a reload.
+      // disk without a reload. A closing dialog still takes an Escape.
+      await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 });
       await page.keyboard.press("Escape");
       await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
       await page.click(`.editor-tab[data-path="${dir}/two.go"]`);
@@ -1705,6 +1708,14 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       const waitFoot = (want) => mp.waitForFunction(
         (text) => document.querySelector("[data-editor-quickopen-foot-left]").textContent.trim() === text, want, { timeout: 10000 });
 
+      // The stored inputs start empty: the page puts the stored query into the
+      // field when it lands, and landing between the fill's select and its
+      // typing it stays in front of the needle.
+      const cleared = await page.evaluate(async (proj) => (await fetch(`/projects/${proj}/editor/search-draft`, {
+        method: "POST", headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "", replace: "", folder: "", mask: "", regex: false, case: false }),
+      })).status, project);
+      assert(cleared === 200, `clearing the stored inputs answered ${cleared}`);
       await mp.goto(editorURL, { waitUntil: "domcontentloaded" });
       await mp.waitForSelector(".cm-editor", { state: "attached", timeout: 15000 });
       await sleep(800);
@@ -2031,6 +2042,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.fill('#settings-editor-search [name="exclusions"]', `.git\n${excluded}`);
       await Promise.all([
         page.waitForResponse((r) => r.url().includes("/settings/editor/search") && r.request().method() === "POST", { timeout: 15000 }),
+        page.waitForEvent("requestfinished", { predicate: (r) => r.url().includes("/settings/editor/search") && r.method() === "GET", timeout: 15000 }),
         page.click('#settings-editor-search button[type="submit"]'),
       ]);
       await page.waitForLoadState("domcontentloaded");
@@ -2047,6 +2059,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.fill('#settings-editor-search [name="exclusions"]', before);
       await Promise.all([
         page.waitForResponse((r) => r.url().includes("/settings/editor/search") && r.request().method() === "POST", { timeout: 15000 }),
+        page.waitForEvent("requestfinished", { predicate: (r) => r.url().includes("/settings/editor/search") && r.method() === "GET", timeout: 15000 }),
         page.click('#settings-editor-search button[type="submit"]'),
       ]);
       await page.goto(editorURL, { waitUntil: "domcontentloaded" });
@@ -2512,8 +2525,10 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
 
     await run("context menu Reveal in tree expands the folder and selects the file", async () => {
       const inside = `keep_${tag}/inside.txt`;
-      const rowVisible = () => page.$eval(`.editor-file[data-path="${inside}"]`, (e) => e.offsetParent !== null).catch(() => false);
-      if (!(await rowVisible())) {
+      // The folder's own state decides: a redraw of its rows after a disk
+      // change hides them for a moment, and a click then folds an open folder.
+      const folded = () => page.$eval(`.editor-dir[data-path="keep_${tag}"] .editor-item-icon`, (e) => !e.classList.contains("editor-open"));
+      if (await folded()) {
         await page.click(`.editor-dir[data-path="keep_${tag}"]`);
         await page.waitForSelector(`.editor-file[data-path="${inside}"]`, { timeout: 8000 });
       }
@@ -2538,6 +2553,9 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
     await run("tree context menu: dir menu creates inside the dir, file menu deletes, empty area targets the root", async () => {
       const dirSel = `.editor-dir[data-path="keep_${tag}"]`;
       const inmenu = `keep_${tag}/inmenu.txt`;
+      const inside = `keep_${tag}/inside.txt`;
+      await page.click(`.editor-file[data-path="${inside}"]`);
+      await page.waitForSelector(`${tabSel(inside)}.active`, { timeout: 8000 });
       await openRowMenu(page, dirSel);
       let labels = await page.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
       for (const want of ["New file", "New folder", "Upload files", "Copy path", "Rename", "Delete"]) {
@@ -2546,6 +2564,19 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert(!labels.includes("Download"), "dir menu offers Download");
       assert(!labels.includes("Copy contents"), "dir menu offers Copy contents");
       assert(await page.$eval(dirSel, (e) => e.classList.contains("selected")), "right-click did not select the dir row");
+      // The disk moving under an unfolded folder redraws its rows and leaves
+      // the picked row selected over the open file, it is where a create or a
+      // paste lands.
+      const behind = `keep_${tag}/behind.txt`;
+      const onDisk = (op) => page.evaluate(async ([proj, o, path]) => (await fetch(`/projects/${proj}/editor/${o}`, {
+        method: "POST", headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content, "Content-Type": "application/x-www-form-urlencoded" }, body: "path=" + encodeURIComponent(path),
+      })).status, [project, op, behind]);
+      await onDisk("create");
+      await page.waitForSelector(`.editor-file[data-path="${behind}"]`, { state: "attached", timeout: 15000 });
+      await sleep(400);
+      assert(await page.$eval(dirSel, (e) => e.classList.contains("selected")), "a disk change moved the selection off the dir row");
+      await onDisk("delete");
+      await page.waitForSelector(`.editor-file[data-path="${behind}"]`, { state: "detached", timeout: 15000 });
       await menuItem(page, "New file").click();
       await page.waitForSelector(".swal2-input", { state: "visible", timeout: 4000 });
       await page.fill(".swal2-input", "inmenu.txt");
@@ -2581,6 +2612,9 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await confirmSwal(page);
       await page.waitForFunction(() => !document.querySelector('.editor-file[data-path="rootmenu.txt"]'), null, { timeout: 8000 });
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
+      await openRowMenu(page, tabSel(inside));
+      await menuItem(page, "Close").click();
+      await page.waitForFunction((sel) => !document.querySelector(sel), tabSel(inside), { timeout: 6000 });
     });
 
     // The row's menu makes things in the row's folder, whatever happens to the
@@ -3890,18 +3924,28 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await mp.tap("[data-editor-drawer-toggle]");
       await mp.waitForSelector(".editor.editor-drawer-open", { timeout: 6000 });
       await mp.waitForSelector(`.editor-file[data-path="${noteFile}"]`, { timeout: 8000 });
+      // WebKit constructs no Touch and takes none built by script into a
+      // TouchEvent, so there the finger is a plain event carrying the same
+      // touch lists, all the long press and the lift guard read.
+      await mp.evaluate(() => {
+        window.__finger = (type, target, x, y, id) => {
+          const down = type === "touchstart";
+          try {
+            const touch = new Touch({ identifier: id, target, clientX: x, clientY: y });
+            return target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: down ? [touch] : [], targetTouches: down ? [touch] : [], changedTouches: [touch] }));
+          } catch (error) {
+            const event = new Event(type, { bubbles: true, cancelable: true });
+            const touch = { identifier: id, target, clientX: x, clientY: y };
+            for (const [key, list] of [["touches", down ? [touch] : []], ["targetTouches", down ? [touch] : []], ["changedTouches", [touch]]]) Object.defineProperty(event, key, { value: list });
+            return target.dispatchEvent(event);
+          }
+        };
+      });
       // The menu opens under the resting finger, so its lift lands on an entry.
-      const point = await mp.evaluate((sel) => {
+      await mp.evaluate((sel) => {
         const el = document.querySelector(sel);
         const rect = el.getBoundingClientRect();
-        const x = Math.round(rect.left + 30);
-        const y = Math.round(rect.top + rect.height / 2);
-        const target = el;
-        const touch = new Touch({ identifier: 21, target, clientX: x, clientY: y });
-        target.dispatchEvent(new TouchEvent("touchstart", {
-          bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch],
-        }));
-        return { x, y };
+        window.__finger("touchstart", el, Math.round(rect.left + 30), Math.round(rect.top + rect.height / 2), 21);
       }, `.editor-file[data-path="${noteFile}"]`);
       await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
       const entry = await mp.evaluate(() => {
@@ -3911,10 +3955,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       });
       const lift = ([x, y, id]) => {
         const target = document.elementFromPoint(x, y) || document.body;
-        const touch = new Touch({ identifier: id, target, clientX: x, clientY: y });
-        target.dispatchEvent(new TouchEvent("touchend", {
-          bubbles: true, cancelable: true, touches: [], targetTouches: [], changedTouches: [touch],
-        }));
+        window.__finger("touchend", target, x, y, id);
         target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: x, clientY: y }));
       };
       await mp.evaluate(lift, [entry.x, entry.y, 21]);
@@ -3923,11 +3964,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert(await mp.$(".dc-context-menu"), "the lift closed the menu");
       // The tap after it works as usual.
       await mp.evaluate(([x, y, id]) => {
-        const target = document.elementFromPoint(x, y) || document.body;
-        const touch = new Touch({ identifier: id, target, clientX: x, clientY: y });
-        target.dispatchEvent(new TouchEvent("touchstart", {
-          bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch],
-        }));
+        window.__finger("touchstart", document.elementFromPoint(x, y) || document.body, x, y, id);
       }, [entry.x, entry.y, 22]);
       await mp.evaluate(lift, [entry.x, entry.y, 22]);
       await mp.waitForSelector(".swal2-container", { timeout: 6000 });

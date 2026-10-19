@@ -4435,16 +4435,22 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         node: gutter ? gutter.dataset.e2eNode || "" : "",
       };
     });
-    const scrollBlame = (bottom) => page.evaluate((toBottom) => {
-      const scroller = document.querySelector(".cm-blame").closest(".cm-editor").querySelector(".cm-scroller");
-      scroller.scrollTop = toBottom ? scroller.scrollHeight : 0;
-    }, bottom);
-    const blameShows = (pattern) => page.waitForFunction((source) => {
+    const blameShows = (pattern, shown = true) => page.waitForFunction(([source, want]) => {
       const re = new RegExp(source);
       return [...document.querySelectorAll(".cm-blame .cm-gutterElement")]
         .filter((el) => el.style.visibility !== "hidden")
-        .some((el) => re.test(el.textContent));
-    }, pattern, { timeout: 15000 });
+        .some((el) => re.test(el.textContent)) === want;
+    }, [pattern, shown], { timeout: 15000 });
+    // The gutter keeps the rows of the place it left until CodeMirror draws
+    // the new one, and the rows at the bottom hold Al's last lines too, so the
+    // top stands once the newest entries are gone.
+    const scrollBlame = async (bottom) => {
+      await page.evaluate((toBottom) => {
+        const scroller = document.querySelector(".cm-blame").closest(".cm-editor").querySelector(".cm-scroller");
+        scroller.scrollTop = toBottom ? scroller.scrollHeight : 0;
+      }, bottom);
+      await blameShows(" Bartholomew$", bottom);
+    };
     const bold = (weight) => weight === "700" || weight === "bold";
     // The newest commit's entries stand out of the dimmed column: bold and at
     // full opacity, the others at the column's own 0.55.
@@ -4591,7 +4597,6 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       const before = await blameBox();
       assert(before.width > 0, "the gutter has no width");
       await scrollBlame(true);
-      await blameShows(" Bartholomew$");
       await sleep(300);
       const after = await blameBox();
       assert(Math.abs(after.width - before.width) < 0.5, `the gutter grew from ${before.width} to ${after.width} when a wider entry came into view`);
@@ -4602,7 +4607,6 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       assert(spacer && / Bartholomew$/.test(spacer.text), `the spacer is not the widest entry: ${JSON.stringify(spacer)}`);
       assert(bold(spacer.weight), `the spacer is not bold: ${spacer.weight}`);
       await scrollBlame(false);
-      await blameShows(" Al$");
       return `gutter ${before.width.toFixed(1)}px at the top, ${after.width.toFixed(1)}px at the bottom`;
     });
 
@@ -4620,7 +4624,6 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       const top = await blameMarks();
       assert(top.length > 0 && top.every(rests), `the older commit's entries read ${JSON.stringify(top.slice(0, 2).map((m) => [m.weight, m.opacity]))}`);
       await scrollBlame(true);
-      await blameShows(" Bartholomew$");
       const bottom = (await blameMarks()).filter((m) => / Bartholomew$/.test(m.text));
       assert(bottom.length > 0, "the newest commit's lines never came into view");
       for (const m of bottom) {
@@ -4628,7 +4631,6 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         assert(standsOut(m), `a newest entry weighs ${m.weight} at opacity ${m.opacity}`);
       }
       await scrollBlame(false);
-      await blameShows(" Al$");
       return `${bottom.length} entries of 2025-03-04 at ${bottom[0].weight}/${bottom[0].opacity}, the rest at ${top[0].weight}/${top[0].opacity}`;
     });
 

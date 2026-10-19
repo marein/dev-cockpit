@@ -135,16 +135,18 @@ async function takeDown(page, name) {
   await page.waitForSelector(`#project-${name}`, { state: "detached", timeout: 180000 });
 }
 
-const stamp = Date.now().toString(36);
-const A = `dclinks-a-${stamp}`;
-const B = `dclinks-b-${stamp}`;
-const HOST_A = `${A}.test`;
-const HOST_B = `${B}.test`;
 const PORT_A = 18089;
-const LONG = { host: `api.staging.a-subdomain-name-far-longer-than-the-menu-can-show.${B}.test`, path: "/some/long/path/for/the/menu" };
-const LONG_ADDR = LONG.host + LONG.path;
 
-L.runFeature("STATUS-LINKS", async ({ browser, page, run }) => {
+L.runFeature("STATUS-LINKS", async ({ browser, page, run, bag, engine }) => {
+  // Names of their own per engine: a project made again under a name the
+  // other engine's run used would inherit the time that run last used it.
+  const stamp = `${engine}-${Date.now().toString(36)}`;
+  const A = `dclinks-a-${stamp}`;
+  const B = `dclinks-b-${stamp}`;
+  const HOST_A = `${A}.test`;
+  const HOST_B = `${B}.test`;
+  const LONG = { host: `api.staging.a-subdomain-name-far-longer-than-the-menu-can-show.${B}.test`, path: "/some/long/path/for/the/menu" };
+  const LONG_ADDR = LONG.host + LONG.path;
   let upA = false;
   let upB = false;
   try {
@@ -346,6 +348,38 @@ L.runFeature("STATUS-LINKS", async ({ browser, page, run }) => {
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       await dismissUpdate(page);
       await page.waitForSelector(TOGGLE, { timeout: 15000 });
+    });
+
+    await run("a pull still out when a navigation swaps the chip away ends quietly, with an event waiting behind it", async () => {
+      // The swap aborts the pull, and the event that came in behind it must
+      // not start another one off the controller the element dropped.
+      let release = () => {};
+      const held = new Promise((resolve) => { release = resolve; });
+      await page.route("**/docker/links?**", async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+      try {
+        const errors = bag.pageErrors.length;
+        const asked = page.waitForRequest((req) => req.url().includes("/docker/links?"), { timeout: 4000 });
+        await page.evaluate((sel) => {
+          window.__swappedChip = document.querySelector(sel);
+          document.dispatchEvent(new CustomEvent("dc:docker"));
+          document.dispatchEvent(new CustomEvent("dc:docker"));
+        }, CHIP);
+        await asked;
+        await page.evaluate(() => window.app.navigate("/projects"));
+        await page.waitForFunction(() => !window.__swappedChip.isConnected, null, { timeout: 15000 });
+        await page.waitForSelector(TOGGLE, { timeout: 15000 });
+        release();
+        await sleep(1000);
+        const fresh = bag.pageErrors.slice(errors);
+        assert(!fresh.length, `the swapped chip threw: ${fresh.join(" | ")}`);
+        assert(await chipShown(page), "the chip of the new page is gone");
+      } finally {
+        release();
+        await page.unroute("**/docker/links?**").catch(() => {});
+      }
     });
 
     await run("a coarse pointer on a wide screen keeps the meters and drops the chip", async () => {

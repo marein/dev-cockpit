@@ -198,6 +198,33 @@ L.runFeature("LIVE-UPDATES", async ({ engine, browser, page, run, bag }) => {
       await page.waitForSelector(`#project-${remote}`, { state: "detached", timeout: 8000 });
     });
 
+    await run("the tab strip's switcher rows follow a project created and deleted in another client", async () => {
+      // A create publishes the projects event alone, and a project deleted off
+      // the request, compose first, has its last terminals event before the
+      // directory goes: the strip's editor rows only stay true by following
+      // the projects event itself.
+      // The stream's connect snapshot carries a terminals event of its own, so
+      // the create waits until that pull settled, or it would ride along.
+      await page.goto(shells[0], { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["terminal-tabs"], 8000)).length === 0, "terminal-tabs not upgraded");
+      const settled = () => page.evaluate(async () => {
+        const { latestServerEvent } = await import("@dc/events");
+        const tabs = document.querySelector("terminal-tabs");
+        return latestServerEvent("terminals") !== undefined && !tabs.inFlight && !tabs.dirty;
+      });
+      for (let i = 0; i < 40 && !(await settled()); i += 1) await sleep(250);
+      assert(await settled(), "the strip never settled after the stream's snapshot");
+      const remote = `zzlive-switch-${tag}`;
+      const row = `terminal-tabs [data-tabs-editors] [data-editor-project="${remote}"]`;
+      const create = await postAs(pageB, "/projects", { project_name: remote });
+      assert(create.ok, `project create POST failed: ${create.status}`);
+      await page.waitForSelector(row, { state: "attached", timeout: 8000 });
+      const remove = await postAs(pageB, "/projects/delete", { project: remote });
+      assert(remove.ok, `project delete POST failed: ${remove.status}`);
+      await page.waitForSelector(row, { state: "detached", timeout: 8000 });
+      assert(new URL(page.url()).pathname === new URL(shells[0]).pathname, `client A navigated away: ${page.url()}`);
+    });
+
     await run("a column refresh started before a navigation never paints the page it was left on", async () => {
       // The hazard in order: an event on the projects page starts the column's
       // own pull of /projects, the page navigates to a terminal while it is in

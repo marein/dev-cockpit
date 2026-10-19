@@ -42,8 +42,12 @@ const { guestPage, openCommentsSheet } = require("./project-share-guest");
 // of its own), reaching the docker daemon with alpine:latest local, its
 // local API socket mounted (APISOCK, default /apisock/s), its Go file on the
 // real gopls image the cockpit builds when the tag is missing. The stub remote
-// listens on GIT_STUB_PORT (default 3142) inside the runner, so the runner
-// needs --network host. A run takes about three minutes.
+// listens on GIT_STUB_PORT (default 3142) inside the runner, published on the
+// host's loopback (-p 127.0.0.1:3142:3142) where the instance's git reaches
+// it. The runner stays in a network namespace of its own: the stacks it
+// composes and the language server's container add host interfaces, and
+// under --network host each of them aborts the browser's loads with
+// ERR_NETWORK_CHANGED. A run takes about three minutes.
 
 const APISOCK = process.env.APISOCK || "/apisock/s";
 const GIT_STUB_PORT = Number(process.env.GIT_STUB_PORT || 3142);
@@ -302,7 +306,7 @@ function gitStub() {
     res.writeHead(401, { "WWW-Authenticate": 'Basic realm="share"' });
     res.end();
   });
-  return new Promise((resolve) => server.listen(GIT_STUB_PORT, "127.0.0.1", () => resolve(server)));
+  return new Promise((resolve) => server.listen(GIT_STUB_PORT, () => resolve(server)));
 }
 
 async function waitText(read, needle, what, timeout = 15000) {
