@@ -1883,6 +1883,8 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await waitDirty(noteFile, false);
     });
 
+    await require("./editor-preview-gfm").gfmPreviewChecks({ browser, page, run, bag, project, tag, tabSel, openRowMenu, menuItem, waitDirty });
+
     await run("find in file opens the styled search panel", async () => {
       await page.click(tabSel(noteFile));
       await clickItem("[data-editor-find-item]");

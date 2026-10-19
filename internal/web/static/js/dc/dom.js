@@ -141,3 +141,20 @@ export async function copyPending(pending) {
   }
   return copyText(await pending);
 }
+
+const shownFolds = new WeakMap();
+
+// A fold follows its source until somebody toggles it, then keeps that state
+// for as long as the node shows the same document. Folds are known by their
+// place among the folds, the rendered HTML carries no ids.
+export function swapKeepingFolds(node, html, doc) {
+  const last = shownFolds.get(node);
+  const toggled = last?.doc === doc ? last.folds.map(({ fold, open }) => (fold.open === open ? null : fold.open)) : [];
+  node.innerHTML = html;
+  const folds = qsa("details", node).map((fold, i) => {
+    const open = fold.open;
+    if (toggled[i] != null) fold.open = toggled[i];
+    return { fold, open };
+  });
+  shownFolds.set(node, { doc, folds });
+}

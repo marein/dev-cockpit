@@ -41,6 +41,14 @@ const NAME_ICONS = {
   ".env": "ti-key",
 };
 
+export const isMarkdown = (fileName) => /\.(md|markdown)$/i.test(fileName);
+export const isSvg = (fileName) => /\.svg$/i.test(fileName);
+export const isImage = (fileName) => /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(fileName);
+export const isArchive = (fileName) => /\.(tar\.gz|tgz|tar|zip)$/i.test(fileName);
+export const isVideo = (fileName) => /\.(mp4|m4v|webm|ogv|mov)$/i.test(fileName);
+export const isAudio = (fileName) => /\.(mp3|m4a|wav|oga|ogg|flac)$/i.test(fileName);
+export const hasPreview = (fileName) => isMarkdown(fileName) || isSvg(fileName);
+
 export function fileIcon(name) {
   const lower = (name || "").toLowerCase();
   if (NAME_ICONS[lower]) return NAME_ICONS[lower];

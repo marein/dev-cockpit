@@ -13,7 +13,7 @@ import (
 // gfm renders GitHub Flavored Markdown. Raw HTML rendering stays disabled (the
 // default), so goldmark strips embedded HTML and drops dangerous link schemes,
 // which keeps the output safe to inject into a page without a separate
-// sanitizer. The editor preview and the chat answers share it.
+// sanitizer. The chat answers render through it.
 var gfm = goldmark.New(goldmark.WithExtensions(extension.GFM))
 
 // RenderGFM converts Markdown to HTML.

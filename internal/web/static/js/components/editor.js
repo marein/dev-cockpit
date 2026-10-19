@@ -20,8 +20,9 @@ import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
 import { lspView as editorLSPView } from "@dc/editor-lsp-view";
 import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeaves, readGroups, removeAt, screenOrder, splitAt } from "@dc/editor-groups";
-import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, langUrl, modeUrl } from "@dc/editor-filetypes";
+import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPreview, isArchive, isAudio, isImage, isMarkdown, isSvg, isVideo, langUrl, modeUrl } from "@dc/editor-filetypes";
 import { baseName, byteLength, commitDate, countLines, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
+import { showPreview, wirePreviewLinks } from "@dc/editor-preview";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
 import { authorHead, commentRow, findUniqueQuoteLine, placeNodes, sortComments, visibleLine } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
@@ -363,13 +364,6 @@ async function init(root) {
   const stripActive = (tab) => (mobileMedia.matches ? tab === activeTab() : inFront(tab));
   const liveText = (tab) => tab.group.editor.valueOf(tab, inFront(tab));
   const anyDirty = () => tabs.some((t) => t.dirty);
-  const isMarkdown = (fileName) => /\.(md|markdown)$/i.test(fileName);
-  const isSvg = (fileName) => /\.svg$/i.test(fileName);
-  const isImage = (fileName) => /\.(png|jpe?g|gif|webp|avif|bmp|ico)$/i.test(fileName);
-  const isArchive = (fileName) => /\.(tar\.gz|tgz|tar|zip)$/i.test(fileName);
-  const isVideo = (fileName) => /\.(mp4|m4v|webm|ogv|mov)$/i.test(fileName);
-  const isAudio = (fileName) => /\.(mp3|m4a|wav|oga|ogg|flac)$/i.test(fileName);
-  const hasPreview = (fileName) => isMarkdown(fileName) || isSvg(fileName);
   const rawUrl = (path, download) => `${base}/raw?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
 
   // ---- statusbar -------------------------------------------------------------
@@ -713,6 +707,7 @@ async function init(root) {
       g.compareSaveBtns[side].addEventListener("click", () => void saveCompareSide(side, g), opts);
     }
     g.el.querySelector("[data-editor-browse]").addEventListener("click", openDrawer, opts);
+    wirePreviewLinks(g.previewPaneEl, () => activeTabOf(g)?.path || "", followPreviewLink, opts);
     wireTabDrag(g);
     wireSurfaceSwipe(g);
   }
@@ -6688,17 +6683,17 @@ async function init(root) {
     }
   }
 
-  async function revealInTree(path) {
+  async function revealInTree(path, isDir = false) {
     closeCommit();
     closeRevdiff();
     if (mobileMedia.matches) openDrawer();
     else if (treeFolded) toggleDrawer();
-    expandTo(parentDir(path));
+    expandTo(isDir ? path : parentDir(path));
     await loadTree();
     for (let i = 0; i < 40 && !signal.aborted; i++) {
-      const row = treeEl.querySelector(`.editor-file[data-path="${CSS.escape(path)}"]`);
+      const row = treeEl.querySelector(`.editor-item[data-path="${CSS.escape(path)}"]`);
       if (row) {
-        setSelected(path, false, row);
+        setSelected(path, isDir, row);
         const box = treeEl.getBoundingClientRect();
         const rect = row.getBoundingClientRect();
         if (rect.top < box.top || rect.bottom > box.top + treeEl.clientHeight) {
@@ -7198,6 +7193,19 @@ async function init(root) {
     togglePreviewFor(tab);
   }
 
+  // Only the server knows whether a link names a file or a folder. A heading
+  // of a Markdown file is reached through its preview.
+  async function followPreviewLink(path, hash) {
+    if (path === null) return status("That link leads out of the project.", "error");
+    if (await getJSON(`${base}/list?path=${encodeURIComponent(path)}`, { signal }).then(() => true, () => false)) return void revealInTree(path, true);
+    await openPath(path);
+    const tab = tabByPath(path);
+    if (!hash || !tab || tab.kind || !isMarkdown(tab.name)) return;
+    tab.previewHash = hash;
+    if (tab.previewOn) schedulePreview(0, tab.group);
+    else togglePreviewFor(tab);
+  }
+
   function syncPreview(g) {
     const show = previewVisible(g);
     g.previewPaneEl.hidden = !show;
@@ -7213,34 +7221,27 @@ async function init(root) {
     g.previewTimer = setTimeout(() => void renderPreview(g), delay);
   }
 
+  // The SVG preview renders the current buffer through an <img> with a blob
+  // URL: it tracks unsaved edits and scripts inside the SVG never run.
   async function renderPreview(g) {
     const tab = activeTabOf(g);
     if (!previewVisible(g) || !tab) return;
+    g.previewPaneEl.classList.toggle("editor-preview-image", isSvg(tab.name));
     if (isSvg(tab.name)) {
-      renderSvgPreview(tab, g);
+      if (g.svgPreviewUrl) URL.revokeObjectURL(g.svgPreviewUrl);
+      g.svgPreviewUrl = URL.createObjectURL(new Blob([g.editor.valueOf(tab, true)], { type: "image/svg+xml" }));
+      g.previewPaneEl.replaceChildren(el("img", { src: g.svgPreviewUrl, alt: tab.name }));
       return;
     }
-    g.previewPaneEl.classList.remove("editor-preview-image");
     try {
       const res = await postForm(`${base}/preview`, { content: g.editor.valueOf(tab, true) });
       await ensureOk(res, "Failed to render the preview.");
       const data = await res.json();
-      if (previewVisible(g)) g.previewPaneEl.innerHTML = data.html || "";
+      if (previewVisible(g)) showPreview(g.previewPaneEl, data.html || "", tab.path, tab.previewHash, rawUrl);
+      tab.previewHash = "";
     } catch (err) {
       status(err.message, "error");
     }
-  }
-
-  // The SVG preview renders the current buffer through an <img> with a blob
-  // URL: it tracks unsaved edits and scripts inside the SVG never run.
-  function renderSvgPreview(tab, g) {
-    const img = document.createElement("img");
-    if (g.svgPreviewUrl) URL.revokeObjectURL(g.svgPreviewUrl);
-    g.svgPreviewUrl = URL.createObjectURL(new Blob([g.editor.valueOf(tab, true)], { type: "image/svg+xml" }));
-    img.src = g.svgPreviewUrl;
-    img.alt = tab.name;
-    g.previewPaneEl.classList.add("editor-preview-image");
-    g.previewPaneEl.replaceChildren(img);
   }
 
   // ---- drawer ------------------------------------------------------------------

@@ -533,7 +533,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Preview files",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "P"}}},
-					Desc:  `<em>Show preview</em> <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> in a file's context menu puts a markdown or an SVG file next to its rendered form and follows what you type; the shortcut toggles it for the open file. It is per file and comes back after a reload. Images open in a viewer, video and audio in a player, everything else offers a download.`,
+					Desc:  `<em>Show preview</em> <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> in a file's context menu puts a markdown or an SVG file next to its rendered form and follows what you type; the shortcut toggles it for the open file. It is per file and comes back after a reload. The markdown preview renders tables, task lists, alerts like <code>&gt; [!NOTE]</code> and raw HTML such as <code>&lt;details&gt;</code> folds, <code>&lt;kbd&gt;</code> and <code>&lt;br&gt;</code>. A fold keeps the state you gave it while you type, a link to a heading scrolls to it, a link with a full address opens in a new tab. A relative link, read from the file's folder or with a leading / from the project root, opens the file or reveals the folder in the tree, a <code>#heading</code> after a markdown file opens its preview there, and a relative image shows the project's file. Nothing in it runs: scripts, styles, forms, frames and event handlers are dropped, links and images keep only http, https, mailto or relative addresses. Images open in a viewer, video and audio in a player, everything else offers a download.`,
 				},
 				{
 					Title: "Editor settings",
