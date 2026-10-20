@@ -357,8 +357,8 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
           document.addEventListener("dc:activity", (event) => window.dcHeard.push(JSON.stringify(event.detail)));
         });
         const marker = await gp.evaluate(() => window.dcStay);
-        hook(fx.mine, "TurnStart");
-        hook(fx.foreign, "TurnStart");
+        hook(fx.mine, "UserPromptSubmit");
+        hook(fx.foreign, "UserPromptSubmit");
         await Promise.all([ringed(gp, tab(fx.base, fx.mine), true), ringed(mp, head, true), ringed(page, tab("", fx.foreign), true)]);
         hook(fx.mine, "Stop");
         await Promise.all([ringed(gp, tab(fx.base, fx.mine), false), ringed(mp, head, false)]);

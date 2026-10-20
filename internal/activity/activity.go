@@ -5,25 +5,34 @@
 // The answer falls through two shelves, best first, and working() below is
 // that fall in code:
 //
-//  1. The coder's own account of its turn (SetTurn). It is fed by whoever
-//     can read or hear that account: the record watcher tailing the coder's
-//     transcript or event log, the turn-end hooks and bells the notification
-//     center already ingests, and a coder's own plugin events. While any of
-//     them has spoken, the screen has no vote: a turn is open even when a
-//     quiet tool call paints nothing, and over even while an idle input
-//     line keeps blinking.
+//  1. The coder's own account of its turn. It is fed by whoever can read or
+//     hear that account: a coder's hooks and plugin events through the
+//     notification inbox, the record watcher tailing the coder's transcript
+//     or event log, and the bells the notification center ingests. While any
+//     of them has spoken, the screen has no vote: a turn is open even when a
+//     quiet tool call paints nothing, and over even while an idle input line
+//     keeps blinking. Every word is ordered by when it was written, and the
+//     newest wins, see SetTurn. The account also knows a turn that waits on
+//     its person, an ask answered with one key (SetWaiting) or a dialog
+//     filled in (SetQuestion), which is no work either.
 //
 //  2. Movement on the screen (Output/Input), for a session whose account
 //     nobody has read yet, a turn already running when the serve process
 //     started, or a coder that keeps no readable record. Sustained output
 //     that no input explains is somebody working in there, and the mark
-//     decays when the screen goes quiet.
+//     decays when the screen goes quiet. Whether a coder gets this shelf at
+//     all is its own choice: one whose hooks cover every turn never feeds it.
 //
-// One abort leaves no trace on either shelf: interrupting a coder mid
-// streaming writes nothing into its record at all. The interrupt keys are
-// therefore taken as a hint (Interrupt) that the account may answer within
-// a grace, and its silence is what closes the turn; the per-coder
-// Policy.OpenTurnCap is the backstop behind everything else.
+// One abort leaves no trace on either shelf: interrupting a coder before its
+// first answer writes nothing into its record and fires no hook. The
+// interrupt keys are therefore taken as a hint (Interrupt) that the account
+// may answer within a grace, and its silence is what closes the turn; the
+// per-coder Policy.OpenTurnCap is the backstop behind everything else. Both
+// are the tracker's own guess, which a sign of life (Alive) takes back.
+//
+// The account survives a serve restart: every change of it is written to the
+// state file Persist names and read back from it at start, so a session
+// keeps its last word, and the words that come after are ordered against it.
 //
 // The heuristics live here once, but whether one applies to a session is
 // its coder's choice: the feeders read coder.ActivityProfile and call only
@@ -41,7 +50,8 @@ import (
 
 // turnState is what shelf one knows about a session: nothing yet, or the
 // coder's account of whether a turn is open, and if so whether it stands
-// inside a tool call, the one phase whose abort provably writes itself down.
+// inside a tool call, the one phase whose abort provably writes itself down,
+// or whether it waits on its person.
 type turnState int
 
 const (
@@ -49,6 +59,12 @@ const (
 	turnOpen
 	turnOpenInTool
 	turnOver
+	// turnWaiting is a turn that stands at an ask its person answers with
+	// one key: the coder waits, and the key starts the tool, see Answered.
+	turnWaiting
+	// turnQuestion is a turn that stands at a dialog its person fills in:
+	// keys do not end it, only the coder's next word does.
+	turnQuestion
 )
 
 const (
@@ -71,9 +87,9 @@ const (
 	// that shelf, quiet is the only evidence of idleness there is.
 	idleAfter = 15 * time.Second
 	// interruptGrace is how long an interrupt key waits for the account to
-	// react before it closes the turn itself, see Interrupt. An abort during
-	// a tool call writes its marker well within this; an abort during plain
-	// streaming writes nothing at all, which is what the grace catches.
+	// react before it closes the turn itself, see Interrupt. An abort while
+	// text streams writes its marker well within this; an abort before the
+	// first answer writes nothing at all, which is what the grace catches.
 	interruptGrace = 4 * time.Second
 	// bootSettle is the rest that ends a session's boot on the movement
 	// shelf: the start grace names the least a boot is granted, but a cold
@@ -83,7 +99,10 @@ const (
 	bootSettle = 10 * time.Second
 	// sweepKeep bounds how long a session with no turn account outlives its
 	// last movement before the sweep drops it, so sessions that ended do
-	// not accumulate. A session with an account is dropped by Forget.
+	// not accumulate. A session with an account is dropped by Forget, or
+	// after this long by the sweep when no watcher ever claimed it: a
+	// restored session whose terminal ended while the server was down, or
+	// a hook naming no terminal at all.
 	sweepKeep = time.Hour
 )
 
@@ -95,7 +114,15 @@ type session struct {
 	booting       bool      // the movement shelf sits out the boot paints until the first rest
 	turn          turnState
 	turnAt        time.Time // when the account's newest word was written, see SetTurn
+	heardAt       time.Time // when the account last said anything, signs of life included: the cap counts from here
+	guessed       bool      // the turn is over by the tracker's own guess, see sweep and Alive
+	answeredAt    time.Time // the person's newest answer key, see Answered
+	wroteAt       time.Time // the person's newest text written into the terminal, see Wrote
+	askAt         time.Time // when the ask the turn waits at was put, see Answered
 	interruptedAt time.Time // a pending interrupt key, waiting out its grace
+	record        string    // the id the coder records this session under now, see SetRecord
+	recordAt      time.Time
+	bornAt        time.Time // when the tracker first held this session, see sweepKeep
 	lastInput     time.Time
 	lastOutput    time.Time // last qualifying output
 	runStart      time.Time // start of the current run of output
@@ -135,6 +162,12 @@ type Tracker struct {
 	published []string
 	onChange  func(working map[string]int64)
 	now       func() time.Time
+	// path is the state file the account is kept in, see Persist; changed
+	// says the file is behind on a word, heard that it is behind only on
+	// when a session was last heard, which the sweep catches up on.
+	path    string
+	changed bool
+	heard   bool
 }
 
 // NewTracker returns an empty tracker. Wire SetOnChange before the feeders
@@ -175,52 +208,207 @@ func (t *Tracker) Configure(id string, policy Policy, startedAt time.Time) {
 
 // SetTurn records the coder's account: a turn opened, inside a tool call or
 // not, or a turn is over. Shelf one; it stands until the account speaks
-// again or Forget drops the session. Every word of the account also
-// withdraws a pending interrupt: the record moving on is the account
-// answering it.
+// again or Forget drops the session.
 //
-// at is when the word was written, not when it arrived: a record entry
-// carries its file's stamp, a signal the moment it was heard. The words
-// reach the tracker through different roads with different delays, so they
-// are ordered by their own time, and an older word never overrules a newer
-// one. The permission ask is the case that needs this: the record's tool
-// call entry says open, the ask signal moments later says the coder now
-// waits on its person, and the signal must win no matter which road was
-// faster.
+// at is when the word was written, not when it arrived: a hook carries the
+// moment it fired, a record entry its message's own time. The words reach
+// the tracker through different roads with different delays, so they are
+// ordered by their own time, and an older word never overrules a newer one.
+// The permission ask is the case that needs this: the record's tool call
+// entry says open, the ask moments later says the coder now waits on its
+// person, and the ask must win no matter which road was faster, also when
+// the same entry is read again. A word written after a pending interrupt
+// key withdraws it, it is the account answering the key.
 func (t *Tracker) SetTurn(id string, open, inTool bool, at time.Time) {
-	t.mu.Lock()
-	s := t.session(id)
-	if at.Before(s.turnAt) {
-		t.mu.Unlock()
-		return
-	}
+	state := turnOver
 	switch {
 	case open && inTool:
-		s.turn = turnOpenInTool
+		state = turnOpenInTool
 	case open:
-		s.turn = turnOpen
-	default:
-		s.turn = turnOver
+		state = turnOpen
 	}
-	s.turnAt = at
-	s.interruptedAt = time.Time{}
+	t.mu.Lock()
+	t.hear(t.session(id), state, at)
 	t.reconcile()
 }
 
-// Interrupt records an interrupt key, Escape or Ctrl+C, for a coder whose
-// profile chose the hint. It closes nothing itself: any sign of life
-// withdraws it, the record moving on (SetTurn) and the screen painting past
-// the key's own echo alike (Output), because an aborted coder falls truly
-// silent while one whose dialog just closed keeps ticking its status line.
-// Only total silence past interruptGrace lets the sweep close the turn, the
-// abort that writes nothing. A turn inside a tool call ignores the hint
-// entirely: an abort there writes its own marker, while the phase itself
-// paints nothing that could withdraw a wrong hint.
-func (t *Tracker) Interrupt(id string) {
+// SetWaiting records the coder's account that its turn stands at an ask its
+// person answers with one key, a permission: the coder waits, the mark goes
+// down. A key the person typed after the ask was shown but before this word
+// arrived, the inbox is polled, already answered it, and the turn is open
+// from that key on. A dialog the person fills in stays one when the coder
+// says again that its ask still stands.
+func (t *Tracker) SetWaiting(id string, at time.Time) {
 	t.mu.Lock()
 	s := t.session(id)
-	if s.turn == turnOpen && s.interruptedAt.IsZero() {
-		s.interruptedAt = t.now()
+	switch {
+	case s.turn == turnQuestion:
+		t.hear(s, turnQuestion, at)
+	case s.answeredAt.After(at) && !at.Before(s.turnAt):
+		t.hear(s, turnOpenInTool, s.answeredAt)
+	default:
+		t.hear(s, turnWaiting, at)
+	}
+	t.reconcile()
+}
+
+// SetQuestion records the coder's account that its turn stands at a dialog
+// its person fills in, one or more answers and a submit: keys do not end it,
+// the coder's next word does, the tool's end when the dialog is submitted or
+// the abort marker when it is dismissed.
+func (t *Tracker) SetQuestion(id string, at time.Time) {
+	t.mu.Lock()
+	t.hear(t.session(id), turnQuestion, at)
+	t.reconcile()
+}
+
+// Answered records that the person answered an ask with one key, at the
+// moment the key went out: Enter, which submits whatever the ask shows, or a
+// digit picking an option, which is text once the person has written into the
+// ask since it was put, see Wrote, or since the account's newest word while
+// the ask is not heard yet. An approved tool runs from there without any hook
+// saying so until it ends, so a turn standing at an ask is open again, inside
+// that tool. The key is also kept: an ask heard only after it is already
+// answered, see SetWaiting. A denial is corrected by the coder's abort marker,
+// written after the key. Nothing corrects a key that only led into a field
+// the person fills in: the coder waits there and says nothing until the
+// person submits it, so an ask that has such a field behind a key is a
+// question, see SetQuestion, and keys never end it.
+func (t *Tracker) Answered(id string, at time.Time, submits bool) {
+	t.mu.Lock()
+	s := t.session(id)
+	since := s.turnAt
+	if s.turn == turnWaiting {
+		since = s.askAt
+	}
+	if !submits && s.wroteAt.After(since) {
+		t.mu.Unlock()
+		return
+	}
+	if at.After(s.answeredAt) {
+		s.answeredAt = at
+	}
+	if s.turn == turnWaiting {
+		t.hear(s, turnOpenInTool, at)
+	}
+	t.reconcile()
+}
+
+// Wrote records that the person wrote text into the terminal, at the moment
+// it went out: a digit typed after it is part of that text, see Answered.
+func (t *Tracker) Wrote(id string, at time.Time) {
+	t.mu.Lock()
+	s := t.session(id)
+	if at.After(s.wroteAt) {
+		s.wroteAt = at
+	}
+	t.mu.Unlock()
+}
+
+// Alive records a sign of life from the coder that holds no place in the
+// turn's order, claude's streamed text: it withdraws a pending interrupt key
+// it came after, and takes back a close that was only the tracker's own
+// guess, the interrupt grace or the cap. It never overrules a word of the
+// account, because it may arrive after the word that ended its turn.
+func (t *Tracker) Alive(id string, at time.Time) {
+	t.mu.Lock()
+	s := t.session(id)
+	t.alive(s, at)
+	if s.guessed && s.turn == turnOver && at.After(s.turnAt) {
+		s.turn = turnOpen
+		s.guessed = false
+		t.changed = true
+	}
+	t.reconcile()
+}
+
+// SetRecord records under which id the coder keeps this session's record
+// now, as of a word written at at: claude starts a new transcript under a
+// new id on /clear and on /resume, while the terminal stays the same. The
+// newest word wins. The record watcher reads where Record points.
+func (t *Tracker) SetRecord(id, record string, at time.Time) {
+	if record == "" {
+		return
+	}
+	if record == id {
+		record = ""
+	}
+	t.mu.Lock()
+	s := t.session(id)
+	if at.After(s.recordAt) {
+		t.changed = t.changed || s.record != record
+		s.record = record
+		s.recordAt = at
+	}
+	t.reconcile()
+}
+
+// Record answers the id the coder keeps a session's record under, the
+// session's own id unless SetRecord moved it.
+func (t *Tracker) Record(id string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s, ok := t.sessions[id]; ok && s.record != "" {
+		return s.record
+	}
+	return id
+}
+
+// hear applies one word of the account, ordered by when it was written: an
+// older word than the newest one is dropped. The caller holds the lock.
+func (t *Tracker) hear(s *session, state turnState, at time.Time) {
+	if at.Before(s.turnAt) {
+		return
+	}
+	t.changed = t.changed || s.turn != state || !s.turnAt.Equal(at) || s.guessed
+	if state == turnWaiting && s.turn != turnWaiting {
+		s.askAt = at
+	}
+	s.turn = state
+	s.turnAt = at
+	s.guessed = false
+	t.alive(s, at)
+}
+
+// alive takes a word or sign of life written at at: the cap counts from the
+// newest one, and one after a pending interrupt key answers it. The caller
+// holds the lock.
+func (t *Tracker) alive(s *session, at time.Time) {
+	if at.After(s.heardAt) {
+		s.heardAt = at
+		t.heard = true
+	}
+	if !s.interruptedAt.IsZero() && at.After(s.interruptedAt) {
+		s.interruptedAt = time.Time{}
+	}
+}
+
+// guess closes a turn on the tracker's own judgement, as of at. Words of the
+// account written before that moment no longer reopen it, the same record
+// entry read again included; a sign of life after it does, see Alive.
+func (t *Tracker) guess(s *session, at time.Time) {
+	s.turn = turnOver
+	if at.After(s.turnAt) {
+		s.turnAt = at
+	}
+	s.guessed = true
+	s.interruptedAt = time.Time{}
+	t.changed = true
+}
+
+// Interrupt records an interrupt key, Escape or Ctrl+C, for a coder whose
+// profile chose the hint, at the moment the key went out. It closes nothing
+// itself: any word or sign of life of the account written after the key
+// withdraws it, because an aborted coder falls truly silent while one whose
+// dialog just closed goes on. The screen is no such sign, it paints for
+// reasons of its own. Only total silence past interruptGrace lets the sweep
+// close the turn, the abort that writes nothing. A turn inside a tool call or
+// at an ask ignores the hint entirely: an abort there writes its own marker.
+func (t *Tracker) Interrupt(id string, at time.Time) {
+	t.mu.Lock()
+	s := t.session(id)
+	if s.turn == turnOpen && s.interruptedAt.IsZero() && !at.Before(s.heardAt) {
+		s.interruptedAt = at
 	}
 	t.mu.Unlock()
 }
@@ -241,12 +429,6 @@ func (t *Tracker) Output(id string) {
 	if now.Sub(s.lastInput) < echoGap {
 		t.mu.Unlock()
 		return
-	}
-	// The screen painting past the interrupt key's echo is the turn still
-	// running: the key closed a dialog, not the turn, see Interrupt. A
-	// sign of life is one whether or not it may count as movement yet.
-	if !s.interruptedAt.IsZero() && now.After(s.interruptedAt) {
-		s.interruptedAt = time.Time{}
 	}
 	// The boot is over once its grace ran out and the screen has stood
 	// still since: this paint is the first of something new. A paint
@@ -278,7 +460,10 @@ func (t *Tracker) Input(id string) {
 // its terminal.
 func (t *Tracker) Forget(id string) {
 	t.mu.Lock()
-	delete(t.sessions, id)
+	if _, ok := t.sessions[id]; ok {
+		delete(t.sessions, id)
+		t.changed = true
+	}
 	t.reconcile()
 }
 
@@ -331,20 +516,24 @@ func (t *Tracker) sweep() {
 		if s.moving && now.Sub(s.lastOutput) > idleAfter {
 			s.moving = false
 		}
-		if s.turn == turnOpen || s.turn == turnOpenInTool {
-			// An interrupt the account never answered, and the backstop
-			// against an end that was never written anywhere.
-			interrupted := !s.interruptedAt.IsZero() && now.Sub(s.interruptedAt) > interruptGrace
-			capped := s.policy.OpenTurnCap > 0 && now.Sub(s.turnAt) > s.policy.OpenTurnCap
-			if interrupted || capped {
-				s.turn = turnOver
-				s.interruptedAt = time.Time{}
-			}
+		// An interrupt the account never answered, and the backstop against
+		// an end that was never written anywhere.
+		open := s.turn == turnOpen || s.turn == turnOpenInTool
+		switch {
+		case s.turn == turnOpen && !s.interruptedAt.IsZero() && now.Sub(s.interruptedAt) > interruptGrace:
+			t.guess(s, s.interruptedAt)
+		case open && s.policy.OpenTurnCap > 0 && now.Sub(s.heardAt) > s.policy.OpenTurnCap:
+			t.guess(s, s.heardAt.Add(s.policy.OpenTurnCap))
 		}
 		stale := now.Sub(s.lastOutput) > sweepKeep && now.Sub(s.lastInput) > sweepKeep
-		if s.turn == turnUnknown && stale {
+		unclaimed := !s.configured && now.Sub(s.bornAt) > sweepKeep && now.Sub(s.heardAt) > sweepKeep
+		if (s.turn == turnUnknown && stale) || unclaimed {
 			delete(t.sessions, id)
+			t.changed = t.changed || s.turn != turnUnknown || s.record != ""
 		}
+	}
+	if t.heard {
+		t.changed = true
 	}
 	t.reconcile()
 }
@@ -354,7 +543,7 @@ func (t *Tracker) sweep() {
 func (t *Tracker) session(id string) *session {
 	s, ok := t.sessions[id]
 	if !ok {
-		s = &session{}
+		s = &session{bornAt: t.now()}
 		t.sessions[id] = s
 	}
 	return s
@@ -364,6 +553,9 @@ func (t *Tracker) session(id string) *session {
 // every mutation ends here, so no feeder has to know whether it changed
 // anything visible. The caller holds the lock, which is released here.
 func (t *Tracker) reconcile() {
+	if t.changed {
+		t.save()
+	}
 	now := t.now()
 	for _, s := range t.sessions {
 		switch {

@@ -143,6 +143,7 @@ func TestOnlyChangesArePublished(t *testing.T) {
 func TestSweepDropsStaleUnknownSessions(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.Output("stale")
+	tracker.Configure("kept", Policy{}, *at)
 	tracker.SetTurn("kept", false, false, *at)
 	*at = at.Add(sweepKeep + time.Second)
 	tracker.sweep()
@@ -160,7 +161,7 @@ func TestSweepDropsStaleUnknownSessions(t *testing.T) {
 func TestASilentInterruptClosesTheTurn(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.SetTurn("a", true, false, *at)
-	tracker.Interrupt("a")
+	tracker.Interrupt("a", *at)
 	tracker.sweep()
 	if tracker.Working()["a"] == 0 {
 		t.Fatal("inside the grace the turn still stands")
@@ -172,17 +173,28 @@ func TestASilentInterruptClosesTheTurn(t *testing.T) {
 	}
 }
 
-// The account speaking withdraws the interrupt: the abort during a tool
-// call writes its own marker, and an Escape that only closed a menu is
-// contradicted by the record moving on.
+// The account speaking after the key withdraws the interrupt: an Escape
+// that only closed a menu is contradicted by the coder going on. A word
+// written before the key says nothing about what came after it.
 func TestTheAccountAnswersAnInterrupt(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.SetTurn("a", true, false, *at)
-	tracker.Interrupt("a")
-	tracker.SetTurn("a", true, false, *at) // the record moved: still working
-	*at = at.Add(interruptGrace + time.Second)
+	key := at.Add(time.Second)
+	tracker.Interrupt("a", key)
+	tracker.SetTurn("a", true, false, key.Add(-100*time.Millisecond))
+	*at = key.Add(interruptGrace + time.Second)
 	tracker.sweep()
-	if tracker.Working()["a"] == 0 {
+	if tracker.Working()["a"] != 0 {
+		t.Fatal("a word written before the key must not withdraw it")
+	}
+
+	tracker.SetTurn("b", true, false, *at)
+	key = at.Add(time.Second)
+	tracker.Interrupt("b", key)
+	tracker.SetTurn("b", true, false, key.Add(100*time.Millisecond))
+	*at = key.Add(interruptGrace + time.Second)
+	tracker.sweep()
+	if tracker.Working()["b"] == 0 {
 		t.Fatal("a withdrawn interrupt must not close the turn")
 	}
 }
@@ -191,7 +203,7 @@ func TestTheAccountAnswersAnInterrupt(t *testing.T) {
 func TestAnInterruptNeedsAnOpenTurn(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.SetTurn("a", false, false, *at)
-	tracker.Interrupt("a")
+	tracker.Interrupt("a", *at)
 	*at = at.Add(interruptGrace + time.Second)
 	tracker.sweep()
 	if tracker.Working()["a"] != 0 {
@@ -233,7 +245,7 @@ func TestTheBackstopEndsASilentOpenTurn(t *testing.T) {
 func TestAnInterruptInsideAToolCallIsIgnored(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.SetTurn("a", true, true, *at)
-	tracker.Interrupt("a")
+	tracker.Interrupt("a", *at)
 	*at = at.Add(interruptGrace + time.Second)
 	tracker.sweep()
 	if tracker.Working()["a"] == 0 {
@@ -241,25 +253,30 @@ func TestAnInterruptInsideAToolCallIsIgnored(t *testing.T) {
 	}
 }
 
-// The screen also answers an interrupt: a coder whose dialog just closed
-// keeps painting its status line past the key's echo, and that sign of life
-// withdraws the hint the way a record word does. Claude's /usage over a
-// thinking turn is exactly this.
-func TestTheScreenAnswersAnInterrupt(t *testing.T) {
+// The screen never answers an interrupt: it paints for reasons of its own,
+// a status line redrawn on a timer among them, so only the account's own
+// sign of life after the key withdraws the hint.
+func TestTheScreenDoesNotAnswerAnInterrupt(t *testing.T) {
 	tracker, at := newTestTracker()
 	tracker.SetTurn("a", true, false, *at)
-	tracker.Input("a") // the escape key itself
-	tracker.Interrupt("a")
-	// The dialog-closing repaint is the key's echo and counts for nothing.
-	*at = at.Add(500 * time.Millisecond)
-	tracker.Output("a")
-	// The status line ticking on past the echo is the withdrawal.
-	*at = at.Add(2 * time.Second)
-	tracker.Output("a")
-	*at = at.Add(interruptGrace + time.Second)
+	tracker.Input("a")
+	tracker.Interrupt("a", *at)
+	for i := 0; i < 10; i++ {
+		*at = at.Add(time.Second)
+		tracker.Output("a")
+	}
 	tracker.sweep()
-	if tracker.Working()["a"] == 0 {
-		t.Fatal("a screen alive past the echo withdraws the hint")
+	if tracker.Working()["a"] != 0 {
+		t.Fatal("a painting screen must not withdraw the hint")
+	}
+
+	tracker.SetTurn("b", true, false, *at)
+	tracker.Interrupt("b", *at)
+	tracker.Alive("b", at.Add(time.Second))
+	*at = at.Add(interruptGrace + 2*time.Second)
+	tracker.sweep()
+	if tracker.Working()["b"] == 0 {
+		t.Fatal("a sign of life after the key withdraws the hint")
 	}
 }
 

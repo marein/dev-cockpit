@@ -1,8 +1,10 @@
 package notify
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testService(t *testing.T) *Service {
@@ -242,5 +244,65 @@ func TestPruneDropsTheTargetsOfDeletedProjects(t *testing.T) {
 		if n.TargetID != DockerTarget("alive") && n.TargetID != GitPromptTarget("alive") {
 			t.Fatalf("the prune kept %q", n.TargetID)
 		}
+	}
+}
+
+// Every hook a coder drops into the inbox reaches the hook listener as the
+// raw fact, under the coder's name and dated by the file's modification time,
+// not by its name: claude's hook puts nanoseconds there, opencode's plugin
+// milliseconds. A wrapped hook names the terminal it belongs to, which is the
+// target even after claude's own session id moved; a bare one is targeted by
+// its session id. Only Stop and Notification are news.
+func TestEveryInboxHookReachesTheListenerWithItsWriteTime(t *testing.T) {
+	s := testService(t)
+	heard := map[string]HookEvent{}
+	targets := map[string]string{}
+	s.SetHook(func(targetID string, ev HookEvent) {
+		heard[ev.Name] = ev
+		targets[ev.Name] = targetID
+	})
+	dir := t.TempDir()
+	written := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	write := func(name, body string, at time.Time) {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("1792071315017168190-11.json", `{"terminal":"term-1","event":{"session_id":"cleared-2","hook_event_name":"UserPromptSubmit","prompt":"hi"}}`, written)
+	write("1792071315017168191-11.json", `{"terminal":"term-1","event":{"session_id":"cleared-2","hook_event_name":"PreToolUse","agent_id":"helper","tool_name":"Bash"}}`, written.Add(time.Second))
+	write("1792071315017168192-11.json", `{"terminal":"term-1","event":{"session_id":"cleared-2","hook_event_name":"PreCompact","trigger":"manual"}}`, written.Add(2*time.Second))
+	write("1792071315017168193-11.json", `{"terminal":"term-1","event":{"session_id":"cleared-2","hook_event_name":"SessionStart","source":"resume"}}`, written.Add(3*time.Second))
+	write("1792071315017168194-11.json", `{"terminal":"term-1","event":{"session_id":"cleared-2","hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}}`, written.Add(8*time.Second))
+	write("1792071315017-22-0.json", `{"session_id":"term-2","hook_event_name":"Stop","message":""}`, written.Add(20*time.Second))
+	s.drainInbox(dir, "claude")
+
+	if len(heard) != 6 {
+		t.Fatalf("want every hook heard, got %+v", heard)
+	}
+	if ev := heard["UserPromptSubmit"]; !ev.At.Equal(written) || ev.Coder != "claude" || ev.Session != "cleared-2" || targets["UserPromptSubmit"] != "term-1" {
+		t.Fatalf("a wrapped hook is dated by its file and targets its terminal, got %+v at %s", ev, targets["UserPromptSubmit"])
+	}
+	if ev := heard["PreToolUse"]; ev.AgentID != "helper" || ev.ToolName != "Bash" {
+		t.Fatalf("a subagent's hook names the agent and the tool, got %+v", ev)
+	}
+	if heard["PreCompact"].Trigger != "manual" || heard["SessionStart"].Source != "resume" {
+		t.Fatalf("a compaction carries its trigger and a start its source, got %+v %+v", heard["PreCompact"], heard["SessionStart"])
+	}
+	if heard["Notification"].NotificationType != "permission_prompt" {
+		t.Fatalf("a notification carries its kind, got %+v", heard["Notification"])
+	}
+	if ev := heard["Stop"]; !ev.At.Equal(written.Add(20*time.Second)) || targets["Stop"] != "term-2" {
+		t.Fatalf("a bare hook is targeted by its session and a millisecond name is no time, got %+v at %s", ev, targets["Stop"])
+	}
+	targetsWithNews := map[string]bool{}
+	for _, n := range s.List(0) {
+		targetsWithNews[n.TargetID] = true
+	}
+	if len(targetsWithNews) != 2 || !targetsWithNews["term-1"] || !targetsWithNews["term-2"] {
+		t.Fatalf("only Stop and Notification are news, each under its terminal, got %v", targetsWithNews)
 	}
 }

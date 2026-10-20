@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/marein/dev-cockpit/internal/keys"
 	"github.com/marein/dev-cockpit/internal/ollama"
@@ -86,6 +87,75 @@ func InputInterrupts(items []Input) bool {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+// InputAnswers reads whether a batch of input items carries a key that
+// answers a coder's ask: Enter, or a digit picking a numbered option. The
+// activity tracker reads it as the person acting on a standing ask, see its
+// Answered. Tab, the arrows and plain typing decide nothing yet, and an
+// interrupt key is read by InputInterrupts instead.
+func InputAnswers(items []Input) bool {
+	for _, item := range items {
+		if submitItem(item) || pickText(item.Raw) || pickText(item.Text) {
+			return true
+		}
+	}
+	return false
+}
+
+// InputSubmits reads whether a batch carries Enter, the key that submits
+// whatever an ask shows, the text the person wrote into it included. A digit
+// picks an option only until the person writes, then it is text.
+func InputSubmits(items []Input) bool {
+	for _, item := range items {
+		if submitItem(item) {
+			return true
+		}
+	}
+	return false
+}
+
+// InputWrites reads whether a batch carries text the person writes into a
+// field: Tab, which opens the field an ask amends its answer in, a space, a
+// paste, a prompt, or typed text that is more than one answer key. Keys and
+// escape sequences write nothing.
+func InputWrites(items []Input) bool {
+	for _, item := range items {
+		switch strings.ToLower(strings.TrimSpace(item.Control)) {
+		case "tab", "space":
+			return true
+		}
+		if item.Paste != "" || item.Prompt != "" || writesText(item.Raw) || writesText(item.Text) {
+			return true
+		}
+	}
+	return false
+}
+
+func submitItem(item Input) bool {
+	return strings.EqualFold(strings.TrimSpace(item.Control), "enter") || submitText(item.Raw) || submitText(item.Text)
+}
+
+func submitText(text string) bool {
+	return text == "\r" || text == "\n" || text == "\r\n"
+}
+
+// pickText reports whether typed text is a single digit, exactly as a dialog
+// takes it to pick an option.
+func pickText(text string) bool {
+	return len(text) == 1 && text[0] >= '1' && text[0] <= '9'
+}
+
+func writesText(text string) bool {
+	if text == "" || submitText(text) || pickText(text) || strings.HasPrefix(text, "\x1b") {
+		return false
+	}
+	for _, r := range text {
+		if r == '\t' || unicode.IsPrint(r) {
+			return true
 		}
 	}
 	return false

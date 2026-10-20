@@ -68,6 +68,10 @@ func activityBounds(entries, budget int) (keep, line int) {
 // The conversation reading takes the same line and reads a few marks more:
 // the entry's id, and what the CLI wrote in the user's role, IsMeta on its
 // own notes and IsCompactSummary on the summary a compaction left behind.
+// Origin says who put a user entry there: a person's prompt carries kind
+// "human", an entry claude injected itself another kind, "task-notification"
+// for a background task that ended, "peer" for a subagent handing its report
+// back, and a slash command queued while claude worked none at all.
 type transcriptLine struct {
 	Type             string `json:"type"`
 	UUID             string `json:"uuid"`
@@ -75,7 +79,10 @@ type transcriptLine struct {
 	IsMeta           bool   `json:"isMeta"`
 	IsCompactSummary bool   `json:"isCompactSummary"`
 	Timestamp        string `json:"timestamp"`
-	Message          struct {
+	Origin           struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
+	Message struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -143,12 +150,19 @@ func (r *sessionRepository) activity(sessionID string, entries, budget int) (cod
 // budget runes on the reading (zero or less means unlimited).
 //
 // A transcript without a single message reads as empty, see
-// coder.Activity.Empty. Since claude 2.1.277 the file exists before the first
-// prompt: at boot claude writes a `system` note saying which instruction files
-// it loaded (`agents-md: no CLAUDE.md found; AGENTS.md loaded`), next to the
-// modes, an empty draft and the cost state. None of that is a message, so the
-// tail is empty, and a reading that judged such a transcript by the file's
-// stamp read a coder that had only booted as a prompt just received.
+// coder.Activity.Empty. Whether the file exists before the first prompt
+// depends on the claude version: 2.1.277 wrote a `system` note at boot saying
+// which instruction files it loaded, next to the modes, an empty draft and
+// the cost state, 2.1.300 creates the file with the first prompt. None of
+// that is a message, so the tail is empty, and a reading that judged such a
+// transcript by the file's stamp read a coder that had only booted as a
+// prompt just received.
+//
+// For the working mark the tail speaks only where no hook does, see
+// coder.Activity.Aside and TurnSignal: a person's prompt opens the turn,
+// because a prompt queued while claude worked starts its turn with no hook
+// of its own, and the abort marker closes it, because no hook fires for an
+// abort. Every other tail is aside.
 func readActivity(source io.Reader, entries, budget int) (coder.Activity, error) {
 	keep, line := activityBounds(entries, budget)
 	var tail []transcriptLine
@@ -176,10 +190,44 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 	return coder.Activity{
 		Text:          renderTranscript(tail, line, budget),
 		Finished:      turnFinished(tail),
+		Aside:         aside(tail),
 		InToolCall:    inToolCall(tail),
 		LastMessageAt: lastMessageAt(tail),
 		Empty:         len(tail) == 0,
 	}, nil
+}
+
+// aside reports whether the record's tail is no word about the turn, see
+// readActivity: anything but a person's prompt and the abort marker.
+func aside(tail []transcriptLine) bool {
+	if len(tail) == 0 {
+		return false
+	}
+	last := tail[len(tail)-1]
+	return !personPrompt(last) && !interrupted(last)
+}
+
+// personPrompt reports whether an entry is a prompt in a person's own words:
+// a user entry of human origin that is no tool's result, none of the notes,
+// summaries and images claude adds in the user's role, and none of the
+// exchanges claude answers on its own, the slash commands and the `!` escape.
+// The origin is required: a slash command queued while claude worked is
+// recorded as its bare text without one, `/compact` say, and read as a
+// prompt it opened a turn that only a hook of the command's own closes,
+// which a session started before those hooks does not have. claude writes a
+// `!` command's line together with its output once the command ended, so the
+// line never stands alone at the end. A skill's or a command's expanded
+// prompt is one of claude's notes, its hook reports that turn.
+func personPrompt(entry transcriptLine) bool {
+	if entry.Type != "user" || entry.Origin.Kind != "human" || entry.IsMeta || entry.IsCompactSummary {
+		return false
+	}
+	for _, block := range blocks(entry) {
+		if block.Type == "tool_result" {
+			return false
+		}
+	}
+	return !bashEntry(entry) && !localCommand(entry) && !sessionNote(entry) && !interrupted(entry)
 }
 
 // lastMessageAt dates the newest recorded message, zero when there is none
@@ -218,9 +266,9 @@ func inToolCall(tail []transcriptLine) bool {
 // working. The exceptions are the exchanges that never were a turn: the `!`
 // shell escape, recorded as user entries although it is the user's own command,
 // the slash commands claude answers itself, and the notes claude writes into
-// the conversation in the user's role. Their output coming back ends the
-// exchange, and no answer has to follow it, so a transcript ending on it is
-// over, not working.
+// the conversation in the user's role. Nothing is owed on them, so a
+// transcript ending on one is over for whoever judges the text, even where
+// claude goes on to answer the `!` output by itself.
 func turnFinished(tail []transcriptLine) bool {
 	if len(tail) == 0 {
 		return false
@@ -243,19 +291,26 @@ func bashEcho(entry transcriptLine) bool {
 	return userEntryWithPrefix(entry, "<bash-stdout>")
 }
 
+// bashEntry reports whether an entry belongs to a `!` command, its line or
+// its output.
+func bashEntry(entry transcriptLine) bool {
+	return userEntryWithPrefix(entry, "<bash-input>") || bashEcho(entry)
+}
+
 // localCommand reports whether an entry is a slash command claude answers
 // itself, `/agents` or `/model`: no turn ever starts, so nothing is owed an
 // answer. Both halves count, the command line and the output, because which of
-// them ends the transcript depends on the claude version: the output used to be
-// a user entry and is now a `system` entry that readActivity drops, which
-// leaves the command line as the last word forever, and a turn that is never
-// over is a ring that spins to the cap.
+// them ends the transcript depends on the command and the claude version: the
+// output is a user entry for some, `/model` and `/compact`, and a `system`
+// entry that readActivity drops for others, which leaves the command line as
+// the last word forever, and a turn that is never over is one a job check
+// waits on for good.
 //
 // The command line is deliberately counted although a skill and a project
 // command carry the same tag and do expand into a real prompt afterwards. That
 // costs at most the moment between two adjacent writes, and the expansion is
-// the very next line; leaving it out costs a session that ran `/agents` its
-// ring for half an hour. A short false idle is the cheaper of the two.
+// the very next line; leaving it out leaves a session that ran `/agents`
+// working for good. A short false idle is the cheaper of the two.
 func localCommand(entry transcriptLine) bool {
 	return userEntryWithPrefix(entry, "<command-name>") ||
 		userEntryWithPrefix(entry, "<command-message>") ||
@@ -278,8 +333,10 @@ func sessionNote(entry transcriptLine) bool {
 }
 
 // interrupted reports whether an entry is the marker claude records when the
-// user aborts a turn (Escape, Ctrl+C). The stop hook does not fire for an
-// abort, so this line is the only written trace that the turn is over.
+// user aborts a turn (Escape, Ctrl+C). No hook fires for an abort, so this
+// line is the only written trace that the turn is over. It is written for an
+// abort while text streams and for one inside a tool call or at a permission
+// ask; an abort before the first answer writes nothing at all.
 func interrupted(entry transcriptLine) bool {
 	return userEntryWithPrefix(entry, "[Request interrupted by user")
 }

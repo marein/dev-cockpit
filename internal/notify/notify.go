@@ -167,8 +167,8 @@ type Service struct {
 	now      func() time.Time
 	// signal hears every ingested signal, see SetSignal.
 	signal func(targetID string)
-	// turnOpen hears a target starting to work, see SetTurnOpen.
-	turnOpen func(targetID string)
+	// hook hears every ingested hook, see SetHook.
+	hook func(targetID string, ev HookEvent)
 	// silent decides whether a target's news is written quietly, see SetSilent.
 	silent func(targetID string) bool
 	// event hears a signal together with the raw hook name it arrived under,
@@ -198,12 +198,13 @@ func NewService(path string, resolver Resolver) *Service {
 // Set it before the pollers start.
 func (s *Service) SetSignal(listen func(targetID string)) { s.signal = listen }
 
-// SetTurnOpen installs the listener that hears a target starting to work.
-// The inbox is the one channel a coder's own process can drop that fact
-// into, which is the only reason it passes through here: it is no news, it
-// makes no entry, and this service still classifies nothing. Set it before
-// the pollers start.
-func (s *Service) SetTurnOpen(listen func(targetID string)) { s.turnOpen = listen }
+// SetHook installs the listener that hears every hook the inbox ingests, the
+// ones that make news and the ones that do not, as the raw fact with the
+// moment it fired. The inbox is the one channel a coder's own process can
+// drop its account of a turn into, which is the only reason it passes
+// through here: what a hook means is the coder's rule, this service still
+// classifies nothing. Set it before the pollers start.
+func (s *Service) SetHook(listen func(targetID string, ev HookEvent)) { s.hook = listen }
 
 // SetEvent installs a listener that hears every signal together with the hook
 // name it arrived under, "Stop" for a turn that ended and "Notification" for a

@@ -103,3 +103,45 @@ func TestInputInterrupts(t *testing.T) {
 		}
 	}
 }
+
+// Enter or a digit answers an ask, in every shape the terminal sends it;
+// Tab, the arrows, Escape and plain typing decide nothing.
+func TestInputAnswers(t *testing.T) {
+	for _, items := range [][]Input{
+		{{Control: "Enter"}}, {{Raw: "\r"}}, {{Text: "2"}}, {{Raw: "1"}},
+	} {
+		if !InputAnswers(items) {
+			t.Errorf("%+v answers an ask", items)
+		}
+	}
+	for _, items := range [][]Input{
+		{{Control: "Tab"}}, {{Raw: "\x1b[B"}}, {{Raw: "\x1b"}}, {{Text: "yes"}}, {{Text: "0"}}, {{Paste: "1"}},
+	} {
+		if InputAnswers(items) {
+			t.Errorf("%+v answers nothing", items)
+		}
+	}
+}
+
+// Writing is text going into a field: Tab opens an ask's amend field, and
+// typed text, a paste or a prompt is written. Keys and a single answer key
+// write nothing. Enter alone submits.
+func TestInputWritesAndSubmits(t *testing.T) {
+	for _, items := range [][]Input{
+		{{Control: "Tab"}}, {{Raw: "\t"}}, {{Raw: "a"}}, {{Text: "use 2 lines"}}, {{Text: "12"}}, {{Paste: "x"}}, {{Prompt: "go"}}, {{Control: "space"}},
+	} {
+		if !InputWrites(items) {
+			t.Errorf("%+v writes", items)
+		}
+	}
+	for _, items := range [][]Input{
+		{{Raw: "3"}}, {{Raw: "\r"}}, {{Control: "Enter"}}, {{Raw: "\x1b[B"}}, {{Raw: "\x1b"}}, {{Raw: "\x7f"}}, {{Control: "escape"}},
+	} {
+		if InputWrites(items) {
+			t.Errorf("%+v writes nothing", items)
+		}
+	}
+	if !InputSubmits([]Input{{Text: "fix"}, {Raw: "\r"}}) || InputSubmits([]Input{{Raw: "3"}}) {
+		t.Error("only Enter submits")
+	}
+}

@@ -48,6 +48,13 @@ type Activity struct {
 	// behind: a coder touches its record with bookkeeping at boot and exit,
 	// so the file moving proves nothing about the conversation moving.
 	LastMessageAt time.Time
+	// Aside says the record's tail is no word about the turn for the working
+	// mark, whatever Finished answers for whoever judges the text: the coder
+	// reports that part of its turns itself, through its hooks, and the
+	// record watcher leaves the word to them (openTurn). claude's reader sets
+	// it for every tail but a person's prompt and the abort marker, the two
+	// moments no hook reports.
+	Aside bool
 	// Empty says the record holds no message yet, neither the user's nor the
 	// coder's, and nothing else that speaks of a turn: only the bookkeeping
 	// a coder writes at boot. claude notes which instruction files it loaded
@@ -58,6 +65,69 @@ type Activity struct {
 	// first message, and coder-activity says so instead of calling the turn
 	// running. A screen reading is never empty in this sense.
 	Empty bool
+}
+
+// HookEvent is one hook a coder's own process dropped into the cockpit's
+// inbox, the raw fact a coder reads for the working mark, see TurnSignaler.
+// AgentID names the subagent it fired from and is empty on the main thread;
+// Source is why a session started, Trigger what started a compaction. At is
+// when the hook fired.
+type HookEvent struct {
+	Name             string
+	AgentID          string
+	NotificationType string
+	ToolName         string
+	Source           string
+	Trigger          string
+	At               time.Time
+}
+
+// TurnSignal is what one hook says about the main thread's turn.
+type TurnSignal int
+
+const (
+	// TurnSignalNone says nothing about the turn.
+	TurnSignalNone TurnSignal = iota
+	// TurnSignalOpen is the coder working: a prompt taken, a tool returned.
+	TurnSignalOpen
+	// TurnSignalTool is the coder working inside a tool call, the one phase
+	// whose abort writes itself down, see ActivityProfile.InterruptKeys.
+	TurnSignalTool
+	// TurnSignalOver is the turn's end, or a session that came up idle.
+	TurnSignalOver
+	// TurnSignalWaiting is the coder standing at an ask its person answers
+	// with one key, a permission: the approval starts the tool, and no hook
+	// says so until the tool ends.
+	TurnSignalWaiting
+	// TurnSignalQuestion is the coder standing at a dialog its person fills
+	// in: keys do not end it, only the coder's next word does.
+	TurnSignalQuestion
+	// TurnSignalAlive is the coder showing it still runs, without a place in
+	// the turn's order: claude does not wait for the hook it fires while
+	// text streams, so its file may land after the hook that ends the turn,
+	// and read as an opening word it would open what that end closed.
+	TurnSignalAlive
+)
+
+// TurnSignaler is the optional capability of a coder to read its own hooks
+// for the working mark. Which name opens, closes or suspends a turn is the
+// coder's knowledge; a coder without it is read by InboxTurnSignal.
+type TurnSignaler interface {
+	TurnSignal(ev HookEvent) TurnSignal
+}
+
+// InboxTurnSignal reads the inbox's own words for a coder that brings no
+// reading of its own: TurnStart, which the cockpit's opencode plugin drops
+// when a session turns busy, opens a turn, and Stop and Notification, the
+// names the plugin shares with claude's hooks, close it.
+func InboxTurnSignal(ev HookEvent) TurnSignal {
+	switch ev.Name {
+	case "TurnStart":
+		return TurnSignalOpen
+	case "Stop", "Notification":
+		return TurnSignalOver
+	}
+	return TurnSignalNone
 }
 
 // ActivityBudget is how many runes a whole activity reading may cost by
@@ -101,6 +171,12 @@ type ActivityProfile struct {
 	// a coder without a readable record leaves it off and reports its turns
 	// itself (opencode's plugin events).
 	WatchRecord bool
+	// WatchScreen lets the screen's movement stand in while the coder's
+	// account has not spoken, for a coder whose own words do not cover
+	// every session. A coder whose hooks report every turn from the
+	// session's start leaves it off: a screen paints for many reasons, a
+	// status line redrawn on a timer among them, and none of them is work.
+	WatchScreen bool
 	// InterruptKeys takes a typed Escape or Ctrl+C as the hint that a turn
 	// was aborted, for a coder whose aborts may leave no written trace. The
 	// hint never applies inside a tool call (see Activity.InToolCall): an

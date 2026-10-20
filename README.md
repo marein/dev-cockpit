@@ -146,7 +146,7 @@ Each area of the cockpit is described below.
 
 * Linux or macOS.
 * `tmux` on the host.
-* At least one coder CLI installed and logged in: `claude`, `copilot` or `opencode`.
+* At least one coder CLI installed and logged in: `claude`, `copilot` or `opencode`. `claude` has to be 2.1.152 or newer, the first release that knows every hook the cockpit registers.
 * Optional: `git` for the git features, Docker for compose stacks, code navigation and voice.
 
 The server refuses to start without tmux or without any coder CLI. A coder whose CLI is missing is skipped.

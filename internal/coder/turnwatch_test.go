@@ -41,3 +41,28 @@ func TestAnOpenTurnNeedsAWordFromThisLife(t *testing.T) {
 		}
 	}
 }
+
+// A tail the coder's hooks speak for is no word of the record's: claude
+// answers the `!` output, works on a task notification and leaves a
+// compaction summary behind, and its hooks report all of it.
+func TestAnAsideTailSaysNothing(t *testing.T) {
+	started := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	newer := started.Add(time.Second)
+	if open, spoken := openTurn(Activity{Aside: true, LastMessageAt: newer}, newer, started); open || spoken {
+		t.Fatalf("an aside tail spoke: (%v, %v)", open, spoken)
+	}
+}
+
+// The record's word is dated by its newest message, not by the file's stamp:
+// bookkeeping moves the stamp, and the same message read again under a newer
+// stamp would otherwise overrule a hook that fired after it.
+func TestARecordWordIsDatedByItsMessage(t *testing.T) {
+	message := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	stamp := message.Add(time.Minute)
+	if got := wordTime(Activity{LastMessageAt: message}, stamp); !got.Equal(message) {
+		t.Fatalf("wordTime = %v, want the message's time", got)
+	}
+	if got := wordTime(Activity{}, stamp); !got.Equal(stamp) {
+		t.Fatalf("wordTime = %v, want the stamp without message dates", got)
+	}
+}

@@ -185,16 +185,17 @@ func (p *Coder) GlobalInstructions() coder.GlobalInstructions { return p.instruc
 func (p *Coder) SessionRuntime() coder.SessionRuntime         { return p.runtime }
 func (p *Coder) ControlMapper() terminal.ControlMapper        { return p.controls }
 
-// ActivityProfile: the transcript is a readable record, so it is watched.
-// Interrupt keys count because an abort during plain streaming may write
-// nothing at all, while the same keys inside a tool call are left to the
-// record, which an abort there provably writes. The cap is the backstop for
-// an abort that happened past the cockpit's hands.
+// ActivityProfile: the hooks report every turn from the session's start, see
+// TurnSignal, so the screen never stands in. The transcript is watched for
+// the two moments no hook reports, see readActivity. Interrupt keys count
+// because an abort before the first answer writes nothing at all, while the
+// same keys inside a tool call are left to the record, which an abort there
+// provably writes. The cap is the backstop for an abort that happened past
+// the cockpit's hands.
 func (p *Coder) ActivityProfile() coder.ActivityProfile {
 	return coder.ActivityProfile{
-		WatchRecord:        true,
-		InterruptKeys:      true,
-		OpenTurnCap:        30 * time.Minute,
-		MovementStartGrace: 20 * time.Second,
+		WatchRecord:   true,
+		InterruptKeys: true,
+		OpenTurnCap:   30 * time.Minute,
 	}
 }

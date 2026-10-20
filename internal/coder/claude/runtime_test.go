@@ -16,7 +16,7 @@ import (
 func TestSessionSettings(t *testing.T) {
 	r := runtime{notifyInbox: "/tmp/inbox"}
 	var values map[string]any
-	if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+	if err := json.Unmarshal([]byte(r.sessionSettings("sid")), &values); err != nil {
 		t.Fatalf("settings are not valid JSON: %v", err)
 	}
 	if values["theme"] != "auto" {
@@ -70,7 +70,7 @@ func TestSessionSettingsCarryTheStatusLineOnlyWithTheLine(t *testing.T) {
 	line := filepath.Join(t.TempDir(), "claude-statusline.json")
 	r := runtime{statusLine: line, statusLineCommand: "'/bin/dev-cockpit' claude status-line --state-dir '/state'"}
 	var values map[string]any
-	if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+	if err := json.Unmarshal([]byte(r.sessionSettings("sid")), &values); err != nil {
 		t.Fatalf("settings are not valid JSON: %v", err)
 	}
 	if _, ok := values["statusLine"]; ok {
@@ -79,7 +79,7 @@ func TestSessionSettingsCarryTheStatusLineOnlyWithTheLine(t *testing.T) {
 	if err := os.WriteFile(line, []byte(`{"entries":[]}`), 0o600); err != nil {
 		t.Fatalf("write the line: %v", err)
 	}
-	if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+	if err := json.Unmarshal([]byte(r.sessionSettings("sid")), &values); err != nil {
 		t.Fatalf("settings are not valid JSON: %v", err)
 	}
 	object, ok := values["statusLine"].(map[string]any)
@@ -97,7 +97,7 @@ func TestSessionSettingsCarryTheStatusLineOnlyWithTheLine(t *testing.T) {
 	}
 	// A binary whose path could not be read has no command to hand over.
 	r.statusLineCommand = ""
-	if strings.Contains(r.sessionSettings(), "statusLine") {
+	if strings.Contains(r.sessionSettings("sid"), "statusLine") {
 		t.Fatal("a status line is injected without a command to draw it")
 	}
 }
@@ -136,7 +136,7 @@ func TestSessionSettingsStatusLineFollowsTheMode(t *testing.T) {
 		}
 		store.Set(statusline.SettingKey, statusline.Encode(statusline.Config{Mode: c.mode}))
 		var values map[string]any
-		if err := json.Unmarshal([]byte(r.sessionSettings()), &values); err != nil {
+		if err := json.Unmarshal([]byte(r.sessionSettings("sid")), &values); err != nil {
 			t.Fatalf("settings are not valid JSON: %v", err)
 		}
 		if _, got := values["statusLine"]; got != c.want {
@@ -167,14 +167,14 @@ func TestOffGivesANewSessionNoStatusLineOverAWrittenLine(t *testing.T) {
 		t.Fatal("off wrote no line")
 	}
 	r := runtime{statusLine: statusline.ConfigPath(stateDir), statusLineCommand: "draw", store: store}
-	if strings.Contains(r.sessionSettings(), "statusLine") {
+	if strings.Contains(r.sessionSettings("sid"), "statusLine") {
 		t.Fatal("a session started while off carries a statusLine")
 	}
 	if strings.Contains(r.ResumeCommand("sid", "/work", false), "statusLine") {
 		t.Fatal("a session resumed while off carries a statusLine")
 	}
 	store.Set(statusline.SettingKey, statusline.Encode(statusline.Config{Mode: statusline.ModeFallback, Entries: statusline.Defaults()}))
-	if !strings.Contains(r.sessionSettings(), "statusLine") {
+	if !strings.Contains(r.sessionSettings("sid"), "statusLine") {
 		t.Fatal("the fallback after off gives a new session no statusLine")
 	}
 }

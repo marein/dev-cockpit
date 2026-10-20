@@ -603,7 +603,7 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title: "Coders",
-					Desc:  `Claude reports finished turns, questions and permission requests through its injected hooks. Copilot emits a terminal bell. OpenCode reports through a plugin the cockpit keeps in its config directory, which stays silent for coders the cockpit did not start.`,
+					Desc:  `Claude reports finished turns, questions and permission requests through its injected hooks. The same hooks drive the working ring on its icon, never the screen: it runs from the prompt to the end of the turn and stops while claude waits on a permission or a question. Copilot emits a terminal bell. OpenCode reports through a plugin the cockpit keeps in its config directory, which stays silent for coders the cockpit did not start.`,
 				},
 				{
 					Title: "Shells",
@@ -779,7 +779,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "The claude status line",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Settings &rarr; Coder &rarr; Status line builds the line under claude's prompt from a list of values, separators and line breaks. A preset fills the list, Save keeps it. A number is colored by bounds, the highest one reached wins. A value without an answer leaves the line with the separator before it. A command runs in the coder's folder without a shell, gets claude's status JSON on stdin and is dropped after five seconds. Only <em>Weekly, one model</em> calls the usage API. The mode is read when a coder starts or resumes, the list at its next redraw. <em>If ~/.claude/settings.json sets none</em>, the default, checks only that file. Claude's own settings files are never written.`,
+					Desc:     `Settings &rarr; Coder &rarr; Status line builds the line under claude's prompt from a list of values, separators and line breaks. A preset fills the list, Save keeps it. A number is colored by bounds, the highest one reached wins. A value without an answer leaves the line with the separator before it. A command runs in the coder's folder without a shell, gets claude's status JSON on stdin and is dropped after five seconds. Only <em>Weekly, one model</em> calls the usage API. The mode is read when a coder starts or resumes, the list at its next redraw, at most ten seconds later. <em>If ~/.claude/settings.json sets none</em>, the default, checks only that file. Claude's own settings files are never written.`,
 				},
 				{
 					Title:    "Back up and move your setup",

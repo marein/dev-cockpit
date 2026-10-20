@@ -20,7 +20,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
@@ -602,15 +601,10 @@ func runServe(opts serveOptions) error {
 		func() int { return web.ConcurrentChecks(settingsStore) },
 	)
 	// The working marks. The tracker holds the shelves, everything below only
-	// feeds it: the record watchers report each coder's own account of its
-	// turn (RunTurnWatch further down), the turn-end hooks and bells close it
-	// (the SetSignal wrap), opencode's plugin opens it (SetTurnOpen), and the
-	// session watchers deliver the raw screen movement the fallback shelf
-	// reads. Every change goes out as one activity snapshot on the event bus,
-	// the shape the icons decorate from.
-	tracker := activity.NewTracker()
-	tracker.SetOnChange(func(working map[string]int64) { bus.Publish(web.ActivityEvent(working)) })
-	go tracker.Run(time.Second)
+	// feeds it: the coders' hooks (wireWorkingMark), the record watchers and
+	// the bells (watchWorkingMarks further down), and the session watchers'
+	// raw screen movement for the coders that chose the fallback shelf.
+	tracker := newWorkingMarks(cfg.StateDir, bus)
 	// Editor intelligence owns the language server child processes. On a
 	// stop signal they are shut down along the protocol before exit; the
 	// self-update exec path needs no hook because the pipe ends close on
@@ -666,14 +660,8 @@ func runServe(opts serveOptions) error {
 		notifier.AddResolved(notify.WorktreeTarget(name), info)
 	})
 	conversations.SetRenderer(markdown.RenderGFM)
-	// The same raw signal closes the working mark's turn: a coder that
-	// reports has stopped to say so, whether it finished or waits on a
-	// question. The record watcher reopens it the moment the record moves
-	// again.
-	notifier.SetSignal(func(targetID string) {
-		watcher.Handle(targetID)
-		tracker.SetTurn(targetID, false, false, time.Now())
-	})
+	notifier.SetSignal(watcher.Handle)
+	wireWorkingMark(notifier, tracker, turnReaders(coders))
 	// The same signal, with the hook name it arrived under, is a coder event the
 	// assistants may react to: a Notification hook is a coder that asks a
 	// question or wants a permission, every other name is a turn that ended. The
@@ -689,11 +677,6 @@ func runServe(opts serveOptions) error {
 			kind = assistant.CoderKindAsks
 		}
 		events.Coder(targetID, kind)
-	})
-	// And the opposite fact from the one coder whose record arrives as push
-	// events instead of a readable file.
-	notifier.SetTurnOpen(func(targetID string) {
-		tracker.SetTurn(targetID, true, false, time.Now())
 	})
 	// A coder somebody steers has an assistant looking at it, so its own news
 	// stays quiet and that assistant's report is what the user hears. Whose
@@ -787,7 +770,7 @@ func runServe(opts serveOptions) error {
 	go events.Run(0)
 
 	for _, c := range selected {
-		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), time.Second)
+		go notifier.RunInbox(notify.InboxDir(cfg.StateDir, c.ID()), c.ID(), time.Second)
 	}
 	go shells.RunCommandWatch(3*time.Second, func(shellID string) {
 		notifier.Add(shellID)
@@ -802,21 +785,12 @@ func runServe(opts serveOptions) error {
 	// this is the work behind them starting again, and it waits for the docker
 	// connection above, which is why it comes after it and in its own goroutine.
 	go srv.ResumeProjectDeletes()
-	// Every coder feeds the working marks with two watches. The turn watch
-	// follows each session's own record and is the account the tracker
-	// trusts first; its gone reports are what drop a dead session's mark.
-	// The session watch delivers the raw screen output the fallback shelf
-	// reads; only copilot's also listens for the bell, its turn-end signal,
-	// where claude and opencode report through the inbox instead.
-	//
-	// The turn watch carries one thing that is not about working marks: it
-	// reads the snapshot every second, and the snapshot holds the session
-	// names the CLIs write themselves. A rename inside a coder therefore
-	// only has to be handed to the same announcement every other terminal
-	// change makes, and every surface follows it without a page of its own
-	// asking anybody. The event names the project and nothing else, the way
-	// a start or a stop does, so the moved name itself travels no further
-	// than here: every surface pulls its own fragment and reads it there.
+	// A rename inside a coder only has to be handed to the same announcement
+	// every other terminal change makes, and every surface follows it without
+	// a page of its own asking anybody. The event names the project and
+	// nothing else, the way a start or a stop does, so the moved name itself
+	// travels no further than here: every surface pulls its own fragment and
+	// reads it there.
 	onRenamed := func(id, name, cwd string) { srv.PublishTerminals(projectRepo.ProjectNameFor(cwd)) }
 	for _, m := range coders {
 		var onBell func(targetID string)
@@ -830,16 +804,7 @@ func runServe(opts serveOptions) error {
 				notifier.Event(targetID, "Bell")
 			}
 		}
-		// A session entering the running set brings its coder's chosen
-		// policy along, so the tracker never guesses what applies to it.
-		profile := m.Coder().ActivityProfile()
-		policy := activity.Policy{
-			OpenTurnCap:        profile.OpenTurnCap,
-			MovementStartGrace: profile.MovementStartGrace,
-		}
-		onSeen := func(id string, startedAt time.Time) { tracker.Configure(id, policy, startedAt) }
-		go m.RunTurnWatch(time.Second, onSeen, tracker.SetTurn, tracker.Forget, onRenamed)
-		go m.RunSessionWatch(3*time.Second, tracker.Output, onBell)
+		watchWorkingMarks(m, tracker, onRenamed, onBell)
 	}
 
 	return serveHTTP(&http.Server{Handler: srv.Handler()}, listener, cfg.TLSCertFile, cfg.TLSKeyFile)

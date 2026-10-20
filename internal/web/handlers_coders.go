@@ -500,22 +500,13 @@ func (s *Server) handleCoderInput(c *gin.Context) {
 		c.String(http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := co.Send(id, items); err != nil {
+	if err := s.sendCoderInput(co, id, items); err != nil {
 		if errors.Is(err, coder.ErrNotRunning) {
 			s.coderNotRunning(c, id)
 			return
 		}
 		c.String(http.StatusBadRequest, err.Error())
 		return
-	}
-	// Every input starts the echo window: the repaint that follows a
-	// keystroke is the keystroke coming back, not the coder working. An
-	// interrupt key is the one input the tracker hears about, because an
-	// aborted turn may leave no written trace at all, see Tracker.Interrupt;
-	// whether the keys mean that here is the coder's own choice.
-	s.activity.Input(id)
-	if co.Coder().ActivityProfile().InterruptKeys && terminal.InputInterrupts(items) {
-		s.activity.Interrupt(id)
 	}
 	// Steering is ownership and only steer and release change it, so the
 	// user's inputs are none of the job's business. The steering assistant's

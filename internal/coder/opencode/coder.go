@@ -91,6 +91,7 @@ func (p *Coder) ControlMapper() terminal.ControlMapper        { return p.control
 func (p *Coder) ActivityProfile() coder.ActivityProfile {
 	return coder.ActivityProfile{
 		WatchRecord:        false,
+		WatchScreen:        true,
 		InterruptKeys:      false,
 		OpenTurnCap:        30 * time.Minute,
 		MovementStartGrace: 20 * time.Second,

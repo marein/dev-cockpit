@@ -14,10 +14,12 @@ import (
 )
 
 // statusLineRefreshSeconds is how often claude draws the status line again on
-// its own. A minute is what a clock on the line needs to be right and what the
-// renderer costs nothing at: the whole default line is a few milliseconds and
-// asks the network at most once every two minutes, see usageMaxAge.
-const statusLineRefreshSeconds = 60
+// its own. Ten seconds keep a countdown and the time left on a limit current,
+// and the renderer costs nothing at that: the whole default line is a few
+// milliseconds and asks the network at most once every two minutes, see
+// usageMaxAge. The redraw paints the screen, which the working mark never
+// reads for claude, see ActivityProfile.
+const statusLineRefreshSeconds = 10
 
 type runtime struct {
 	notifyInbox string
@@ -52,7 +54,7 @@ func (r runtime) Env() map[string]string {
 // model rides behind --model and only on a start: a resume carries none, so a
 // resumed session keeps the model it has, whatever /model set inside it.
 func (r runtime) StartCommand(start coder.SessionStart) string {
-	args := r.flags(start.AgentID, start.AutomaticApproval) + " --session-id " + clirun.ShellQuote(start.SessionID)
+	args := r.flags(start.SessionID, start.AgentID, start.AutomaticApproval) + " --session-id " + clirun.ShellQuote(start.SessionID)
 	// A session without a name gets no flag at all; an empty --name would be a
 	// value claude has to refuse. What such a session is called is read out of
 	// its transcript afterwards, see promptTitle in session.go.
@@ -77,7 +79,7 @@ func (r runtime) SessionStarted(start coder.SessionStart) {
 }
 
 func (r runtime) ResumeCommand(sessionID, workdir string, automaticApproval bool) string {
-	args := r.flags("", automaticApproval) + " --resume " + clirun.ShellQuote(sessionID)
+	args := r.flags(sessionID, "", automaticApproval) + " --resume " + clirun.ShellQuote(sessionID)
 	return r.command(workdir, r.sessions.modelOf(sessionID), args)
 }
 
@@ -99,7 +101,7 @@ func (r runtime) command(workdir, ollamaName, args string) string {
 	return "cd " + clirun.ShellQuote(workdir) + " && " + head + args
 }
 
-func (r runtime) flags(agentID string, automaticApproval bool) string {
+func (r runtime) flags(terminal, agentID string, automaticApproval bool) string {
 	var flags strings.Builder
 	if automaticApproval {
 		flags.WriteString(" --permission-mode auto")
@@ -108,7 +110,7 @@ func (r runtime) flags(agentID string, automaticApproval bool) string {
 		flags.WriteString(" --agent ")
 		flags.WriteString(clirun.ShellQuote(agentID))
 	}
-	if settings := r.sessionSettings(); settings != "" {
+	if settings := r.sessionSettings(terminal); settings != "" {
 		flags.WriteString(" --settings ")
 		flags.WriteString(clirun.ShellQuote(settings))
 	}
@@ -123,16 +125,22 @@ func (r runtime) flags(agentID string, automaticApproval bool) string {
 // view, because the cockpit forwards keys via send-keys and tmux never
 // swallows Ctrl+B as prefix, an accidental Ctrl+B or a left arrow into the
 // agent view would turn the session into a background agent the cockpit can
-// no longer resume. It also wires the Stop and Notification hooks: each hook
-// streams its stdin JSON into the notify inbox; the write goes to a .tmp
-// name first so the poller only ever reads complete .json files.
+// no longer resume. It also wires the turn hooks, see turnHooks: each hook
+// streams its stdin JSON into the notify inbox, wrapped with the terminal it
+// belongs to, because claude's own session id moves with /clear and /resume
+// while the terminal stays. The write goes to a .tmp name first so the poller
+// only ever reads complete .json files, and the file's modification time is
+// the moment the hook fired. A write that fails drops its .tmp and still
+// exits 0 without output: claude prints every failing hook into the coder,
+// two lines for each of the many hooks a turn fires, while a missing signal
+// costs only the mark, which the record and the cap still close.
 //
 // The status line joins it the same way, as a command claude runs, see
 // wantsStatusLine for when. It carries a refresh interval, because without one
 // claude draws the line on its own state changes alone: the clock, the age of
 // the last commit and the time left on a limit would then stand still between
 // two answers, which is exactly the number somebody put them on the line for.
-func (r runtime) sessionSettings() string {
+func (r runtime) sessionSettings(terminal string) string {
 	values := map[string]any{"theme": "auto", "disableAgentView": true}
 	if r.wantsStatusLine() {
 		values["statusLine"] = map[string]any{
@@ -140,18 +148,29 @@ func (r runtime) sessionSettings() string {
 		}
 	}
 	if r.notifyInbox != "" {
-		dir := clirun.ShellQuote(r.notifyInbox)
-		command := "d=" + dir + ` && mkdir -p "$d" && f="$d"/$(date +%s%N)-$$ && cat > "$f.tmp" && mv "$f.tmp" "$f.json"`
 		hook := []map[string]any{{
-			"hooks": []map[string]any{{"type": "command", "command": command}},
+			"hooks": []map[string]any{{"type": "command", "command": hookCommand(r.notifyInbox, terminal)}},
 		}}
-		values["hooks"] = map[string]any{"Stop": hook, "Notification": hook}
+		hooks := map[string]any{}
+		for _, name := range turnHooks {
+			hooks[name] = hook
+		}
+		values["hooks"] = hooks
 	}
 	settings, err := json.Marshal(values)
 	if err != nil {
 		return ""
 	}
 	return string(settings)
+}
+
+// hookCommand is the command every hook runs: it wraps the hook's stdin as
+// the event of the terminal it belongs to, see notify's inbox, and drops it
+// into the inbox dir.
+func hookCommand(inbox, terminal string) string {
+	id, _ := json.Marshal(terminal)
+	head := clirun.ShellQuote(`{"terminal":` + string(id) + `,"event":`)
+	return "{ d=" + clirun.ShellQuote(inbox) + `; f="$d"/$(date +%s%N)-$$; mkdir -p "$d" && { printf %s ` + head + ` && cat && printf '}'; } > "$f.tmp" && mv "$f.tmp" "$f.json" || rm -f "$f.tmp"; } >/dev/null 2>&1; exit 0`
 }
 
 // wantsStatusLine decides per session start and resume, from the mode stored
