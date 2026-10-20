@@ -38,7 +38,16 @@
        message that brought the reader here, and one line of half a sentence
        no longer stands for the report it introduces. */}}
   {{$note := .Note}}{{if not $note}}{{$note = .Origin}}{{end}}
-  {{with $note}}
+  {{if .Answered}}
+  <div class="d-flex flex-wrap align-items-baseline gap-1 text-secondary small" data-assistant-answered>
+    <span class="fw-medium">{{.Author}}</span>
+    {{with .Time}}<span aria-hidden="true">·</span>
+    <dc-time datetime="{{.}}" class="flex-shrink-0"></dc-time>{{end}}
+    <span aria-hidden="true">·</span>
+    <span class="fw-medium text-body text-nowrap"><i class="ti ti-check me-1" aria-hidden="true"></i>answered</span>
+    {{if .Queued}}<span class="badge bg-secondary-lt flex-shrink-0 ms-auto" data-assistant-queued>{{if .CanDiscard}}Waiting{{else}}Not sent{{end}}</span>{{end}}
+  </div>
+  {{else}}{{with $note}}
   <div class="d-flex align-items-center gap-2 mb-1"{{if $.Message.Note}} data-assistant-note="{{.Source}}"{{if eq .Source "check"}} data-assistant-wake="{{.Verdict}}"{{end}}{{if .Compose}} data-assistant-compose="{{.Verdict}}"{{end}}{{if .Approval}} data-assistant-approval-note="{{.Verdict}}"{{end}}{{else}} data-assistant-origin{{end}}>
     {{/* The badge is the icon alone, coloured by what it says: the headline
          beside it already carries the word, "DONE: readme-task", and a
@@ -90,14 +99,16 @@
   {{range .Parts}}
   {{if .Tool}}
   <div class="text-secondary small my-1 text-truncate" data-copy-tool="{{.Tool}}" title="{{.Tool}}{{if .Line}} {{.Line}}{{end}}"><i class="ti ti-tool me-1"></i><span class="fw-medium">{{.Tool}}</span>{{if .Line}} <span class="font-monospace">{{.HTML}}</span>{{end}}</div>
-  {{else}}
+  {{else if .Choices}}
+  {{template "chat_choices.gohtml" .Choices}}
+  {{else if .HTML}}
   <div class="text-break markdown" data-assistant-text>{{.HTML}}</div>
   {{end}}
   {{end}}
   {{else}}
   <div class="text-break{{if not .User}} markdown{{end}}" data-assistant-text>{{.HTML}}</div>
   {{end}}
-  {{end}}
+  {{end}}{{end}}
   {{if .Attachments}}
   <div class="d-flex flex-column gap-2 mt-2" data-assistant-files>
     {{range .Attachments}}

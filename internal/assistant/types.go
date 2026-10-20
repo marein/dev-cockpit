@@ -187,6 +187,11 @@ type Message struct {
 	// shows it as a folded header over the answer.
 	Auto   bool  `json:"auto,omitempty"`
 	Origin *Note `json:"origin,omitempty"`
+	// Answers is set on a user message sent from the questions of an answer,
+	// see Choices: which answer it answers and what was picked, so the page
+	// shows the picks again after a reload. Content is the text the assistant
+	// reads.
+	Answers *Answers `json:"answers,omitempty"`
 	// Wake is the shape a check's report was stored in before notes existed.
 	// It is read once, on load, and turned into a Note (see Store.load);
 	// nothing writes it any more. TODO(v2.0.0): drop the key and the type.

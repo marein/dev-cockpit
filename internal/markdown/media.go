@@ -34,13 +34,42 @@ type Media struct {
 // every external link and image gets.
 type MediaResolver func(destination string) (Media, bool)
 
-// RenderGFMWithMedia renders Markdown like RenderGFM, except that a link or an
-// image pointing at a file the resolver claims becomes a real player: an
+// RenderGFMWithMediaAround renders Markdown like RenderGFM, except that a link
+// or an image pointing at a file the resolver claims becomes a real player: an
 // answer that writes ![](out.mp4) gets a video element instead of a broken
 // image. Raw HTML stays disabled, so model output still cannot inject markup,
 // and every URL in the result comes from the resolver, never from the model.
-func RenderGFMWithMedia(src string, resolve MediaResolver) (string, error) {
-	md := goldmark.New(
+//
+// The result is cut around the block Fences(src) holds at index: the HTML of
+// what stands before that block and of what stands after it. The document is
+// parsed once, so a reference link on one side of the cut resolves against a
+// definition on the other. An index Fences does not hold renders the whole
+// document into before.
+func RenderGFMWithMediaAround(src string, resolve MediaResolver, index int) (string, string, error) {
+	md := mediaMarkdown(resolve)
+	source := []byte(src)
+	doc := md.Parser().Parse(text.NewReader(source))
+	fences := topFences(doc)
+	var before, after bytes.Buffer
+	if index < 0 || index >= len(fences) {
+		err := md.Renderer().Render(&before, source, doc)
+		return before.String(), "", err
+	}
+	out := &before
+	for n := doc.FirstChild(); n != nil; n = n.NextSibling() {
+		if n == fences[index] {
+			out = &after
+			continue
+		}
+		if err := md.Renderer().Render(out, source, n); err != nil {
+			return "", "", err
+		}
+	}
+	return before.String(), after.String(), nil
+}
+
+func mediaMarkdown(resolve MediaResolver) goldmark.Markdown {
+	return goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithParserOptions(parser.WithASTTransformers(
 			util.Prioritized(&mediaTransformer{resolve: resolve}, 100),
@@ -49,11 +78,6 @@ func RenderGFMWithMedia(src string, resolve MediaResolver) (string, error) {
 			util.Prioritized(&mediaRenderer{}, 100),
 		)),
 	)
-	var buf bytes.Buffer
-	if err := md.Convert([]byte(src), &buf); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
 }
 
 // mediaClass is what the stylesheet sizes a picture or a clip by, the same

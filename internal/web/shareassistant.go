@@ -343,14 +343,18 @@ func threadPrint(inst assistant.Instance) uint64 {
 func (s *Server) guestChatViews(g *guest, inst assistant.Instance, linked map[string]bool) []render.AssistantMessageView {
 	media := chatMedia{base: guestAssistantURL(g, inst.ID) + "/media/", linked: linked}
 	views := make([]render.AssistantMessageView, 0, len(inst.Messages))
-	for _, m := range inst.Messages {
+	for i, m := range inst.Messages {
 		view := s.messageView(inst.ID, m, false, false, inst.CoderID, media)
 		view.AudioURL = ""
+		answerChoices(&view, inst.Messages, i, "")
 		views = append(views, view)
 	}
 	reach := s.guestReach(g)
 	for i := range views {
 		views[i].HTML = guestAnchors(views[i].HTML, g.base, reach)
+		for j := range views[i].Parts {
+			views[i].Parts[j].HTML = guestAnchors(views[i].Parts[j].HTML, g.base, reach)
+		}
 	}
 	on := guestProjectNames(s.guestProjects(g))
 	paths := s.pathLinker()

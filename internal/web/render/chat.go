@@ -15,6 +15,9 @@ type ChatMessageView struct {
 	// Command marks a user message that is a command the user ran, a slash
 	// command or a shell escape: it renders as one chip carrying the line.
 	Command bool
+	// Answered marks a user message sent from the questions of an answer. It
+	// stands as one slim row, what was picked shows in the block above.
+	Answered bool
 	// Coder marks a coder's own message in the copy view, which wears the
 	// coder's stripe rather than the assistant's.
 	Coder bool
@@ -48,8 +51,9 @@ type ChatMessageView struct {
 	// and the message can be read aloud at all, a check's report as much as an
 	// answer; the speaker button hangs on it alone, in both headers.
 	AudioURL string
-	// Parts are a coder message's pieces in record order, text and tool
-	// calls. A message with parts renders them instead of HTML.
+	// Parts are a message's pieces in order: a coder message's texts and tool
+	// calls, an answer's text around the questions it asks. A message with
+	// parts renders them instead of HTML.
 	Parts []ChatPartView
 	// Copy is what the message's copy button puts on the clipboard, the words
 	// as recorded; empty renders no button.
@@ -61,15 +65,58 @@ type ChatMessageData struct {
 	Message ChatMessageView
 }
 
-// ChatPartView is one piece of a coder message: a rendered text, or a tool
-// call as one compact line.
+// ChatPartView is one piece of a message: a rendered text, a tool call as one
+// compact line, or the questions of an answer.
 type ChatPartView struct {
 	// HTML is the piece as markup: the text rendered, or a tool call's line
 	// with its file links.
 	HTML template.HTML
 	Tool string
 	// Line says what the call was about.
-	Line string
+	Line    string
+	Choices *ChatChoicesView
+}
+
+// ChatChoicesView is the questions an answer asks, rendered by
+// chat_choices.gohtml. PostURL is set while the page may still answer them,
+// and FragmentURL is the message the block reloads itself from once it did.
+// Answered and Passed say how a block that is over ended: answered, or left
+// behind by a message of the user that answered nothing.
+type ChatChoicesView struct {
+	MessageID   string
+	Questions   []ChatQuestionView
+	NoteMax     int
+	PostURL     string
+	FragmentURL string
+	Answered    bool
+	Passed      bool
+}
+
+// State names the block's state for the page and its runners.
+func (v ChatChoicesView) State() string {
+	switch {
+	case v.Answered:
+		return "answered"
+	case v.Passed:
+		return "passed"
+	case v.PostURL != "":
+		return "open"
+	}
+	return "readonly"
+}
+
+// ChatQuestionView is one question with its options, and the words the user
+// wrote beside it once answered.
+type ChatQuestionView struct {
+	Text    string
+	Options []ChatOptionView
+	Note    template.HTML
+}
+
+// ChatOptionView is one option, Picked once the user's answer picked it.
+type ChatOptionView struct {
+	Text   string
+	Picked bool
 }
 
 // CoderCopyData is the model of coder_copy_page.gohtml, one page of a

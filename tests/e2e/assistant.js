@@ -3932,7 +3932,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     await closePanel(page);
     return "both keys jump, Shift extends";
   });
-
+  await require("./assistant-choices").choicesChecks({ page, run, mobilePage, helpers: { openAssistant, useClaude, newConversation, idle, postForm, closePanel } });
   // The error state replaces the whole panel body, so it must carry its own
   // close control, on a phone there is no Escape key to fall back to.
 });

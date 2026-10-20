@@ -4,6 +4,12 @@ import { markWorking } from "@dc/dom";
 
 const END_SLACK = 48;
 
+// A bubble that stands keeps what the guest unfolded in it until it moves:
+// its state, or the questions it asks, which end while its state holds.
+function settled(bubble) {
+  return `${bubble.dataset.state}:${bubble.querySelector("[data-choices-state]")?.dataset.choicesState || ""}`;
+}
+
 class ShareChat extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -127,7 +133,7 @@ class ShareChat extends HTMLElement {
     const standing = new Map([...log.children].map((node) => [node.dataset.messageId, node]));
     const nodes = [...fresh.children].map((node) => {
       const old = standing.get(node.dataset.messageId);
-      return old && old.dataset.state === node.dataset.state ? old : document.adoptNode(node);
+      return old && settled(old) === settled(node) ? old : document.adoptNode(node);
     });
     log.replaceChildren(...nodes);
     resolveHostlessLinks(log);

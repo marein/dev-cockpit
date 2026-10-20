@@ -23,7 +23,9 @@ func (s *Server) assistantMessageViews(current assistant.Instance, blocked bool)
 	out := make([]render.AssistantMessageView, 0, len(current.Messages))
 	for i, m := range current.Messages {
 		last := i == len(current.Messages)-1 && !blocked
-		out = append(out, s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID))
+		view := s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID)
+		answerChoices(&view, current.Messages, i, ownerChoicesURL(current.ID, !blocked))
+		out = append(out, view)
 	}
 	return out
 }
@@ -51,11 +53,21 @@ func (s *Server) assistantMessageView(instanceID string, m assistant.Message, re
 	return s.messageView(instanceID, m, retryable, writable, coderID, ownerMedia(instanceID))
 }
 
+// ownerChoicesURL is where the owner's page answers the questions of an
+// answer, nowhere while the assistant takes no message.
+func ownerChoicesURL(instanceID string, writable bool) string {
+	if !writable {
+		return ""
+	}
+	return "/assistants/" + instanceID
+}
+
 func (s *Server) messageView(instanceID string, m assistant.Message, retryable, writable bool, coderID string, media chatMedia) render.AssistantMessageView {
 	view := render.AssistantMessageView{
 		ID:        m.ID,
 		RunID:     m.RunID,
 		User:      m.Role == assistant.RoleUser,
+		Answered:  m.Role == assistant.RoleUser && m.Answers != nil,
 		Note:      s.assistantNoteView(m.Note, m.Content),
 		Auto:      m.Auto,
 		Origin:    s.assistantNoteView(m.Origin, m.Content),
@@ -96,8 +108,11 @@ func (s *Server) messageView(instanceID string, m assistant.Message, retryable, 
 	if view.User {
 		view.Author = "You"
 		view.HTML = plainTextHTML(m.Content)
+	} else if choices, ok := m.Choices(); ok {
+		before, after := s.markdownWithMedia(instanceID, m.Content, media, choices.Fence)
+		view.Parts = []render.ChatPartView{{HTML: before}, {Choices: choicesView(m.ID, choices)}, {HTML: after}}
 	} else if m.Content != "" {
-		view.HTML = s.markdownWithMedia(instanceID, m.Content, media)
+		view.HTML, _ = s.markdownWithMedia(instanceID, m.Content, media, -1)
 	}
 	// The speaker renders on every message that can be read aloud, a check's
 	// report included, and only while text to speech is on; the audio route
@@ -157,12 +172,14 @@ func (s *Server) workspaceRel(instanceID, absolute string) (string, bool) {
 	return filepath.ToSlash(rel), true
 }
 
-// markdownWithMedia renders an answer. A relative path in it is resolved
-// against that assistant's workspace and embedded, so a picture, a recording
-// or a clip the assistant points at plays in the answer instead of being a
-// dead link. Raw HTML stays disabled in the renderer.
-func (s *Server) markdownWithMedia(instanceID, src string, media chatMedia) template.HTML {
-	html, err := markdown.RenderGFMWithMedia(src, func(destination string) (markdown.Media, bool) {
+// markdownWithMedia renders an answer, cut around its top level fenced block
+// at cut, which is where the questions it asks stand: what comes before them
+// and what after, all of it before for a cut no block holds. A relative path
+// in it is resolved against that assistant's workspace and embedded, so a
+// picture, a recording or a clip the assistant points at plays in the answer
+// instead of being a dead link. Raw HTML stays disabled in the renderer.
+func (s *Server) markdownWithMedia(instanceID, src string, media chatMedia, cut int) (template.HTML, template.HTML) {
+	before, after, err := markdown.RenderGFMWithMediaAround(src, func(destination string) (markdown.Media, bool) {
 		rel := strings.TrimSpace(destination)
 		if rel == "" || strings.Contains(rel, "://") || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, "#") {
 			return markdown.Media{}, false
@@ -179,11 +196,11 @@ func (s *Server) markdownWithMedia(instanceID, src string, media chatMedia) temp
 			Width:  width,
 			Height: height,
 		}, true
-	})
+	}, cut)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return template.HTML(html)
+	return template.HTML(before), template.HTML(after)
 }
 
 // handleAssistantMessage serves one rendered message, pulled by the browser
@@ -203,6 +220,7 @@ func (s *Server) handleAssistantMessage(c *gin.Context) {
 		}
 		last := i == len(current.Messages)-1 && !blocked
 		views := []render.AssistantMessageView{s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID)}
+		answerChoices(&views[0], current.Messages, i, ownerChoicesURL(current.ID, !blocked))
 		s.linkOwnerChat(views, current.ID)
 		c.HTML(http.StatusOK, "assistant_message.gohtml", render.AssistantMessageData{Message: views[0]})
 		return

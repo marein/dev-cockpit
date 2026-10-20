@@ -474,6 +474,63 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       await gp.waitForSelector("#terminal .xterm-screen", { timeout: 15000 });
     });
 
+    await run("the questions of an answer stand read only for the guest, answered live with one slim answered row of the user", async () => {
+      const message = ["ECHO_ANSWER", "Pick one.", "", "```ask", "Which one?", "- This", "- That", "```", ""].join("\n");
+      await postJSON(page, `/assistants/${fx.a}`, { form: "message", message });
+      await waitIdle(page, fx.a);
+      const gp = guest.page;
+      await gp.goto(`${BASE}${fx.base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+      await gp.waitForSelector('[data-share-log] dc-assistant-choices[data-choices-state="readonly"]', { state: "visible", timeout: 15000 });
+      const block = await gp.evaluate(() => {
+        const nodes = document.querySelectorAll("[data-share-log] dc-assistant-choices");
+        const b = nodes[nodes.length - 1];
+        return { post: b.hasAttribute("post-url"), fieldset: b.querySelector("fieldset").disabled, fields: b.querySelectorAll("textarea, [data-choices-send]").length, options: [...b.querySelectorAll("[data-choices-option]")].map((l) => l.textContent.trim()) };
+      });
+      assert(!block.post && block.fieldset && block.fields === 0 && JSON.stringify(block.options) === '["This","That"]', `the guest's block is not read only: ${JSON.stringify(block)}`);
+      const asked = await gp.evaluate(() => {
+        const nodes = document.querySelectorAll("[data-share-log] dc-assistant-choices");
+        const known = new Set([...document.querySelectorAll('[data-share-log] [data-role="user"]')].map((node) => node.getAttribute("data-message-id")));
+        window.dcGuestUsers = [];
+        new MutationObserver((records) => {
+          for (const record of records) {
+            for (const node of record.addedNodes) {
+              if (node.nodeType !== 1) continue;
+              const users = node.matches('[data-role="user"]') ? [node] : [...node.querySelectorAll('[data-role="user"]')];
+              for (const user of users) if (!known.has(user.getAttribute("data-message-id"))) window.dcGuestUsers.push(user.getAttribute("data-message-id"));
+            }
+          }
+        }).observe(document.body, { childList: true, subtree: true });
+        return nodes[nodes.length - 1].getAttribute("message-id");
+      });
+      const users = await gp.locator('[data-share-log] [data-role="user"]').count();
+      await postJSON(page, `/assistants/${fx.a}`, { form: "answers", message_id: asked, "pick-0": "1" });
+      await waitIdle(page, fx.a);
+      await gp.waitForFunction(() => {
+        const replies = document.querySelectorAll('[data-share-log] [data-role="assistant"]');
+        const last = replies[replies.length - 1];
+        return last?.getAttribute("data-state") === "complete" && last.textContent.includes("Fake claude answer.");
+      }, null, { timeout: 15000 });
+      await gp.waitForSelector(`[data-share-log] dc-assistant-choices[message-id="${asked}"][data-choices-state="answered"]`, { timeout: 15000 });
+      await gp.waitForSelector(`[data-share-log] [id="message-${asked}"] + [data-role="user"] [data-assistant-answered]`, { timeout: 15000 });
+      const after = await gp.evaluate((id) => {
+        const b = document.querySelector(`[data-share-log] dc-assistant-choices[message-id="${id}"]`);
+        const row = document.getElementById(`message-${id}`).nextElementSibling;
+        return {
+          rowID: row.getAttribute("data-message-id"),
+          users: document.querySelectorAll('[data-share-log] [data-role="user"]').length,
+          seen: [...new Set(window.dcGuestUsers)],
+          over: b.querySelectorAll("[data-choices-over]").length,
+          picked: b.querySelector("input:checked + label")?.textContent.trim(),
+          row: row.textContent.replace(/\s+/g, " ").trim(),
+          time: row.querySelector("dc-time")?.textContent.trim() || "",
+          words: row.querySelectorAll("[data-assistant-text]").length,
+        };
+      }, asked);
+      assert(after.users === users + 1 && JSON.stringify(after.seen) === JSON.stringify([after.rowID]), `the guest saw no single message of the user for the answers: ${JSON.stringify(after)}`);
+      assert(after.time && after.row === `You · ${after.time} · answered` && after.words === 0, `the guest's answered row reads ${JSON.stringify(after)}`);
+      assert(after.over === 0 && after.picked === "That", `the guest's block is not answered: ${JSON.stringify(after)}`);
+    });
+
     await run("of the workspace the guest reads the file a message links and nothing else", async () => {
       await postJSON(page, `/assistants/${fx.a}`, { form: "message", message: "FILELINK please" });
       await waitIdle(page, fx.a);
@@ -495,6 +552,7 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       for (const [path, form] of [
         [`/assistants/${fx.a}`, "form=message&message=MAGIC"],
         [`/assistants/${fx.a}`, "form=retry"],
+        [`/assistants/${fx.a}`, "form=answers&message_id=x&pick-0=0"],
         [`/assistants/${fx.a}`, "form=delete"],
         [`/assistants/${fx.a}/user-upload`, ""],
         [`/assistants/${fx.a}/stt`, ""],

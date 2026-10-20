@@ -1,0 +1,40 @@
+{{/* The questions an answer asks, standing where its ask block stood.
+     The server renders every state: open with the fields and Send, over with
+     what was picked, and read only where the page cannot send. The
+     options are radios drawn as buttons, so a page whose script never ran
+     still reads them, a pick included; dc-assistant-choices only answers an
+     open block. An option breaks anywhere, a path has no space to wrap at.
+     The card is the radios' containing block: a radio stands absolutely
+     positioned, and outside the thread's scroller it would grow the page. */}}
+{{define "chat_choices.gohtml"}}
+<dc-assistant-choices class="d-block my-2" message-id="{{.MessageID}}" data-choices-state="{{.State}}"{{if .PostURL}} post-url="{{.PostURL}}" fragment-url="{{.FragmentURL}}"{{end}}>
+  <form class="d-flex flex-column gap-2" data-choices-form novalidate>
+    <fieldset class="d-flex flex-column gap-2 border-0 m-0 p-0 min-w-0"{{if not .PostURL}} disabled{{end}}>
+      {{range $q, $question := .Questions}}
+      <div class="position-relative border rounded p-2" role="radiogroup" aria-labelledby="choices-{{$.MessageID}}-{{$q}}" data-choices-question>
+        <div class="fw-medium mb-2 text-break" id="choices-{{$.MessageID}}-{{$q}}">{{.Text}}</div>
+        <div class="d-flex flex-wrap gap-2">
+          {{range $o, $option := .Options}}
+          <input type="radio" class="btn-check" name="pick-{{$q}}" value="{{$o}}" id="choices-{{$.MessageID}}-{{$q}}-{{$o}}" autocomplete="off"{{if .Picked}} checked{{end}}>
+          <label class="btn btn-sm btn-outline-primary text-wrap text-break text-start" for="choices-{{$.MessageID}}-{{$q}}-{{$o}}" data-choices-option>{{.Text}}</label>
+          {{end}}
+        </div>
+        {{if $.PostURL}}
+        <textarea class="form-control mt-2" name="note-{{$q}}" rows="1" maxlength="{{$.NoteMax}}" placeholder="Note, or your own answer" aria-label="Note on the answer, or your own answer" data-choices-note></textarea>
+        {{else if .Note}}
+        <div class="small text-secondary text-break mt-2" data-choices-note><i class="ti ti-message me-1" aria-hidden="true"></i>{{.Note}}</div>
+        {{end}}
+      </div>
+      {{end}}
+    </fieldset>
+    {{if .PostURL}}
+    <div class="d-flex align-items-center gap-2" data-choices-foot>
+      <button type="submit" class="btn btn-primary" disabled data-choices-send><i class="ti ti-send me-1" aria-hidden="true"></i>Send answers</button>
+      <span class="small text-secondary" aria-live="polite" data-choices-count>0 of {{len .Questions}} answered</span>
+    </div>
+    {{else if .Passed}}
+    <div class="small text-secondary" data-choices-over><i class="ti ti-arrow-forward-up me-1" aria-hidden="true"></i>Not answered</div>
+    {{end}}
+  </form>
+</dc-assistant-choices>
+{{end}}

@@ -688,7 +688,7 @@ async function worktreeChecks({ page, run, tag, author, editorBase, project, run
     return "icon titled Compare after the commit icon, a click toggles it, the commit icon and it take turns, the sheet names it with its new line, no icon without a repository";
   });
 
-  await run("compare: on a touch screen the commit, compare and group toggles drop the hover look and keep the pressed one", async () => {
+  await run("compare: on a touch screen the commit, compare and group toggles drop the hover look and keep the pressed one, switched off they read untouched", async () => {
     const toggles = ["[data-editor-commit-toggle]", "[data-editor-revdiff-toggle]", "[data-editor-commit-group]", "[data-editor-revdiff-group]"];
     // A tapped button keeps :active a moment and then eases into its new
     // colors, so the look is read once both are over.
@@ -703,7 +703,7 @@ async function worktreeChecks({ page, run, tag, author, editorBase, project, run
         buttons: Object.fromEntries(sels.map((s) => {
           const cs = getComputedStyle(document.querySelector(s));
           const vars = (prefix) => ["color", "bg", "border-color"].map((k) => cs.getPropertyValue(`--tblr-btn-${prefix}${k}`).trim()).join(" | ");
-          return [s, { hover: vars("hover-"), plain: vars(""), look: [cs.color, cs.backgroundColor, cs.borderColor].join(" ") }];
+          return [s, { hover: vars("hover-"), plain: vars(""), look: [cs.color, cs.backgroundColor, cs.borderColor, cs.boxShadow, cs.outlineStyle].join(" ") }];
         })),
       };
     }, toggles);
@@ -711,6 +711,10 @@ async function worktreeChecks({ page, run, tag, author, editorBase, project, run
     const desk = await read(page);
     assert(!desk.hoverNone && toggles.every((s) => desk.buttons[s].hover !== desk.buttons[s].plain),
       `a fine pointer lost the hover look: ${JSON.stringify(desk)}`);
+    await page.hover("[data-editor-commit-toggle]");
+    const hovered = (await read(page)).buttons["[data-editor-commit-toggle]"].look;
+    await page.mouse.move(0, 0);
+    assert(hovered !== desk.buttons["[data-editor-commit-toggle]"].look, `a mouse over the commit toggle shows no hover: ${hovered}`);
 
     const ctx = await page.context().browser().newContext({ ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, viewport: { width: 1360, height: 900 } });
     try {
@@ -722,6 +726,14 @@ async function worktreeChecks({ page, run, tag, author, editorBase, project, run
         `a touch screen keeps the hover look: ${JSON.stringify(touch)}`);
       const look = async (s) => (await read(tp)).buttons[s].look;
       const plainLook = await look("[data-editor-commit-toggle]");
+      const comparePlain = await look("[data-editor-revdiff-toggle]");
+      await tp.tap("[data-editor-commit-toggle]");
+      await tp.waitForSelector("[data-editor-commit]:not([hidden])", { timeout: 10000 });
+      const commitOn = await look("[data-editor-commit-toggle]");
+      await tp.tap("[data-editor-commit-toggle]");
+      await tp.waitForSelector("[data-editor-commit]", { state: "hidden", timeout: 8000 });
+      const commitOff = await look("[data-editor-commit-toggle]");
+      assert(commitOn !== plainLook && commitOff === plainLook, `the commit toggle reads ${JSON.stringify({ plainLook, commitOn, commitOff })}`);
       await tp.tap("[data-editor-revdiff-toggle]");
       await tp.waitForSelector("[data-editor-revdiff]:not([hidden])", { timeout: 10000 });
       const pressed = await look("[data-editor-revdiff-toggle]");
@@ -740,11 +752,11 @@ async function worktreeChecks({ page, run, tag, author, editorBase, project, run
       await tp.tap("[data-editor-revdiff-toggle]");
       await tp.waitForSelector("[data-editor-revdiff]", { state: "hidden", timeout: 8000 });
       const off = await look("[data-editor-revdiff-toggle]");
-      assert(off === plainLook, `the compare toggle switched off reads ${off}, the untouched commit toggle ${plainLook}`);
+      assert(off === comparePlain, `the compare toggle switched off reads ${off}, untouched ${comparePlain}`);
     } finally {
       await ctx.close();
     }
-    return "hover variables equal the plain ones under (hover: none) on all four toggles and stay distinct on a fine pointer, pressed looks differ, switched off reads plain";
+    return "hover variables equal the plain ones under (hover: none) on all four toggles and stay distinct on a fine pointer, a mouse hover shows, pressed looks differ, commit and compare switched off by a tap read like untouched";
   });
 }
 

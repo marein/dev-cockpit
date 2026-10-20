@@ -2731,12 +2731,8 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
   --tblr-btn-active-color: #fff;
 }
 @media (hover: none) {
-  .attach-mobile .btn, .btn[data-editor-quickopen-regex], .btn[data-editor-quickopen-case],
-  .btn[data-editor-commit-toggle], .btn[data-editor-revdiff-toggle], .btn[data-editor-commit-group], .btn[data-editor-revdiff-group] {
-    --tblr-btn-hover-color: var(--tblr-btn-color);
-    --tblr-btn-hover-bg: var(--tblr-btn-bg);
-    --tblr-btn-hover-border-color: var(--tblr-btn-border-color);
-  }
+  .btn { --tblr-btn-hover-color: var(--tblr-btn-color); --tblr-btn-hover-bg: var(--tblr-btn-bg); --tblr-btn-hover-border-color: var(--tblr-btn-border-color); }
+  .btn-check:checked + .btn { --tblr-btn-hover-color: var(--tblr-btn-active-color); --tblr-btn-hover-bg: var(--tblr-btn-active-bg); --tblr-btn-hover-border-color: var(--tblr-btn-active-border-color); }
 }
 dc-inline-rename { display: block; }
 dc-editor { display: block; }
