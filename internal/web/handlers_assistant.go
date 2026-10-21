@@ -355,6 +355,8 @@ func (s *Server) handleAssistantAction(c *gin.Context) {
 		s.assistantSend(c, id)
 	case "answers":
 		s.assistantAnswer(c, id)
+	case "answers-draft":
+		s.assistantAnswersDraft(c, id)
 	case "retry":
 		s.assistantRetry(c, id)
 	case "cancel":

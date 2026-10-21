@@ -35,7 +35,7 @@ func (s *Service) Send(id, prompt string, attachments []Attachment) (Run, error)
 // Answer sends the user's picks for the questions an answer asked as their
 // next message, the same way Send does. Whether the questions are still open
 // is decided under the lock that appends the message, so two pages answering
-// at once send one answer. The composer is not what sent it, its draft stays.
+// at once send one answer. The composer is not what sent it, its words stay.
 func (s *Service) Answer(id, messageID string, picks []Pick) (Run, error) {
 	return s.send(id, false, func(c Instance) (Message, error) {
 		return answerMessage(c, messageID, picks)
@@ -43,9 +43,9 @@ func (s *Service) Answer(id, messageID string, picks []Pick) (Run, error) {
 }
 
 // send writes the message compose makes out of the transcript and starts the
-// turn that answers it, or queues it behind the one that runs. spendsDraft
-// says the message came out of the composer, whose draft it then took along.
-func (s *Service) send(id string, spendsDraft bool, compose func(Instance) (Message, error)) (Run, error) {
+// turn that answers it, or queues it behind the one that runs. composer says
+// the message came out of the composer, whose words it then took along.
+func (s *Service) send(id string, composer bool, compose func(Instance) (Message, error)) (Run, error) {
 	s.mu.Lock()
 	c, co, err := s.prepareLocked(id)
 	if err != nil {
@@ -72,10 +72,9 @@ func (s *Service) send(id string, spendsDraft bool, compose func(Instance) (Mess
 		s.store.Save(c)
 		s.mu.Unlock()
 
-		if spendsDraft {
-			s.clearDraft(id, now)
-		}
-		for _, shown := range append(Ends(c.Messages, len(c.Messages)-1), user.ID) {
+		ended := Ends(c.Messages, len(c.Messages)-1)
+		s.spendDraft(id, composer, now, ended)
+		for _, shown := range append(ended, user.ID) {
 			s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: shown})
 		}
 		s.changed()
@@ -89,15 +88,13 @@ func (s *Service) send(id string, spendsDraft bool, compose func(Instance) (Mess
 	if c.Title == "" || c.Title == DefaultTitle {
 		c.Title = deriveTitle(user.Content, user.Attachments)
 	}
-	r, err := s.startLocked(&c, co, withNotes(since, withAttachments(user.Content, user.Attachments)), append(Ends(c.Messages, len(c.Messages)-1), user.ID)...)
+	ended := Ends(c.Messages, len(c.Messages)-1)
+	r, err := s.startLocked(&c, co, withNotes(since, withAttachments(user.Content, user.Attachments)), append(ended, user.ID)...)
 	s.mu.Unlock()
 	if err != nil {
 		return Run{}, err
 	}
-	// The composer just emptied itself, so the draft it held is spent.
-	if spendsDraft {
-		s.clearDraft(id, now)
-	}
+	s.spendDraft(id, composer, now, ended)
 	r.UserMessageID = user.ID
 	s.changed()
 	return r, nil

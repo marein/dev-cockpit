@@ -2,8 +2,10 @@ package assistant
 
 import (
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -34,7 +36,7 @@ func NewDraftStore(dir string) *DraftStore {
 	return &DraftStore{dir: dir, path: filepath.Join(dir, draftFileName)}
 }
 
-// Get is what the composer holds right now.
+// Get is the draft as it stands, the composer's part and the answers.
 func (s *DraftStore) Get() Draft {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -44,22 +46,85 @@ func (s *DraftStore) Get() Draft {
 	return d
 }
 
-// Save stores a draft and says whether that changed anything. A repeated save
-// writes nothing and announces nothing, so a composer that is looked at but
-// not typed in wakes no other device.
-func (s *DraftStore) Save(d Draft) bool {
+// SaveText stores the composer's words and files and says whether that
+// changed anything. The answers stay as they are. A repeated save writes
+// nothing and announces nothing, so a composer that is looked at but not typed
+// in wakes no other device.
+func (s *DraftStore) SaveText(text string, attachments []Attachment, at time.Time) (Draft, bool) {
+	return s.update(func(d *Draft) bool {
+		if d.sameText(text, attachments) {
+			return false
+		}
+		d.Text, d.Attachments, d.UpdatedAt = text, attachments, at
+		return true
+	})
+}
+
+// saveAnswers stores the picks fit makes for one block and says whether that
+// changed anything. A block with nothing picked and nothing written has no
+// entry. The composer's part stays as it is.
+func (s *DraftStore) saveAnswers(messageID string, fit func() ([]Pick, error)) (bool, error) {
+	var refused error
+	_, changed := s.update(func(d *Draft) bool {
+		// The block is asked under the lock spendDraft waits for, after the
+		// send stored its message, so a save racing a send either lands before
+		// the entry is spent or finds the block over, and never leaves an
+		// entry behind for a block that is over.
+		var picks []Pick
+		if picks, refused = fit(); refused != nil {
+			return false
+		}
+		if untouched(picks) {
+			if _, ok := d.Answers[messageID]; !ok {
+				return false
+			}
+			delete(d.Answers, messageID)
+			return true
+		}
+		if slices.Equal(d.Answers[messageID], picks) {
+			return false
+		}
+		if d.Answers == nil {
+			d.Answers = map[string][]Pick{}
+		}
+		d.Answers[messageID] = picks
+		return true
+	})
+	return changed, refused
+}
+
+// update is the one read, modify and write of the draft. Text and answers are
+// saved apart and by several devices at once, so each save changes its own
+// part of what the file holds right now and leaves the rest. A file it could
+// not read is not written over. change says whether it changed anything.
+func (s *DraftStore) update(change func(*Draft) bool) (Draft, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.adoptLegacyLocked()
-	var stored Draft
-	statefile.Load(s.path, &stored)
-	if stored.Same(d.Text, d.Attachments) {
-		return false
+	var d Draft
+	if err := statefile.Read(s.path, &d); err != nil {
+		log.Printf("assistant: draft: %v", err)
+		return d, false
+	}
+	if !change(&d) {
+		return d, false
 	}
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return false
+		return d, false
 	}
-	statefile.Save(s.path, 0o600, d)
+	if err := statefile.Write(s.path, 0o600, d); err != nil {
+		log.Printf("assistant: draft: %v", err)
+		return d, false
+	}
+	return d, true
+}
+
+func untouched(picks []Pick) bool {
+	for _, p := range picks {
+		if p.Option >= 0 || p.Text != "" {
+			return false
+		}
+	}
 	return true
 }
 
@@ -126,10 +191,25 @@ func (d *Drafts) Forget(id string) {
 	delete(d.stores, id)
 }
 
-// clearDraft empties the draft of an assistant whose composer just sent what it
-// held. The empty draft keeps a timestamp: the other devices decide by it, and
-// a cleared draft without one would look older than what they still hold. The
-// send announces itself anyway, and the pages read the draft again with it.
-func (s *Service) clearDraft(id string, now time.Time) {
-	s.drafts.Of(id).Save(Draft{UpdatedAt: now})
+// spendDraft settles the draft after a send. The answers of every block the
+// message ended are spent, it answered them or passed them over. A message out
+// of the composer took its words along too, and the empty composer keeps a
+// timestamp: the other devices decide by it, and a cleared draft without one
+// would look older than what they still hold. The send announces itself
+// anyway, and the pages read the draft again with it.
+func (s *Service) spendDraft(id string, composer bool, now time.Time, ended []string) {
+	s.drafts.Of(id).update(func(d *Draft) bool {
+		changed := false
+		for _, messageID := range ended {
+			if _, ok := d.Answers[messageID]; ok {
+				delete(d.Answers, messageID)
+				changed = true
+			}
+		}
+		if composer && !d.sameText("", nil) {
+			d.Text, d.Attachments, d.UpdatedAt = "", nil, now
+			changed = true
+		}
+		return changed
+	})
 }

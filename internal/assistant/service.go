@@ -536,15 +536,13 @@ func (s *Service) SaveDraft(id, text string, attachments []Attachment) (Draft, b
 	if _, ok := s.store.Load(id); !ok {
 		return Draft{}, false, errors.New("Assistant not found.")
 	}
-	d := Draft{Text: text, Attachments: attachments, UpdatedAt: s.now().UTC()}
-	if !s.drafts.Of(id).Save(d) {
-		return s.drafts.Of(id).Get(), false, nil
-	}
-	return d, true, nil
+	d, changed := s.drafts.Of(id).SaveText(text, attachments, s.now().UTC())
+	return d, changed, nil
 }
 
-// Draft is what the composer of an assistant holds right now. It is its own
-// read so a device catching up pulls the draft, not the transcript.
+// Draft is what the composer and the open blocks of an assistant hold right
+// now. It is its own read so a device catching up pulls the draft, not the
+// transcript.
 func (s *Service) Draft(id string) (Draft, error) {
 	if !ValidID(id) {
 		return Draft{}, errors.New("Assistant not found.")

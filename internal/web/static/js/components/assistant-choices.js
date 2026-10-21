@@ -1,17 +1,20 @@
-import { postForm, ensureOk, getText } from "@dc/http";
+import { postForm, ensureOk, getText, getJSON } from "@dc/http";
 import { notifyError } from "@dc/toast";
 import { growTextarea } from "@dc/dom";
+import { missedServerEvent, onServerEvent } from "@dc/events";
 
-const DRAFT_KEY = "dc-choices:";
+// The composer's draft waits the same 200ms for the same reason: a word being
+// typed is not a request.
+const DRAFT_DEBOUNCE_MS = 200;
 
 // The questions of one answer while the page may still answer them; the
 // server renders every state, this only answers an open block. Send waits
 // until every question has a pick or words, a second tap takes a pick back,
 // and once the answers went out, or a message of the user stands under the
 // answer, the block reloads itself and the server renders it over. What is
-// picked and typed stays in the tab's session store until then: the thread
-// is rebuilt when the page catches up with the server, and a phone coming
-// back to the tab is exactly that.
+// picked and typed belongs to the assistant's draft, like the composer's
+// words: saved when the hand rests, rendered back by the server on every
+// page, and pulled again when another device saved.
 class AssistantChoices extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -20,28 +23,40 @@ class AssistantChoices extends HTMLElement {
     if (!this.form || !this.postUrl) return;
     this.ac = new AbortController();
     const { signal } = this.ac;
-    this.key = DRAFT_KEY + this.getAttribute("message-id");
+    this.draftUrl = this.getAttribute("draft-url");
     this.fieldset = this.form.querySelector("fieldset");
     this.sendButton = this.querySelector("[data-choices-send]");
     this.count = this.querySelector("[data-choices-count]");
     this.sending = false;
-    this.restore();
-    this.picked = new Map([...this.form.querySelectorAll('input[type="radio"]:checked')].map((radio) => [radio.name, radio.value]));
+    this.saveSeq = 0;
+    this.saved = this.answers();
+    this.picked = this.readPicked();
     this.form.addEventListener("click", (event) => this.onClick(event), { signal });
     this.form.addEventListener("input", (event) => {
       if (event.target.matches("textarea")) this.grow(event.target);
       this.sync();
+      this.queueSave();
+    }, { signal });
+    this.form.addEventListener("keydown", (event) => {
+      if (!event.target.matches("textarea")) return;
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key === "Enter") {
+        event.preventDefault();
+        void this.send();
+      }
     }, { signal });
     this.form.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.send();
     }, { signal });
+    onServerEvent("draft", (event) => this.onDraftEvent(event.detail), { signal });
     this.form.querySelectorAll("textarea").forEach((note) => this.grow(note));
     this.watchThread();
     this.sync();
+    if (missedServerEvent("draft")) void this.pull();
   }
 
   disconnectedCallback() {
+    window.clearTimeout(this.saveTimer);
     this.ac?.abort();
     this.ac = null;
     this.observer?.disconnect();
@@ -58,6 +73,11 @@ class AssistantChoices extends HTMLElement {
       this.picked.set(radio.name, radio.value);
     }
     this.sync();
+    this.queueSave();
+  }
+
+  readPicked() {
+    return new Map([...this.form.querySelectorAll('input[type="radio"]:checked')].map((radio) => [radio.name, radio.value]));
   }
 
   grow(note) {
@@ -73,35 +93,106 @@ class AssistantChoices extends HTMLElement {
     const done = questions.filter((q) => q.querySelector("input:checked") || q.querySelector("textarea")?.value.trim()).length;
     if (this.sendButton) this.sendButton.disabled = this.sending || done < questions.length;
     if (this.count) this.count.textContent = `${done} of ${questions.length} answered`;
-    this.save();
   }
 
-  save() {
-    const draft = {};
-    for (const field of this.form.querySelectorAll("input:checked, textarea")) {
-      if (field.value.trim()) draft[field.name] = field.value;
-    }
+  // answers reads the block in the shape the server stores, one pick per
+  // question, so what the page shows and what the draft holds compare as text.
+  answers() {
+    return this.shape(this.questions().map((q) => ({
+      option: Number(q.querySelector("input:checked")?.value ?? -1),
+      text: q.querySelector("textarea")?.value || "",
+    })));
+  }
+
+  shape(picks) {
+    return JSON.stringify(this.questions().map((_, i) => [picks[i]?.option ?? -1, picks[i]?.text || ""]));
+  }
+
+  queueSave() {
+    window.clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => void this.save(), DRAFT_DEBOUNCE_MS);
+  }
+
+  async save() {
+    window.clearTimeout(this.saveTimer);
+    const answers = this.answers();
+    if (this.sending || answers === this.saved) return;
+    this.saved = answers;
+    const body = new URLSearchParams(new FormData(this.form));
+    body.set("form", "answers-draft");
+    body.set("message_id", this.getAttribute("message-id"));
+    const seq = ++this.saveSeq;
+    this.saving = true;
+    let refused = false;
     try {
-      if (Object.keys(draft).length) window.sessionStorage.setItem(this.key, JSON.stringify(draft));
-      else window.sessionStorage.removeItem(this.key);
-    } catch (error) {
-      void error;
+      refused = !(await postForm(this.postUrl, body)).ok;
+    } catch {
+      if (seq === this.saveSeq) this.saved = null;
+    } finally {
+      if (seq === this.saveSeq) this.saving = false;
     }
+    if (seq !== this.saveSeq) return;
+    // A refusal means the block is over, answered or passed somewhere else,
+    // and the server renders it so.
+    if (refused) {
+      this.saved = null;
+      void this.reload();
+      return;
+    }
+    // Look once after the newest save: two devices that wrote at the same
+    // moment both end on what the server kept.
+    await this.pull();
   }
 
-  restore() {
+  onDraftEvent(detail) {
+    const assistant = detail && typeof detail === "object" ? detail.assistant : "";
+    if (assistant && assistant !== this.getAttribute("assistant-id")) return;
+    void this.pull();
+  }
+
+  // pull never types over the user: a block holding what this device has not
+  // saved yet keeps it, its own save looks again. Pulls run one at a time, so
+  // an older answer never lands after a newer one.
+  async pull() {
+    if (!this.draftUrl || this.sending || this.saving) return;
+    if (this.pulling) {
+      this.pullAgain = true;
+      return;
+    }
+    this.pulling = true;
     let draft = null;
     try {
-      draft = JSON.parse(window.sessionStorage.getItem(this.key) || "null");
-    } catch (error) {
-      void error;
+      draft = await getJSON(this.draftUrl);
+    } catch {
+      draft = null;
     }
-    if (!draft) return;
-    for (const field of this.form.querySelectorAll("input[type='radio'], textarea")) {
-      if (!(field.name in draft)) continue;
-      if (field.type === "radio") field.checked = field.value === draft[field.name];
-      else field.value = draft[field.name];
+    this.pulling = false;
+    if (this.pullAgain) {
+      this.pullAgain = false;
+      void this.pull();
+      return;
     }
+    if (!draft || !this.ac || this.sending || this.saving) return;
+    const picks = (draft.answers || {})[this.getAttribute("message-id")] || [];
+    const stored = this.shape(picks);
+    const shown = this.answers();
+    if (stored === shown) {
+      this.saved = stored;
+      return;
+    }
+    if (shown !== this.saved) return;
+    this.questions().forEach((q, i) => {
+      const option = String(picks[i]?.option ?? -1);
+      q.querySelectorAll('input[type="radio"]').forEach((radio) => { radio.checked = radio.value === option; });
+      const note = q.querySelector("textarea");
+      if (note && note.value !== (picks[i]?.text || "")) {
+        note.value = picks[i]?.text || "";
+        this.grow(note);
+      }
+    });
+    this.picked = this.readPicked();
+    this.saved = stored;
+    this.sync();
   }
 
   async send() {
@@ -109,23 +200,20 @@ class AssistantChoices extends HTMLElement {
     const body = new URLSearchParams(new FormData(this.form));
     body.set("form", "answers");
     body.set("message_id", this.getAttribute("message-id"));
+    window.clearTimeout(this.saveTimer);
     this.sending = true;
     this.fieldset.disabled = true;
     this.sync();
     try {
       const response = await postForm(this.postUrl, body);
       await ensureOk(response, "The answers could not be sent.");
-      try {
-        window.sessionStorage.removeItem(this.key);
-      } catch (error) {
-        void error;
-      }
       await this.reload();
     } catch (error) {
       notifyError(error.message || "The answers could not be sent.");
       this.sending = false;
       this.fieldset.disabled = false;
       this.sync();
+      this.queueSave();
       if (error.status) void this.reload();
     }
   }

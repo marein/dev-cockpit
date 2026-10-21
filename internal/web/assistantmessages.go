@@ -21,10 +21,11 @@ import (
 // new turn, so it offers no retry and lets no waiting message be removed.
 func (s *Server) assistantMessageViews(current assistant.Instance, blocked bool) []render.AssistantMessageView {
 	out := make([]render.AssistantMessageView, 0, len(current.Messages))
+	answering := s.ownerChoices(current.ID, !blocked)
 	for i, m := range current.Messages {
 		last := i == len(current.Messages)-1 && !blocked
 		view := s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID)
-		answerChoices(&view, current.Messages, i, ownerChoicesURL(current.ID, !blocked))
+		answerChoices(&view, current.Messages, i, answering)
 		out = append(out, view)
 	}
 	return out
@@ -51,15 +52,6 @@ func ownerMedia(instanceID string) chatMedia {
 
 func (s *Server) assistantMessageView(instanceID string, m assistant.Message, retryable, writable bool, coderID string) render.AssistantMessageView {
 	return s.messageView(instanceID, m, retryable, writable, coderID, ownerMedia(instanceID))
-}
-
-// ownerChoicesURL is where the owner's page answers the questions of an
-// answer, nowhere while the assistant takes no message.
-func ownerChoicesURL(instanceID string, writable bool) string {
-	if !writable {
-		return ""
-	}
-	return "/assistants/" + instanceID
 }
 
 func (s *Server) messageView(instanceID string, m assistant.Message, retryable, writable bool, coderID string, media chatMedia) render.AssistantMessageView {
@@ -220,7 +212,7 @@ func (s *Server) handleAssistantMessage(c *gin.Context) {
 		}
 		last := i == len(current.Messages)-1 && !blocked
 		views := []render.AssistantMessageView{s.assistantMessageView(current.ID, m, last, !blocked, current.CoderID)}
-		answerChoices(&views[0], current.Messages, i, ownerChoicesURL(current.ID, !blocked))
+		answerChoices(&views[0], current.Messages, i, s.ownerChoices(current.ID, !blocked))
 		s.linkOwnerChat(views, current.ID)
 		c.HTML(http.StatusOK, "assistant_message.gohtml", render.AssistantMessageData{Message: views[0]})
 		return

@@ -123,19 +123,22 @@ type Instance struct {
 // It belongs to the assistant, not to the browser that typed it, so the same
 // words are there after a page change and on the next device. The files travel
 // with the text, otherwise coming back shows a message whose attachments are
-// gone. It lives in a file of its own, see DraftStore.
+// gone. Beside the composer's words it holds what is picked and written in the
+// open ask blocks, per asking message, so a block answered halfway on one
+// device stands the same on the next. UpdatedAt belongs to the composer alone,
+// its devices settle on the later writer by it. It lives in a file of its own,
+// see DraftStore.
 type Draft struct {
-	Text        string       `json:"text,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty"`
-	UpdatedAt   time.Time    `json:"updatedAt,omitempty"`
+	Text        string            `json:"text,omitempty"`
+	Attachments []Attachment      `json:"attachments,omitempty"`
+	UpdatedAt   time.Time         `json:"updatedAt,omitempty"`
+	Answers     map[string][]Pick `json:"answers,omitempty"`
 }
 
-// Empty reports whether there is nothing to restore.
-func (d Draft) Empty() bool { return d.Text == "" && len(d.Attachments) == 0 }
-
-// Same reports whether a draft would store exactly what is already stored,
-// which is how a repeated flush writes nothing and wakes nobody.
-func (d Draft) Same(text string, attachments []Attachment) bool {
+// sameText reports whether the composer's part would store exactly what is
+// already stored, which is how a repeated flush writes nothing and wakes
+// nobody.
+func (d Draft) sameText(text string, attachments []Attachment) bool {
 	if d.Text != text || len(d.Attachments) != len(attachments) {
 		return false
 	}

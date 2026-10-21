@@ -167,6 +167,25 @@ func TestAGuestReadsTheAssistantOfItsLinkBesideItsProjects(t *testing.T) {
 	}
 }
 
+// A block the owner answered halfway stands read only for a guest, with
+// nothing of the owner's draft in it, and the draft is no address of the link.
+func TestAGuestSeesNothingOfTheOwnersAnswers(t *testing.T) {
+	sa := newSharedAssistant(t)
+	store := assistant.NewStore(sa.s.cfg.StateDir)
+	inst, _ := store.Load(sa.id)
+	inst.Messages = append(inst.Messages, assistant.Message{ID: "m3", Role: assistant.RoleAssistant, State: assistant.StateComplete, CreatedAt: time.Now(), Content: "```ask\nWhich one?\n- This\n- That\n```\n"})
+	store.Save(inst)
+	if _, err := sa.s.assistants.SaveAnswers(sa.id, "m3", []assistant.Pick{{Option: 1, Text: "halfway there"}}); err != nil {
+		t.Fatal(err)
+	}
+	base := sa.link(t, []string{"shop"}, sa.id)
+	page := sa.guest(base + "/assistants/" + sa.id).Body.String()
+	if !strings.Contains(page, `data-choices-state="readonly"`) || strings.Contains(page, "halfway there") || strings.Contains(page, `id="choices-m3-0-1" autocomplete="off" checked`) || strings.Contains(page, "draft-url") {
+		t.Fatalf("the guest sees the owner's answers: %s", page)
+	}
+	sa.notFound(t, "the draft", base+"/assistants/"+sa.id+"/draft")
+}
+
 // A guest's list of the link's assistants and the switcher's rows of them are
 // the owner's rows of those assistants alone, each leading inside the share,
 // and the list pulls itself again under the link's address, naming its page

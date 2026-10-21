@@ -35,7 +35,9 @@ const { guestPage } = require("./project-share-guest");
 // file of that project; a file of a project off it, a stopped coder, another
 // assistant's coder and every other path of the cockpit stay text, a link
 // naming the cockpit's host stays a link. Of the workspace
-// the guest reads the file a message links and nothing else. No write reaches
+// the guest reads the file a message links and nothing else. The questions of
+// an answer stand read only, with nothing of what the owner picked and wrote
+// in them so far, live or on a load. No write reaches
 // the assistant from the guest, no request of a guest page leaves the link,
 // and the local API socket can make and grow no link. Deleting the assistant
 // ends a link of it alone, takes it off the link it shares with the project
@@ -474,19 +476,29 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       await gp.waitForSelector("#terminal .xterm-screen", { timeout: 15000 });
     });
 
-    await run("the questions of an answer stand read only for the guest, answered live with one slim answered row of the user", async () => {
+    await run("the questions of an answer stand read only for the guest without the owner's draft, answered live with one slim answered row of the user", async () => {
       const message = ["ECHO_ANSWER", "Pick one.", "", "```ask", "Which one?", "- This", "- That", "```", ""].join("\n");
       await postJSON(page, `/assistants/${fx.a}`, { form: "message", message });
       await waitIdle(page, fx.a);
+      const owner = await page.evaluate(async (p) => (await fetch(p)).text(), `/assistants/${fx.a}`);
+      const open = [...owner.matchAll(/<dc-assistant-choices[^>]*message-id="([^"]+)"[^>]*data-choices-state="open"/g)].pop()?.[1];
+      assert(open, "the owner's page shows no open block");
+      await postJSON(page, `/assistants/${fx.a}`, { form: "answers-draft", message_id: open, "pick-0": "0", "note-0": "owner draft words" });
       const gp = guest.page;
       await gp.goto(`${BASE}${fx.base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
       await gp.waitForSelector('[data-share-log] dc-assistant-choices[data-choices-state="readonly"]', { state: "visible", timeout: 15000 });
-      const block = await gp.evaluate(() => {
+      const readBlock = () => gp.evaluate(() => {
         const nodes = document.querySelectorAll("[data-share-log] dc-assistant-choices");
         const b = nodes[nodes.length - 1];
-        return { post: b.hasAttribute("post-url"), fieldset: b.querySelector("fieldset").disabled, fields: b.querySelectorAll("textarea, [data-choices-send]").length, options: [...b.querySelectorAll("[data-choices-option]")].map((l) => l.textContent.trim()) };
+        return { post: b.hasAttribute("post-url"), draft: b.hasAttribute("draft-url"), fieldset: b.querySelector("fieldset").disabled, fields: b.querySelectorAll("textarea, [data-choices-send]").length, checked: b.querySelectorAll("input:checked").length, options: [...b.querySelectorAll("[data-choices-option]")].map((l) => l.textContent.trim()), words: document.body.textContent.includes("owner draft words") };
       });
-      assert(!block.post && block.fieldset && block.fields === 0 && JSON.stringify(block.options) === '["This","That"]', `the guest's block is not read only: ${JSON.stringify(block)}`);
+      const block = await readBlock();
+      assert(!block.post && !block.draft && block.fieldset && block.fields === 0 && JSON.stringify(block.options) === '["This","That"]', `the guest's block is not read only: ${JSON.stringify(block)}`);
+      assert(block.checked === 0 && !block.words, `the guest sees the owner's draft: ${JSON.stringify(block)}`);
+      await postJSON(page, `/assistants/${fx.a}`, { form: "answers-draft", message_id: open, "pick-0": "1", "note-0": "owner draft words, moved" });
+      await sleep(1500);
+      const still = await readBlock();
+      assert(still.checked === 0 && !still.words && !fx.requests.some((r) => r.includes("/draft")), `the owner's draft reached the guest: ${JSON.stringify(still)}`);
       const asked = await gp.evaluate(() => {
         const nodes = document.querySelectorAll("[data-share-log] dc-assistant-choices");
         const known = new Set([...document.querySelectorAll('[data-share-log] [data-role="user"]')].map((node) => node.getAttribute("data-message-id")));
@@ -553,6 +565,7 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
         [`/assistants/${fx.a}`, "form=message&message=MAGIC"],
         [`/assistants/${fx.a}`, "form=retry"],
         [`/assistants/${fx.a}`, "form=answers&message_id=x&pick-0=0"],
+        [`/assistants/${fx.a}`, "form=answers-draft&message_id=x&pick-0=0"],
         [`/assistants/${fx.a}`, "form=delete"],
         [`/assistants/${fx.a}/user-upload`, ""],
         [`/assistants/${fx.a}/stt`, ""],

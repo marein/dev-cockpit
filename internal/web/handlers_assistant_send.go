@@ -103,7 +103,8 @@ func (s *Server) publishDraft(instanceID string) {
 }
 
 // handleAssistantDraft serves the stored draft for a device catching up: after
-// a save somewhere else, and after the event stream reconnected.
+// a save somewhere else, and after the event stream reconnected. The composer
+// reads its words and files, an open block its own entry of the answers.
 func (s *Server) handleAssistantDraft(c *gin.Context) {
 	current, err := s.assistants.Get(c.Param("id"))
 	if err != nil {
@@ -119,6 +120,7 @@ func (s *Server) handleAssistantDraft(c *gin.Context) {
 		"text":      draft.Text,
 		"files":     s.assistantDraftViews(current.ID, draft),
 		"updatedAt": draft.UpdatedAt,
+		"answers":   draft.Answers,
 	})
 }
 

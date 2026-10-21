@@ -79,15 +79,20 @@ type ChatPartView struct {
 
 // ChatChoicesView is the questions an answer asks, rendered by
 // chat_choices.gohtml. PostURL is set while the page may still answer them,
-// and FragmentURL is the message the block reloads itself from once it did.
-// Answered and Passed say how a block that is over ended: answered, or left
-// behind by a message of the user that answered nothing.
+// FragmentURL is the message the block reloads itself from once it did,
+// DraftURL is where the picks and notes of the draft of AssistantID are read,
+// Done how many questions they answer. Answered and Passed say how a block
+// that is over ended: answered, or left behind by a message of the user that
+// answered nothing.
 type ChatChoicesView struct {
 	MessageID   string
+	AssistantID string
 	Questions   []ChatQuestionView
 	NoteMax     int
 	PostURL     string
 	FragmentURL string
+	DraftURL    string
+	Done        int
 	Answered    bool
 	Passed      bool
 }
@@ -105,15 +110,17 @@ func (v ChatChoicesView) State() string {
 	return "readonly"
 }
 
-// ChatQuestionView is one question with its options, and the words the user
-// wrote beside it once answered.
+// ChatQuestionView is one question with its options, the words the user
+// wrote beside it once answered, and the words of the draft while it is open.
 type ChatQuestionView struct {
 	Text    string
 	Options []ChatOptionView
 	Note    template.HTML
+	Draft   string
 }
 
-// ChatOptionView is one option, Picked once the user's answer picked it.
+// ChatOptionView is one option, Picked once the user's answer or the draft
+// picked it.
 type ChatOptionView struct {
 	Text   string
 	Picked bool

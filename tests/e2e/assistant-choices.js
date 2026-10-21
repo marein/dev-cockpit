@@ -6,12 +6,16 @@ const { assert, BASE, sleep } = L;
 // assistant of their own that they delete again. An answer ends in an ask
 // block, which the fake claude streams back a line at a time (ECHO_ANSWER),
 // and the page turns it into questions with their options as buttons and a
-// field under each, answered with one send. The assistant reads the answers as
+// field under each, answered with one send, the button or Ctrl+Enter in a
+// note. The assistant reads the answers as
 // the user's next message, the block shows the picks and that message stands
 // as one slim row under it, "You · <time> · answered". A block the thread
-// moved on past keeps its card and says Not answered. SHOTS_DIR with a mount
-// takes the phone screenshots of an open block, of an answered one with its
-// row and of an answered one above an open one.
+// moved on past keeps its card and says Not answered. What is picked and
+// typed in an open block is the assistant's draft, beside the composer's
+// words: a second browser of the owner shows it live and after a reload, a
+// send there answers the block in the first and leaves the words typed there.
+// SHOTS_DIR with a mount takes the phone screenshots of an open block, of an
+// answered one with its row and of an answered one above an open one.
 // Gotchas:
 // - the block is server rendered in every state, the element only answers an
 //   open one, so a check reads data-choices-state, never the script,
@@ -19,7 +23,11 @@ const { assert, BASE, sleep } = L;
 // - nothing in an answer may name a fake keyword (MAGIC, SLOW, FAIL, TOOL,
 //   MODEL ...), the answer to the answers is the fake's plain line,
 // - a tap leaves :hover on the option, sticky hover only shows in a context
-//   with hasTouch and isMobile and a real tap, never a click.
+//   with hasTouch and isMobile and a real tap, never a click,
+// - picks and notes are saved 200ms after the hand rests, and the phone's
+//   page shares them with the desktop's, so a check that reloads, leaves or
+//   hands the block on first waits until the draft holds them (waitStored),
+//   and a check that picks on the phone leaves the block empty again.
 
 const BLOCK = "dc-assistant-choices";
 const QUESTIONS = [
@@ -76,6 +84,35 @@ function look(locator) {
   });
 }
 
+function draftOf(page, id) {
+  return page.evaluate(async (instance) => (await fetch(`/assistants/${instance}/draft`, { headers: { Accept: "application/json" } })).json(), id);
+}
+
+// waitStored waits until the assistant's draft holds want for one block, one
+// [option, words] per question, nothing for an empty block.
+async function waitStored(page, id, messageID, want) {
+  let got = null;
+  for (const until = Date.now() + 10000; Date.now() < until; await sleep(150)) {
+    got = ((await draftOf(page, id)).answers || {})[messageID]?.map((p) => [p.option, p.text || ""]) || [];
+    if (JSON.stringify(got) === JSON.stringify(want)) return;
+  }
+  throw new Error(`the draft holds ${JSON.stringify(got)} for ${messageID}, want ${JSON.stringify(want)}`);
+}
+
+// blockState reads one block as the page shows it, or as html serves it.
+function blockState(page, messageID, html = "") {
+  return page.evaluate(([sel, id, served]) => {
+    const root = served ? new DOMParser().parseFromString(served, "text/html") : document;
+    const block = root.querySelector(`${sel}[message-id="${id}"]`);
+    return {
+      checked: [...block.querySelectorAll("input:checked")].map((i) => i.name + "=" + i.value),
+      notes: [...block.querySelectorAll("textarea")].map((t) => t.value),
+      count: block.querySelector("[data-choices-count]")?.textContent.trim(),
+      send: block.querySelector("[data-choices-send]")?.hasAttribute("disabled"),
+    };
+  }, [BLOCK, messageID, html]);
+}
+
 function picks(page) {
   return page.evaluate((sel) => ({
     checked: [...document.querySelectorAll(`${sel} input:checked`)].map((i) => i.name + "=" + i.value),
@@ -125,6 +162,38 @@ function phoneFit(page) {
       checked: block.querySelector("input:checked")?.value,
     };
   }, [BLOCK, MIN_TARGET]);
+}
+
+// buttonSizes reads Send and the first option of the last block, what makes a
+// button's size and the height it ends at.
+function buttonSizes(page) {
+  return page.evaluate((sel) => {
+    const blocks = document.querySelectorAll(sel);
+    const block = blocks[blocks.length - 1];
+    const read = (el) => {
+      const cs = getComputedStyle(el);
+      return { height: el.getBoundingClientRect().height, font: cs.fontSize, padding: `${cs.paddingTop} ${cs.paddingRight}`, radius: cs.borderTopLeftRadius };
+    };
+    return { send: read(block.querySelector("[data-choices-send]")), option: read(block.querySelector("[data-choices-option]")) };
+  }, BLOCK);
+}
+
+function sameSize({ send, option }) {
+  return Math.abs(send.height - option.height) <= 1 && send.font === option.font && send.padding === option.padding && send.radius === option.radius;
+}
+
+// countAnswers counts the sends of answers the page posts from now on, the
+// drafts saved on the way left out. The returned function stops counting.
+function countAnswers(page) {
+  let sends = 0;
+  const onRequest = (request) => {
+    if (request.method() === "POST" && new URLSearchParams(request.postData() || "").get("form") === "answers") sends += 1;
+  };
+  page.on("request", onRequest);
+  return () => {
+    page.off("request", onRequest);
+    return sends;
+  };
 }
 
 // watchUserBubbles counts every bubble of the user that turns up in the page
@@ -207,7 +276,9 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     }
     assert(await visible(note(page, 0)) && await visible(note(page, 1)), "a question has no field for a note");
     assert(await sendDisabled(page), "Send is enabled before anything was answered");
-    return `${seen.streamingTexts} streaming reads without a block, then two questions with two buttons each`;
+    const size = await buttonSizes(page);
+    assert(sameSize(size), `Send is not the size of an option: ${JSON.stringify(size)}`);
+    return `${seen.streamingTexts} streaming reads without a block, then two questions with two buttons each, Send ${Math.round(size.send.height)}px high like them`;
   });
 
   await run("on a phone a pick taken back or left for another option looks untouched and is gone, a mouse still hovers", async () => {
@@ -230,6 +301,7 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     assert(left === untouched && JSON.stringify(moved.checked) === '["pick-0=1"]', `the option left for another reads ${left}, picks ${JSON.stringify(moved)}`);
     await option(mp, 0, 1).tap();
     assert((await picks(mp)).send, "Send is enabled with nothing picked");
+    await waitStored(mp, id, askedID, []);
     await closePanel(mp);
 
     await openAssistant(page, id);
@@ -242,24 +314,31 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     return "taken back and left both read like untouched, the pick gone and Send off, a mouse hover still shows";
   });
 
-  await run("on a phone the open block fits, with an option picked and a note typed", async () => {
+  await run("on a phone the open block fits, with an option picked and notes typed, Send the size of an option", async () => {
     const mp = await mobilePage();
     await openAssistant(mp, id);
     await waitState(mp, "open");
     await option(mp, 0, 0).tap();
     await note(mp, 0).fill("Version 16, the managed one");
-    await mp.waitForFunction((sel) => document.querySelector(`${sel} [data-choices-count]`)?.textContent.includes("1 of 2"), BLOCK, { timeout: 5000 });
+    await note(mp, 1).fill("After the review");
+    await mp.waitForFunction((sel) => document.querySelector(`${sel} [data-choices-count]`)?.textContent.includes("2 of 2"), BLOCK, { timeout: 5000 });
     await mp.locator(BLOCK).scrollIntoViewIfNeeded();
     const fit = await phoneFit(mp);
     assert(!fit.sideways && fit.right <= fit.width && fit.outside === 0, `the block does not fit the phone: ${JSON.stringify(fit)}`);
     assert(fit.small === 0, `options are too small to tap: ${JSON.stringify(fit.heights)}`);
     assert(fit.checked === "0", "the tapped option is not picked");
+    const size = await buttonSizes(mp);
+    assert(sameSize(size), `Send is not the size of an option: ${JSON.stringify(size)}`);
     if (process.env.SHOTS_DIR) await mp.locator(BLOCK).screenshot({ path: path.join(process.env.SHOTS_DIR, "assistant-choices.png") });
+    await option(mp, 0, 0).tap();
+    await note(mp, 0).fill("");
+    await note(mp, 1).fill("");
+    await waitStored(mp, id, askedID, []);
     await closePanel(mp);
-    return `fits at 390px, options ${fit.heights.join("/")}px high`;
+    return `fits at 390px, options ${fit.heights.join("/")}px high, Send ${Math.round(size.send.height)}px`;
   });
 
-  await run("Send stays off until every question has an option or words, a second tap takes a pick back", async () => {
+  await run("Send stays off until every question has an option or words, a second tap takes a pick back, Ctrl+Enter sends nothing then and Enter makes a new line", async () => {
     await openAssistant(page, id);
     await waitState(page, "open");
     await option(page, 0, 0).click();
@@ -270,10 +349,21 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     await option(page, 0, 0).click();
     await note(page, 0).fill("Version 16, the managed one");
     assert(await sendDisabled(page), "Send is enabled with the second question open");
+    const early = countAnswers(page);
+    await note(page, 0).press("Control+Enter");
+    await note(page, 0).press("Meta+Enter");
+    await note(page, 0).press("Enter");
+    await sleep(500);
+    const typed = await note(page, 0).inputValue();
+    const sends = early();
+    assert(sends === 0 && await state(page) === "open" && await sendDisabled(page), `Ctrl+Enter sent while Send was off: ${sends} sends, ${await state(page)}`);
+    assert(typed === "Version 16, the managed one\n", `Ctrl+Enter or Enter typed the wrong thing: ${JSON.stringify(typed)}`);
+    await note(page, 0).fill("Version 16, the managed one");
     await note(page, 1).fill("   ");
     assert(await sendDisabled(page), "blanks count as an answer");
     await note(page, 1).fill("After the review on Friday, not before");
     assert(!(await sendDisabled(page)) && await countText(page) === "2 of 2 answered", "an option plus words do not enable Send");
+    await waitStored(page, id, askedID, [[0, "Version 16, the managed one"], [-1, "After the review on Friday, not before"]]);
     await page.reload({ waitUntil: "domcontentloaded" });
     await waitState(page, "open");
     const kept = await page.evaluate((sel) => ({
@@ -283,19 +373,27 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     }), BLOCK);
     assert(kept.pick === "0" && kept.notes[0] === "Version 16, the managed one" && kept.notes[1] === "After the review on Friday, not before" && !kept.disabled,
       `a reload lost what was picked and typed: ${JSON.stringify(kept)}`);
-    return "disabled at 0 and 1 of 2 and on blanks, enabled at 2 of 2, kept across a reload";
+    return "disabled at 0 and 1 of 2 and on blanks, enabled at 2 of 2, in the draft and kept across a reload";
   });
 
-  await run("one send answers the questions in the block, the user's message for it is one slim answered row under it", async () => {
+  await run("Ctrl+Enter in a note answers the questions in the block once, the user's message for it is one slim answered row under it", async () => {
     const users = await page.locator('[data-role="user"]').count();
     const sentAt = Date.now();
     await watchUserBubbles(page);
-    await sendButton(page).click();
+    const answers = countAnswers(page);
+    await note(page, 1).focus();
+    await page.keyboard.down("Control");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.up("Control");
     await waitState(page, "answered");
+    await waitStored(page, id, askedID, []);
     await idle(page);
     const reply = await page.locator('[data-role="assistant"]').last().textContent();
     assert(reply.includes("Fake claude answer."), "the assistant did not answer the answers");
     const seen = await userBubblesSeen(page);
+    const sends = answers();
+    assert(sends === 1, `Ctrl+Enter pressed twice sent the answers ${sends} times`);
     assert(seen.length === 1 && /answered$/.test(seen[0]), `want one answered row of the user after the send, saw ${JSON.stringify(seen)}`);
     assert(await page.locator('[data-role="user"]').count() === users + 1, "the thread does not hold one message of the user for the answers");
     const row = await rowAfter(page, askedID);
@@ -400,9 +498,12 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     await openAssistant(page, id);
     await waitState(page, "open");
     const passedID = await page.locator(BLOCK).last().getAttribute("message-id");
+    await page.locator(BLOCK).last().locator("[data-choices-option]").first().click();
+    await waitStored(page, id, passedID, [[0, ""]]);
     await page.fill("[data-assistant-input]", "Never mind, something else");
     await page.click("[data-assistant-send]");
     await waitState(page, "passed");
+    await waitStored(page, id, passedID, []);
     await page.waitForFunction((asked) => {
       const next = document.getElementById(`message-${asked}`)?.nextElementSibling;
       return next?.getAttribute("data-role") === "user" && Boolean(next.querySelector("[data-assistant-text]"));
@@ -432,7 +533,53 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     await waitState(page, "passed");
     const reloaded = await read();
     assert(want(reloaded), `after a reload the passed block reads ${JSON.stringify(reloaded)}`);
-    return "card, inactive buttons and Not answered, the user's own message under it, no answered row, live and after a reload";
+    return "card, inactive buttons and Not answered, its draft entry gone, the user's own message under it, no answered row, live and after a reload";
+  });
+
+  await run("picks and notes of one browser show in a second one live and after its reload, a send there answers the block here and keeps the words typed here", async () => {
+    await openAssistant(page, id);
+    await ask(page, idle);
+    const blockID = await page.locator(BLOCK).last().getAttribute("message-id");
+    const words = "Half a thought, still mine";
+    await page.fill("[data-assistant-input]", words);
+    for (const until = Date.now() + 10000; (await draftOf(page, id)).text !== words; await sleep(150)) {
+      assert(Date.now() < until, "the composer's words never reached the draft");
+    }
+    const mp = await mobilePage();
+    await openAssistant(mp, id);
+    await waitState(mp, "open");
+    const empty = await blockState(mp, blockID);
+    assert(empty.checked.length === 0 && empty.notes.join("") === "" && empty.send, `the second browser's block does not start empty: ${JSON.stringify(empty)}`);
+    const question = (q) => page.locator(`${BLOCK}[message-id="${blockID}"] [data-choices-question]`).nth(q);
+    await question(0).locator("[data-choices-option]").nth(1).click();
+    await question(0).locator("textarea").fill("Embedded is enough");
+    await question(1).locator("textarea").fill("Next week");
+    const want = JSON.stringify({ checked: ["pick-0=1"], notes: ["Embedded is enough", "Next week"], count: "2 of 2 answered", send: false });
+    const t0 = Date.now();
+    let live = null;
+    for (const until = t0 + 10000; JSON.stringify(live) !== want; await sleep(100)) {
+      assert(Date.now() < until, `the second browser does not follow live: ${JSON.stringify(live)}`);
+      live = await blockState(mp, blockID);
+    }
+    const ms = Date.now() - t0;
+    const served = await blockState(mp, blockID, await mp.evaluate(async (p) => (await fetch(p, { headers: { Accept: "text/html" } })).text(), `/assistants/${id}`));
+    assert(JSON.stringify(served) === want, `the page is not served filled: ${JSON.stringify(served)}`);
+    await mp.reload({ waitUntil: "domcontentloaded" });
+    await waitState(mp, "open");
+    const reloaded = await blockState(mp, blockID);
+    assert(JSON.stringify(reloaded) === want, `after its reload the second browser reads ${JSON.stringify(reloaded)}`);
+    await mp.locator(`${BLOCK}[message-id="${blockID}"] [data-choices-send]`).tap();
+    await waitState(mp, "answered");
+    await waitState(page, "answered");
+    await waitStored(page, id, blockID, []);
+    assert(await page.inputValue("[data-assistant-input]") === words, `the composer here lost its words: ${await page.inputValue("[data-assistant-input]")}`);
+    await idle(page);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
+    const kept = { box: await page.inputValue("[data-assistant-input]"), draft: (await draftOf(page, id)).text };
+    assert(kept.box === words && kept.draft === words, `the words typed here are gone after the send there: ${JSON.stringify(kept)}`);
+    await closePanel(mp);
+    return `live in ${ms}ms, served filled and kept across a reload, answered here after the send there, the composer's words kept`;
   });
 
   await run("the choices runner's assistant is deleted", async () => {

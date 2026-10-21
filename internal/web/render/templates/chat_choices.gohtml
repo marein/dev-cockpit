@@ -1,13 +1,15 @@
 {{/* The questions an answer asks, standing where its ask block stood.
-     The server renders every state: open with the fields and Send, over with
-     what was picked, and read only where the page cannot send. The
+     The server renders every state: open with the fields and Send, filled
+     from the assistant's draft, over with what was picked, and read only
+     where the page cannot send. A note's textarea opens with a newline the
+     parser drops, so a note that starts with one keeps it. The
      options are radios drawn as buttons, so a page whose script never ran
      still reads them, a pick included; dc-assistant-choices only answers an
      open block. An option breaks anywhere, a path has no space to wrap at.
      The card is the radios' containing block: a radio stands absolutely
      positioned, and outside the thread's scroller it would grow the page. */}}
 {{define "chat_choices.gohtml"}}
-<dc-assistant-choices class="d-block my-2" message-id="{{.MessageID}}" data-choices-state="{{.State}}"{{if .PostURL}} post-url="{{.PostURL}}" fragment-url="{{.FragmentURL}}"{{end}}>
+<dc-assistant-choices class="d-block my-2" message-id="{{.MessageID}}" data-choices-state="{{.State}}"{{if .PostURL}} post-url="{{.PostURL}}" fragment-url="{{.FragmentURL}}" draft-url="{{.DraftURL}}" assistant-id="{{.AssistantID}}"{{end}}>
   <form class="d-flex flex-column gap-2" data-choices-form novalidate>
     <fieldset class="d-flex flex-column gap-2 border-0 m-0 p-0 min-w-0"{{if not .PostURL}} disabled{{end}}>
       {{range $q, $question := .Questions}}
@@ -20,7 +22,7 @@
           {{end}}
         </div>
         {{if $.PostURL}}
-        <textarea class="form-control mt-2" name="note-{{$q}}" rows="1" maxlength="{{$.NoteMax}}" placeholder="Note, or your own answer" aria-label="Note on the answer, or your own answer" data-choices-note></textarea>
+        <textarea class="form-control mt-2" name="note-{{$q}}" rows="1" maxlength="{{$.NoteMax}}" placeholder="Note, or your own answer" aria-label="Note on the answer, or your own answer" data-choices-note>{{"\n"}}{{.Draft}}</textarea>
         {{else if .Note}}
         <div class="small text-secondary text-break mt-2" data-choices-note><i class="ti ti-message me-1" aria-hidden="true"></i>{{.Note}}</div>
         {{end}}
@@ -29,8 +31,8 @@
     </fieldset>
     {{if .PostURL}}
     <div class="d-flex align-items-center gap-2" data-choices-foot>
-      <button type="submit" class="btn btn-primary" disabled data-choices-send><i class="ti ti-send me-1" aria-hidden="true"></i>Send answers</button>
-      <span class="small text-secondary" aria-live="polite" data-choices-count>0 of {{len .Questions}} answered</span>
+      <button type="submit" class="btn btn-sm btn-primary"{{if lt .Done (len .Questions)}} disabled{{end}} data-choices-send><i class="ti ti-send me-1" aria-hidden="true"></i>Send answers</button>
+      <span class="small text-secondary" aria-live="polite" data-choices-count>{{.Done}} of {{len .Questions}} answered</span>
     </div>
     {{else if .Passed}}
     <div class="small text-secondary" data-choices-over><i class="ti ti-arrow-forward-up me-1" aria-hidden="true"></i>Not answered</div>

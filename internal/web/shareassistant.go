@@ -346,7 +346,7 @@ func (s *Server) guestChatViews(g *guest, inst assistant.Instance, linked map[st
 	for i, m := range inst.Messages {
 		view := s.messageView(inst.ID, m, false, false, inst.CoderID, media)
 		view.AudioURL = ""
-		answerChoices(&view, inst.Messages, i, "")
+		answerChoices(&view, inst.Messages, i, choicesAnswering{})
 		views = append(views, view)
 	}
 	reach := s.guestReach(g)

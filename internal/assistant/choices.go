@@ -130,16 +130,9 @@ func ReplyTo(messages []Message, index int) (Message, bool) {
 // user's message. picks carries one entry per question in order, more only
 // when they are empty.
 func answerMessage(c Instance, messageID string, picks []Pick) (Message, error) {
-	at := slices.IndexFunc(c.Messages, func(m Message) bool { return m.ID == messageID })
-	if at < 0 {
-		return Message{}, errors.New("That answer is not in this assistant.")
-	}
-	choices, ok := c.Messages[at].Choices()
-	if !ok {
-		return Message{}, errors.New("That answer asks nothing.")
-	}
-	if _, ok := ReplyTo(c.Messages, at); ok {
-		return Message{}, errors.New("These questions were answered already.")
+	choices, err := openChoices(c, messageID)
+	if err != nil {
+		return Message{}, err
 	}
 	clean, err := checkPicks(choices.Questions, picks)
 	if err != nil {
@@ -152,15 +145,71 @@ func answerMessage(c Instance, messageID string, picks []Pick) (Message, error) 
 	return Message{Content: text, Answers: &Answers{Message: messageID, Picks: clean}}, nil
 }
 
+// openChoices answers the questions of one answer that still take answers.
+func openChoices(c Instance, messageID string) (Choices, error) {
+	at := slices.IndexFunc(c.Messages, func(m Message) bool { return m.ID == messageID })
+	if at < 0 {
+		return Choices{}, errors.New("That answer is not in this assistant.")
+	}
+	choices, ok := c.Messages[at].Choices()
+	if !ok {
+		return Choices{}, errors.New("That answer asks nothing.")
+	}
+	if _, ok := ReplyTo(c.Messages, at); ok {
+		return Choices{}, errors.New("These questions were answered already.")
+	}
+	return choices, nil
+}
+
+// SaveAnswers stores what is picked and written in one open block without
+// sending it, beside the composer's words in the same draft, and says whether
+// that changed anything. The words are kept as typed, a send trims them. A
+// repeated save writes nothing and announces nothing, like the composer's.
+func (s *Service) SaveAnswers(id, messageID string, picks []Pick) (bool, error) {
+	if _, ok := s.store.Load(id); !ok {
+		return false, errors.New("Assistant not found.")
+	}
+	return s.drafts.Of(id).saveAnswers(messageID, func() ([]Pick, error) {
+		c, ok := s.store.Load(id)
+		if !ok {
+			return nil, errors.New("Assistant not found.")
+		}
+		choices, err := openChoices(c, messageID)
+		if err != nil {
+			return nil, err
+		}
+		return fitPicks(choices.Questions, picks)
+	})
+}
+
 func checkPicks(questions []Question, picks []Pick) ([]Pick, error) {
-	clean := make([]Pick, len(questions))
-	for i := range clean {
-		clean[i].Option = -1
+	trimmed := make([]Pick, len(picks))
+	for i, p := range picks {
+		trimmed[i] = Pick{Option: p.Option, Text: strings.TrimSpace(p.Text)}
+	}
+	clean, err := fitPicks(questions, trimmed)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range clean {
+		if p.Option < 0 && p.Text == "" {
+			return nil, errors.New("Answer every question first.")
+		}
+	}
+	return clean, nil
+}
+
+// fitPicks lays picks over the questions, one per question in order, an
+// option of -1 and no words where none came. More than the questions may
+// come only when they are empty.
+func fitPicks(questions []Question, picks []Pick) ([]Pick, error) {
+	fit := make([]Pick, len(questions))
+	for i := range fit {
+		fit[i].Option = -1
 	}
 	for i, p := range picks {
-		p.Text = strings.TrimSpace(p.Text)
 		if i >= len(questions) {
-			if p.Option >= 0 || p.Text != "" {
+			if p.Option >= 0 || strings.TrimSpace(p.Text) != "" {
 				return nil, errors.New("There are more answers than questions.")
 			}
 			continue
@@ -171,14 +220,9 @@ func checkPicks(questions []Question, picks []Pick) ([]Pick, error) {
 		if utf8.RuneCountInString(p.Text) > MaxChoiceNoteRunes {
 			return nil, errors.New("An answer is too long.")
 		}
-		clean[i] = p
+		fit[i] = p
 	}
-	for _, p := range clean {
-		if p.Option < 0 && p.Text == "" {
-			return nil, errors.New("Answer every question first.")
-		}
-	}
-	return clean, nil
+	return fit, nil
 }
 
 // answerText is what the assistant reads: every question with the option
