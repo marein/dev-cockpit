@@ -528,6 +528,373 @@ function space(bpm, chords) {
   return { breathe, play, melody, guitar, bell, coda, record };
 }
 
+const durations = { ...quarters, ds: 0.375 };
+
+// A score of Classic Rock may write triplets, t and x, which scriptune lacks,
+// so they only place notes and never reach a cell.
+const lengths = { ...durations, t: 1 / 3, x: 1 / 6 };
+
+const semitone = (note) => {
+  const [, letter, accidental, octave] = note.match(/^([A-G])([#b]?)(\d)$/);
+  return Number(octave) * 12 + letterSteps[letter] + (accidentalSteps[accidental] ?? 0);
+};
+const named = (pitch) => pitchNames[pitch % 12] + Math.floor(pitch / 12);
+
+// scriptune reads a BPM as a whole number, so this times cells the same way.
+function seconds(cells) {
+  let rate = 60;
+  let total = 0;
+  for (const line of cells.split("\n")) {
+    if (line.startsWith("#BPM")) rate = parseInt(line.slice(5));
+    else if (!line.startsWith("#")) for (const cell of line.split(" ").filter(Boolean)) total += (durations[cell.split(":")[1]] * 60) / rate;
+  }
+  return total;
+}
+
+// Every rest starts an oscillator like a note, so a rest takes as few cells
+// as it can.
+function wait(time) {
+  const cells = [];
+  let left = time;
+  if (left >= 1) {
+    cells.push("#BPM 60");
+    for (const [value, beats] of [["dw", 6], ["w", 4], ["dh", 3], ["h", 2], ["q", 1]]) for (; left >= beats; left -= beats) cells.push(`-:${value}`);
+  }
+  if (left > 5e-4) cells.push(fit(left).cell.replace("note", "-"));
+  return cells.join("\n");
+}
+
+// A tone lasts whole cycles of hz, so it stops at zero right where the next
+// one starts at zero. A whole BPM rarely lands on a cycle end, so of the
+// cycle counts near seconds and the values of scriptune it takes the cell
+// closest to seconds among those within miss of a cycle end.
+function fit(seconds, hz = 0, cap = Infinity, miss = 1e-3) {
+  let best;
+  const consider = (rate, value, cycles) => {
+    const time = (60 * durations[value]) / rate;
+    if (rate < 1 || time > cap + 1e-9) return;
+    const off = cycles ? Math.abs(time * hz - cycles) : 0;
+    const score = off > miss ? 1 + off : Math.abs(time - seconds);
+    if (!(best?.score <= score)) best = { score, time, cell: `#BPM ${rate}\nnote:${value}` };
+  };
+  if (!hz) {
+    for (const [value, beats] of Object.entries(durations)) consider(Math.round((60 * beats) / seconds), value, 0);
+    return best;
+  }
+  const slack = Math.max(0.004, seconds * 0.08);
+  const high = Math.floor(Math.min(seconds + slack, cap) * hz + 1e-9);
+  const low = Math.max(1, Math.min(high, Math.ceil((seconds - slack) * hz)));
+  for (let cycles = low; cycles <= high; cycles++) {
+    for (const [value, beats] of Object.entries(durations)) consider(Math.round((60 * beats * hz) / cycles), value, cycles);
+  }
+  return best;
+}
+
+// A browser starts and stops an oscillator on a sample, so two steps can
+// miss each other by one and the wave jumps by its level times how far it
+// moves in a sample. edge caps the level for a jump of 0.028 at 44.1 kHz, so
+// the highest notes of a solo play a little softer.
+const edge = (wave, hz) => 0.028 / ({ sine: Math.sin((2 * Math.PI * hz) / 44100), triangle: (4 * hz) / 44100, sawtooth: (2 * hz) / 44100 }[wave] ?? 0);
+
+const slopes = { sine: 2 * Math.PI, triangle: 4, sawtooth: 2 };
+
+// The miss of a whole BPM grows with the square of a step's length times its
+// pitch, so a long step splits into even ones. Every step aims at where all
+// steps so far should end, so errors never add up.
+const sound = (run, room, pan) => {
+  const cells = pan === undefined ? [] : [`#PAN ${pan.toFixed(2)}`];
+  const steps = run.flatMap(([wave, note, length, level]) => {
+    if (wave === "noise") return [[wave, note, length, level, 0, 0]];
+    const hz = hertz(note);
+    const loud = Math.min(level, edge(wave, hz), 1);
+    const miss = Math.max(0.0015, Math.min(0.05, 0.003 / (slopes[wave] * Math.max(loud, 1e-3))));
+    const count = Math.max(1, Math.ceil(length / Math.sqrt((2400 * miss) / hz) - 1e-9));
+    return Array.from({ length: count }, () => [wave, note, length / count, loud, hz, miss]);
+  });
+  let time = 0;
+  let end = 0;
+  let type;
+  let volume;
+  for (const [wave, note, length, loud, hz, miss] of steps) {
+    end += length;
+    const target = Math.min(end, room) - time;
+    if (target < (hz ? 0.6 / hz : 0.001)) continue;
+    const cell = fit(target, hz, room - time, miss);
+    if (!cell) continue;
+    if (wave !== type) cells.push(`#TYPE ${(type = wave)}`);
+    if (loud.toFixed(4) !== volume) cells.push(`#VOLUME ${(volume = loud.toFixed(4))}`);
+    cells.push(cell.cell.replace("note", note));
+    time += cell.time;
+  }
+  return cells.join("\n");
+};
+
+// Every start is measured from the start of the part, so a voice never
+// drifts from the others.
+function lay(events, total) {
+  const sorted = events.filter((event) => event.at < total).sort((a, b) => a.at - b.at);
+  const cells = [];
+  let time = 0;
+  const rest = (until, gap) => {
+    if (until - time <= gap) return;
+    const cell = wait(until - time);
+    cells.push(cell);
+    time += seconds(cell);
+  };
+  sorted.forEach(({ at, sound, length = Infinity }, i) => {
+    rest(at, 0.003);
+    const room = Math.min(sorted[i + 1]?.at ?? total, total, at + length) - time;
+    if (room < 0.004) return;
+    const cell = sound(room);
+    cells.push(cell);
+    time += seconds(cell);
+  });
+  rest(total, 5e-4);
+  return cells.join("\n");
+}
+
+// shade varies a song like a player would, the same on every run, so the
+// song never changes.
+const shade = (seed, i) => {
+  const x = Math.sin(seed * 78.233 + i * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+const play = (segments, { wave = "sawtooth", level, length, picked = true, pick = 1.2, fall = 3, step = 0.2, vibrato = 0 }) => (room) => {
+  const total = Math.min(room, length);
+  const pieces = [];
+  let t = 0;
+  for (const [note, size] of segments) {
+    const end = size ? Math.min(total, t + size) : total;
+    if (end - t > 1e-4) pieces.push([note, t, end]);
+    t = end;
+  }
+  if (!pieces.length) return "";
+  if (vibrato === 2) {
+    const [note, from, to] = pieces.pop();
+    const low = transpose(note, -1);
+    let s = Math.min(to, from + 0.14);
+    pieces.push([note, from, s]);
+    for (let down = true; s < to - 1e-4; down = !down) {
+      const e = Math.min(to, s + (down ? 0.05 : 0.12));
+      pieces.push([down ? low : note, s, e]);
+      s = e;
+    }
+  }
+  const at = (time) => level * 10 ** ((-fall * time) / 20) * (vibrato === 1 && time > 0.15 ? 1 + 0.14 * Math.sin(2 * Math.PI * 5.5 * (time - 0.15)) : 1);
+  const run = [];
+  for (const [note, from, to] of pieces) {
+    let s = from;
+    if (picked && from === 0) {
+      s = Math.min(to, 0.018);
+      run.push([wave, note, s, level * pick]);
+    }
+    const count = Math.max(1, Math.round((to - s) / (vibrato === 1 ? 0.045 : step)));
+    for (let i = 0; i < count; i++) {
+      const a = s + ((to - s) * i) / count;
+      const b = s + ((to - s) * (i + 1)) / count;
+      if (b - a > 1e-4) run.push([wave, note, b - a, at((a + b) / 2)]);
+    }
+  }
+  // A note that ends before its room does dies away instead of stopping dead.
+  if (room > total + 0.06) {
+    const [note] = pieces.at(-1);
+    run.push([wave, note, 0.025, at(total) * 0.45], [wave, note, 0.03, at(total) * 0.18]);
+  }
+  return sound(run, room);
+};
+
+// A track plays one note at a time, so the body and the burst of the snare
+// sound on voices of their own.
+const drumset = (tail) => {
+  const tone = (wave, note, cycles, level) => [wave, note, cycles / hertz(note), level];
+  const noise = (band, run) => run.map(([length, level]) => ["noise", band, length, level]);
+  const tom = (note, pan) => [["tom", [...noise("A5", [[0.004, 0.25]]), tone("triangle", transpose(note, 12), 1, 0.85),
+    tone("sine", transpose(note, 5), 2, 1), tone("sine", note, 6, 0.85), tone("sine", note, 10, 0.45), tone("sine", note, 14, 0.18)], pan]];
+  return {
+    K: [["kick", [...noise("D6", [[0.003, 0.3]]), tone("triangle", transpose(tail, 19), 1, 0.8), tone("triangle", transpose(tail, 12), 2, 0.9),
+      tone("sine", transpose(tail, 5), 2, 1), tone("sine", tail, 4, 0.9), tone("sine", tail, 5, 0.55), tone("sine", tail, 6, 0.25)]]],
+    S: [["shell", [tone("triangle", "A3", 1, 0.6), tone("sine", "E3", 3, 0.65), tone("sine", "E3", 4, 0.3)]],
+      ["snare", [...noise("F6", [[0.012, 0.42]]), ...noise("C7", [[0.025, 0.3], [0.035, 0.19], [0.05, 0.11], [0.07, 0.05], [0.09, 0.02]])]]],
+    G: [["shell", [tone("sine", "E3", 2, 0.3)]], ["snare", noise("C7", [[0.015, 0.16], [0.03, 0.06]])]],
+    H: [["hat", noise("B7", [[0.008, 0.16], [0.022, 0.065]])]],
+    O: [["hat", noise("A7", [[0.02, 0.13], [0.05, 0.1], [0.08, 0.065], [0.1, 0.03]])]],
+    C: [["crash", [...noise("A7", [[0.02, 0.28]]), ...noise("C8", [[0.06, 0.22], [0.12, 0.155]]), ...noise("B7", [[0.2, 0.1], [0.3, 0.058]]),
+      ...noise("A7", [[0.45, 0.028], [0.6, 0.012]])]]],
+    Y: [["ride", [tone("sine", "C#7", 20, 0.07), ...noise("D8", [[0.04, 0.09], [0.1, 0.05], [0.15, 0.02]])]]],
+    T: tom("D3", -0.25),
+    M: tom("A2", 0.05),
+    F: tom("E2", 0.35),
+  };
+};
+
+function stage(bpm, { bend = 0.05, slide = 0.025, echo = 0.75, tail = "G1" } = {}) {
+  const beat = 60 / bpm;
+  const hits = drumset(tail);
+  const human = (seed, i, spread) => (shade(seed, i) - 0.5) * 2 * spread;
+  const onBeat = (at) => Math.abs(at - Math.round(at)) < 1e-6;
+  // A hit moved a little before the part starts reads the contour at its start.
+  const shape = (contour, time, total) => ease(contour, Math.min(1, Math.max(0, time / total)));
+
+  const read = (line) => {
+    let at = 0;
+    return line.split(/[\s|]+/).filter(Boolean).flatMap((cell) => {
+      const [, note, value, tail] = cell.match(/^(.+):([a-z]+)(.*)$/);
+      const beats = lengths[value];
+      at += beats;
+      return note === "-" ? [] : [{ mark: note + tail, at: at - beats, beats }];
+    });
+  };
+  // scriptune knows no pitch between semitones, so a bend or a slide climbs
+  // in them.
+  const path = (notes) => {
+    const [first, ...moves] = notes.split(/([>/])/);
+    const segments = [[first, 0]];
+    for (let i = 0; i < moves.length; i += 2) {
+      const [move, to] = [moves[i], moves[i + 1]];
+      const from = segments.at(-1)[0];
+      const size = move === ">" ? bend : slide;
+      const way = Math.sign(semitone(to) - semitone(from));
+      if (!way) continue;
+      segments.at(-1)[1] = size;
+      for (let pitch = semitone(from) + way; pitch !== semitone(to); pitch += way) segments.push([named(pitch), size]);
+      segments.push([to, 0]);
+    }
+    return segments;
+  };
+  const shift = (segments, steps) => segments.map(([note, size]) => [transpose(note, steps), size]);
+
+  const lead = (cells, { level = 1, contour = [1, 1], late = 0.01, ring = 0.25, wave = "sawtooth", share = 0.28, pick = 1.2, fall = 2.5, seed = 2 } = {}) => (put, bars, total) => {
+    const notes = read(cells).map((note) => ({ ...note, parts: note.mark.match(/^(_?)([^~]+)(~*)$/) }));
+    notes.forEach(({ parts: [, mark, run, shake], at, beats }, n) => {
+      const before = notes[n - 1];
+      const slur = beats < 0.3 && !onBeat(at * 2) && before?.at + before?.beats > at - 1e-6 && before.parts[2].split(/[>/]/).at(-1) !== run.split(/[>/]/)[0];
+      const legato = mark === "_" || slur;
+      const time = at * beat + late + human(seed, n, 0.004);
+      const loud = 0.4 * level * (onBeat(at) ? 1 : 0.92) * (legato ? 0.9 : 1) * shape(contour, time, total);
+      const length = (beats + ring) * beat;
+      const segments = path(run);
+      put("lead", time, play(segments, { wave, level: loud, length, picked: !legato, pick, fall, vibrato: shake.length }), length);
+      put("echo", time + echo * beat, play(segments, { wave, level: loud * share, length, picked: false, fall, step: 0.25 }), length);
+    });
+  };
+  // A phone speaker cannot play the triangle of the bass, the overtones of
+  // the sawtooth an octave up carry the line there.
+  const thump = (put, time, segments, level, length, mute) => {
+    const span = mute ? Math.min(length, 0.2) : length;
+    put("bass", time, play(segments, { wave: "triangle", level: 0.85 * level, length: span, pick: 1.1, fall: mute ? 30 : 5, step: 0.25 }), span);
+    put("growl", time, play(shift(segments, 12), { level: 0.16 * level, length: span, pick: 1.3, fall: mute ? 40 : 12 }), span);
+  };
+  const bassline = (cells, { level = 1, contour = [1, 1], late = 0.004, seed = 5 } = {}) => (put, bars, total) => {
+    read(cells).forEach(({ mark, at, beats }, n) => {
+      const [, notes, mute, ring] = mark.match(/^([^,~]+)(,?)(~?)$/);
+      const time = at * beat + late + human(seed, n, 0.003);
+      const loud = level * (onBeat(at) ? 1 : 0.9) * shape(contour, time, total);
+      thump(put, time, path(notes), loud, (beats + (ring ? 0.5 : 0.1)) * beat, !!mute);
+    });
+  };
+  // Every string of a power chord sounds on a voice of its own, so each one
+  // stops at zero.
+  const riff = (cells, { level = 1, contour = [1, 1], late = 0.004, seed = 4 } = {}) => (put, bars, total) => {
+    read(cells).forEach(({ mark, at, beats }, n) => {
+      const [, notes, chord, mute, ring] = mark.match(/^([^\^,~]+)(\^?)(,?)(~?)$/);
+      const time = at * beat + late + human(seed, n, 0.003);
+      const loud = level * (onBeat(at) ? 1 : 0.9) * shape(contour, time, total) * (1 + human(seed + 1, n, 0.04));
+      const length = (beats + (ring ? 0.5 : 0)) * beat;
+      const span = mute ? Math.min(length, 0.17) : length;
+      const segments = path(notes);
+      const strings = chord ? [["rh1", 0, 0.24], ["rh5", 7, 0.18], ["rh8", 12, 0.13]] : [["rh1", 0, 0.27]];
+      strings.forEach(([voice, steps, share], k) => {
+        const touch = { level: loud * share, length: span, pick: 1.15, fall: mute ? 40 : 3, step: mute ? 0.05 : 0.2 };
+        put(voice, time + k * 0.006, play(shift(segments, steps), touch), span);
+      });
+      thump(put, time, shift(segments, -12), loud, length, !!mute);
+    });
+  };
+  // The notes of the acoustic take turns on lanes voices, so each one rings
+  // on under the next ones.
+  const fingers = (progression, voicing, patterns, { level = 1, contour = [1, 1], lanes = 3, seed = 7 } = {}) => (put, bars, total) => {
+    const chords = progression.split(" ");
+    const all = [patterns].flat().map((pattern) => pattern.replace(/\s/g, ""));
+    let n = 0;
+    for (let bar = 0; bar < bars; bar++) {
+      const chord = voicing[chords[bar % chords.length]];
+      const pattern = all[bar % all.length];
+      [...pattern].forEach((place, i) => {
+        if (place === "." || !chord) return;
+        const at = bar * 4 + (i * 4) / pattern.length;
+        const time = at * beat + 0.012 + human(seed, n, 0.006);
+        const loud = 0.4 * level * (onBeat(at) ? 1 : 0.85) * shape(contour, time, total) * (1 + human(seed + 1, n, 0.08));
+        const note = chord[Number(place)];
+        put(`a${(n++ % lanes) + 1}`, time, play([[note, 0]], { wave: "triangle", level: loud, length: 2.4, pick: 1.4, fall: 12, step: 0.25 }));
+        put("nail", time, (room) => sound([["sawtooth", note, 0.012, loud * 0.35], ["sawtooth", note, 0.03, loud * 0.12]], room));
+      });
+    }
+  };
+  const drums = (grids, { level = 1, contour = [1, 1], late = { snare: 0.02, hat: 0.008, tom: 0.01 }, seed = 3 } = {}) => (put, bars, total) => {
+    for (const [lane, grid] of Object.entries(grids)) {
+      const rows = grid.replace(/\s/g, "").split("|");
+      let n = 0;
+      for (let bar = 0; bar < bars; bar++) {
+        const row = rows[bar % rows.length];
+        [...row].forEach((step, i) => {
+          if (step === ".") return;
+          const beats = bar * 4 + (i * 4) / row.length;
+          const at = beats * beat + (late[lane] ?? 0) + (lane === "kick" ? 0 : human(seed, n, 0.003));
+          const loud = level * (step === step.toUpperCase() ? 1 : 0.5) * shape(contour, at, total) * (1 - 0.08 * shade(seed + 1, n++));
+          for (const [voice, run, pan] of hits[step.toUpperCase()]) {
+            put(voice, at, (room) => sound(run.map(([wave, note, length, volume]) => [wave, note, length, volume * loud]), room, pan));
+          }
+        });
+      }
+    }
+  };
+
+  // The drums are voices of their own, so the kit track of song stays empty.
+  const part = (bars, ...layers) => {
+    const lanes = {};
+    const total = bars * 4 * beat;
+    const put = (voice, at, sound, length) => (lanes[voice] ??= []).push({ at: Math.max(0, at), sound, length });
+    for (const layer of layers.flat()) layer(put, bars, total);
+    return { bars, drums: "", ...Object.fromEntries(Object.entries(lanes).map(([voice, events]) => [voice, lay(events, total)])) };
+  };
+  // The first voice sets a volume of 1 before it plays, so normalize leaves
+  // every volume as written and edge holds.
+  const record = ({ voices, parts, form }) => {
+    const used = Object.fromEntries(Object.entries(voices).filter(([voice]) => Object.values(parts).some((p) => p[voice] !== undefined)));
+    const filled = Object.fromEntries(Object.entries(parts).map(([name, p]) => [name, {
+      ...Object.fromEntries(Object.keys(used).map((voice) => [voice, wait(p.bars * 4 * beat)])), ...p,
+    }]));
+    const [first] = Object.keys(used);
+    return song({ bpm, voices: { ...used, [first]: `${used[first]}\n#VOLUME 1` }, parts: filled, form });
+  };
+  return { lead, bassline, riff, fingers, drums, part, record };
+}
+
+const drummer = (...bars) => {
+  const all = bars.flat();
+  const lanes = [...new Set(all.flatMap((bar) => Object.keys(bar)))];
+  return Object.fromEntries(lanes.map((lane) => [lane, all.map((bar) => bar[lane] ?? "....").join("|")]));
+};
+const times = (n, bar) => Array(n).fill(bar);
+const crash = (bar) => ({ ...bar, cym: "C..." });
+
+const rock = { kick: "K.....K.K.......", snare: "....S.......S...", hat: "H.H.H.H.H.H.H.H." };
+const rock2 = { kick: "K.....KK..K.....", snare: "....S.......S...", hat: "H.H.H.H.H.H.H.O." };
+const ride = { ...rock, hat: undefined, ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+const ride2 = { kick: "K.....KK..K...K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+const toms = { kick: "K.....K.K.......", snare: "....S...........", hat: "H.H.H.H.H.H.....", tom: "............TTFF" };
+const down = { kick: "K.......K.......", snare: "....S...S.GG....", hat: "H.H.H.H.........", tom: "............MMFF" };
+const triplets = { kick: "K..K..K..K..", tom: ".TT.MM.FF.FF" };
+const thunder = { kick: "K.....K.....K.....K.....", tom: "..TTTT..MMMM..FFFF..FFFF", cym: "C..." };
+
+const band = {
+  kick: "#PAN 0", bass: "#PAN 0", growl: "#PAN 0", lead: "#PAN 0.2", echo: "#PAN -0.5",
+  rh1: "#PAN -0.3", rh5: "#PAN 0.3", rh8: "#PAN -0.1", shell: "#PAN 0.05", snare: "#PAN 0.05",
+  hat: "#PAN -0.3", tom: "#PAN 0", crash: "#PAN -0.4", ride: "#PAN 0.35",
+};
+const strings = { a1: "#PAN -0.35", a2: "#PAN -0.1", a3: "#PAN 0.15", a4: "#PAN 0.35", a5: "#PAN -0.2", a6: "#PAN 0.25", nail: "#PAN 0" };
+
 // unroll reads a track the way parseSheet of scriptune does, loops unrolled,
 // and gives its notes, each with the lowest pitch of its cell or null for a
 // rest, where it starts and how long it lasts, in sixteenths of the tempo the
@@ -3317,5 +3684,460 @@ export const songs = {
       end: coda("Bbm", "F4", "toll", deep),
     };
     return record({ root: "A#1", echo: 1.5, drone: 0.12, buzz: 0.03, parts, form: "void sink abyss sink2 end" });
+  })(),
+  chinook: (() => {
+    const bpm = 80;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
+    const pedal = {
+      Dm: ["D3", "A3", "D4", "E4", "F4", "A4"], C: ["D3", "G3", "C4", "E4", "G4", "C5"], Bb: ["D3", "F3", "A#3", "D4", "F4", "A4"],
+      Gm: ["D3", "G3", "A#3", "D4", "G4", "A#4"], A: ["A2", "E3", "A3", "C#4", "E4", "G4"],
+    };
+    const open = { Dm: ["D3", "A3", "D4", "E4", "F4", "A4"], Bb: ["A#2", "F3", "A#3", "D4", "F4", "C5"], F: ["F2", "C3", "F3", "A3", "C4", "G4"], C: ["C3", "G3", "C4", "E4", "G4", "D5"] };
+    const picking = ["02435342", "0.2.4.3.5.4.3.21"];
+    const theme = "A4:q D5:q E5:e F5:e E5:e D5:e | F5:h~ D5:q C5:q | A4:q C5:q F5:e G5:e A5:e C6:e | G5:dh~ -:e E5:e"
+      + " | F5:q E5:e D5:e A4:q D5:q | F5:q G5:e F5:e D5:h~ | C5:q F5:e G5:e A5:q C6:q | G5>A5:h~ G5:e E5:e C5:q";
+    const walk = "D2^:dq D2^,:e -:e D2^:e F2^:e G2^:e | A#2^:dq A#2^,:e -:e A#2^:e A2^:e G2^:e"
+      + " | F2^:dq F2^,:e -:e F2^:e G2^:e A2^:e | C3^:dq C3^,:e -:e C3^:e A#2^:e C3^:e";
+    const held = "D2^:w~ | A#2^:w~ | F2^:w~ | C3^:w~";
+    const drive = ["D2", "A#2", "F2", "C3"].map((x) => `${x}^:e ${x},:e ${x},:e ${x}^:e ${x},:e ${x},:e ${x}^:e ${x},:e`).join(" | ");
+    const solo = "-:h -:e A4:e C5:e D5:e | F5>G5:h~ _G5>F5:e D5:e C5:q | A4:q~ -:q -:e C5:e D5:e F5:e | G5:dh~ -:q"
+      + " | G5>A5:q~ _A5>G5:e F5:e D5:h~ | -:e D5:e F5:e G5:e F5:e D5:e C5:q | C6:q~ A5:e G5:e F5:e G5:e A5:q~ | _G5:e E5:e C5:e E5:e G5:h~"
+      + " | D6:q~~ C6:e A5:e G5>A5:e G5:e F5:e D5:e | F5:s G5:s A5:s C6:s D6:e C6:e A5:q~ G5:e F5:e"
+      + " | A5:s C6:s D6:s F6:s E6>F6:h~~ _F6>E6:e C6:e | D6:s C6:s A5:s G5:s E6:q~ D6:s C6:s G5:s E5:s G5:q~"
+      + " | D6:x C6:x A5:x D6:x C6:x A5:x D6:x C6:x A5:x D6:x C6:x A5:x F6:x E6:x D6:x C6:x A5:x G5:x A5:q~"
+      + " | F5:x G5:x A5:x C6:x D6:x F6:x F6:q~~ _D6:s C6:s A5:s G5:s F5:s G5:s A5:s C6:s"
+      + ` | ${times(4, "C6>D6:x C6:x A5:x").join(" ")} C6>D6:q~~ C6:e A5:e`
+      + " | E6:x D6:x C6:x G5:x E6:x D6:x C6:x G5:x E5:x C6:x G5:x E5:x G5:s A5:s C6:s D6:s E6:q~"
+      + ` | D6>F6:h~~ _F6>D6:e C6:e D6>F6:q~~ | ${times(4, "F6:x D6:x C6:x").join(" ")} D6>F6:h~~`
+      + " | C6:s D6:s F6:s G6:s A6:dh~~ | _A6>G6:s E6:s D6:s C6:s G6:s E6:s D6:s C6:s E6:s D6:s C6:s G5:s D6>E6:q~~"
+      + " | _E6>D6:s C6:s A5:s G5:s F5:s E5:s D5:s C5:s D5:h~ | -:q F5:e G5:e A5>A#5:h~ | _A#5>A5:e G5:e F5:e G5:e A5:q~ C6:q"
+      + " | G5:q~ E5:e G5:e A5:e C6:e C6>D6:q";
+    const half = { kick: "K.......K.k.....", snare: "........S.......", hat: "H.h.H.h.H.h.H.h." };
+    const climb = { kick: "K.K...K.K.K...K.", snare: "....S.......S...", hat: "O...O...O...O...", cym: "C..." };
+    const parts = {
+      intro: part(8, fingers("Dm Dm C Bb Dm Dm Gm A", pedal, picking, { contour: [0.7, 1] })),
+      verse: part(4, fingers("Dm Bb F C", open, picking, { level: 0.8 }), lead(theme.split("|").slice(0, 4).join("|"), { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 }),
+        bassline("D2:w | A#1:w | F2:w | C2:h~ -:h", { level: 0.8, contour: [0.5, 1] }), drums(drummer({}, {}, {}, { kick: "........K...K...", tom: "........TTMMFFFF" }))),
+      build: part(8, fingers("Dm Bb F C", open, picking, { level: 0.7, contour: [1, 0.5] }), riff(`${held} | ${walk}`, { level: 0.9 }),
+        drums(drummer(crash(half), half, half, { ...half, tom: "............TTFF" }, crash(rock), rock, rock2, triplets))),
+      theme: part(8, riff(`${walk} | ${walk}`, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(rock), rock, rock2, toms, crash(rock), rock, rock2, down))),
+      solo: part(24, riff(`${drive} | ${drive} | ${drive} | ${drive} | ${held} | ${drive}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(ride), ride, ride2, toms, ride, ride, ride2, down, crash(ride), ride, ride2, toms, crash(ride), ride, ride2, triplets,
+          climb, climb, climb, thunder, crash(ride), ride, ride2, down))),
+      outro: part(4, riff("D2^:w~ | A#2^:h C3^:h | D2^:w~ | -:w"), lead("_D6:dh~~ -:q | -:w | -:w | -:w"), fingers("- - - Dm", pedal, picking),
+        drums(drummer({ kick: "K...", tom: "........TTMMFFFF", cym: "C..." }, { kick: "K.......K.......", snare: "........S.......", cym: "C.......C......." },
+          { kick: "K...", tom: "....F.F.F.F.FFFF", cym: "C..." }, {}))),
+      end: part(2, fingers("Dm Dm", pedal, ["02435342", "012345.........."], { contour: [0.9, 0.7], lanes: 6 })),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo outro end" });
+  })(),
+  bora: (() => {
+    const bpm = 84;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
+    const voicing = {
+      Em: ["E3", "B3", "E4", "G4", "B4", "E5"], G: ["G2", "D3", "G3", "B3", "D4", "G4"], A: ["A2", "E3", "A3", "C#4", "E4", "A4"],
+      B7sus: ["B2", "F#3", "B3", "E4", "F#4", "A4"], B7: ["B2", "F#3", "A3", "D#4", "F#4", "B4"],
+    };
+    const picking = ["03142543", "03142.5.4.3.2.1."];
+    const theme = "E5:dq D5:e B4:q G4:q | D5:e G5:e B5:q~ -:e A5:e G5:e D5:e | C#6:dq B5:e A5:q E5:q | F#5:h~ D#5:q -:e B4:e"
+      + " | E5:dq D5:e B4:e D5:e E5:e G5:e | B5:q~ A5:e G5:e D5:h~ | A5:e C#6:e B5:e A5:e E5>F#5:q~ E5:q | F#5>G5:q _G5>F#5:e D#5:e B4:h~";
+    const gust = "E2^:de E2^,:de E2^:e B2:s D3:s E3:e D3:s B2:s A2:e | G2^:de G2^,:de G2^:e D3:s E3:s G3:e E3:s D3:s B2:e"
+      + " | A2^:de A2^,:de A2^:e E3:s G3:s A3:e G3:s E3:s C#3:e | B2^:q~ B2^,:e B2^,:e A2:e F#2:e G2:e D#2:e";
+    const drive = ["E2", "G2", "A2", "B2"].map((x) => `${x}^:de ${x},:s ${x},:e ${x},:e ${x}^:de ${x},:s ${x},:e ${x},:e`).join(" | ");
+    const stops = "E2^:q~ -:dh | G2^:q~ -:dh | A2^:q~ -:dh | B2^:e -:dq B2^:e B2^:e B2^:e B2^:e";
+    const peak = "E2^:h~ E2^:h~ | G2^:h~ G2^:h~ | A2^:h~ A2^:h~ | B2^:h~ B2:e A2:e F#2:e D#2:e";
+    const solo = "B4:h~ -:e D5:e E5:e G5:e | A5>B5:dq~ _B5>A5:e G5:q D5:q | -:q E5:e G5:e A5:q~ -:q | F#5:e A5:e F#5:e D#5:e E5>F#5:h~"
+      + " | -:e E6:e D6:e B5:e D6>E6:h~ | _E6>D6:e B5:e G5:e D5:e G5:q~ -:q | -:e A4:e C#5:e D5:e E5:e D5:e C#5:e A4:e | B4>C5:q~ _C5>B4:e A4:e B4:h~"
+      + " | E5:s G5:s A5:s B5:s D6:s B5:s A5:s G5:s E5:s G5:s A5:s B5:s D6:q~ | E6:x D6:x B5:x A5:x B5:x D6:x E6:x D6:x B5:x A5:x G5:x D5:x G5:h~"
+      + " | A5:s C#6:s E6:s G6:s G6>A6:q~ _A6>G6:s E6:s C#6:s A5:s E5:q | B5:x A5:x F#5:x D#5:x F#5:x A5:x B5:q~ -:e A5:e F#5:e D#5:e"
+      + " | E5:s G5:s A5:s G5:s G5:s A5:s B5:s A5:s A5:s B5:s D6:s B5:s B5:s D6:s E6:s D6:s | E6:q~ D6:e B5:e C6>D6:h~"
+      + " | _D6>C#6:e A5:e E5:e G5:e A5:s C#6:s E6:s G6:s E6:q | D#6:q~ B5:e A5:e F#5:e A5:e B5:q"
+      + ` | ${times(4, "D6>E6:t D6:t B5:t").join(" ")} | D6>E6:q~~ _E6>D6:e B5:e G5:e B5:e D6:q | ${times(4, "G6>A6:t G6:t E6:t").join(" ")}`
+      + " | F#6:x E6:x D#6:x B5:x F#6:x E6:x D#6:x B5:x A5:x F#5:x D#5:x B4:x D#5:s F#5:s A5:s B5:s D6:s E6:s G6:s A6:s"
+      + " | _A6>B6:w~~ | _B6>A6:e G6:e E6:e D6:e B5:e A5:e G5:e D5:e | -:e A5:e C#6:e B5:e A5:e G5:e E5>F#5:q~ | _F#5:e D#5:e B4:e D#5:e E5:h";
+    const gale = { kick: "K..K..K.K.......", snare: "....S.......S...", hat: "H.H.H.H.H.H.H.H." };
+    const gale2 = { kick: "K..K..K.K.....K.", snare: "....S.......S..G", hat: "H.H.H.H.H.H.H.O." };
+    const gallop = { kick: "K..K....K..K....", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const gallop2 = { kick: "K..K....K..K..K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const stop = { kick: "K...", cym: "C..." };
+    const back = { kick: "K.......K.K.K.K.", snare: "........S.S.S.SS", cym: "C..." };
+    const surge = { kick: "K.K.K.K.K.K.K.K.", snare: "....S.......S...", hat: "O...O...O...O..." };
+    const parts = {
+      intro: part(8, fingers("Em Em G G A A B7sus B7", voicing, picking, { contour: [0.6, 1] })),
+      verse: part(8, fingers("Em G A B7", voicing, picking, { level: 0.8 }), lead(transpose(theme, -12), { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 }),
+        bassline("E2:w | G2:w | A2:w | B2:w | E2:w | G2:w | A2:w | B2:h~ -:h", { level: 0.8, contour: [0.5, 1] }),
+        drums(drummer(times(7, {}), { kick: "K.......K...K...", snare: "........SGSGSSSS" }))),
+      build: part(4, fingers("Em G A B7", voicing, picking, { level: 0.7, contour: [1, 0.4] }), riff(gust, { level: 0.85, contour: [0.7, 1] }),
+        drums(drummer(crash(gale), gale, gale2, toms))),
+      theme: part(8, riff(`${gust} | ${gust}`, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(gale), gale, gale2, toms, crash(gale), gale, gale2, down))),
+      solo: part(24, riff(`${drive} | ${drive} | ${stops} | ${drive} | ${drive} | ${peak}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(gallop), gallop, gallop2, toms, gallop, gallop, gallop2, down, stop, stop, stop, back,
+          crash(gallop), gallop, gallop2, triplets, surge, surge, surge, thunder, crash(ride), ride, ride2, down))),
+      outro: part(4, riff(gust, { level: 0.85 }), lead(theme.split("|").slice(4).join("|"), { level: 0.9 }),
+        drums(drummer(crash(gale), gale, gale2, { kick: "K.......K...K...", tom: "........TTMMFFFF", cym: "C..." }))),
+      end: part(2, riff("E2^:dh~ -:q | -:w", { level: 0.8 }), fingers("Em Em", voicing, ["03142543", "543210.........."], { contour: [0.9, 0.6], lanes: 6 }),
+        drums(drummer(crash({ kick: "K..." }), {}))),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo outro end" });
+  })(),
+  meltemi: (() => {
+    const bpm = 88;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.045, slide: 0.025, echo: 0.75, tail: "A1" });
+    const voicing = {
+      Asus2: ["A2", "E3", "A3", "B3", "E4", "A4"], A: ["A2", "E3", "A3", "C#4", "E4", "A4"], Em7: ["E3", "B3", "D4", "G4", "B4", "D5"],
+      G: ["G2", "D3", "G3", "B3", "D4", "G4"], Dsus4: ["D3", "A3", "D4", "G4", "A4", "D5"], D: ["D3", "A3", "D4", "F#4", "A4", "D5"],
+    };
+    const picking = ["05240314", "0.5.2.4.0.345.1."];
+    const theme = "E5:q C#5:e E5:e A5:q~ G5:e E5:e | G5:dq E5:e D5:e B4:e A4:q | D5:e E5:e G5:e A5:e B5:q~ A5:e G5:e | A5:h~ F#5:q D5:q"
+      + " | E5:q C#5:e E5:e A5:e B5:e C#6:q~ | B5:e A5:e G5:e E5:e D5>E5:h~ | D5:e B4:e D5:e E5:e G5:q B5:q | A5>B5:q~ _B5>A5:e F#5:e A5:h~";
+    const sail = "A2^:q A2^:e G2:e A2^:q C#3:e D3:e | E2^:q E2^:e D2:e E2^:q G2:e A2:e | G2^:q G2^:e F#2:e G2^:q B2:e C#3:e"
+      + " | D3^:q D3^,:e D3^,:e D3^:e E3:e C#3:e B2:e";
+    const drive = ["A2", "E2", "G2", "D3"].map((x) => `${x}^:e ${x},:e ${x}^:q ${x},:e ${x}^:e ${x}^:q`).join(" | ");
+    const bridge = "F2^:q~ F2^,:e F2^:e F2^:q F2^:q | G2^:q~ G2^,:e G2^:e G2^:q G2^:q | A2^:w~ | A2^:e A2^,:e A2^:e A2^,:e A2^:q E2^:e G2^:e";
+    const hold = ["A2", "G2", "D3", "A2"].map((x) => `${x}^:h~ ${x}^:e ${x}^:dq~`).join(" | ");
+    const solo = "-:q C#5:e E5:e F#5:e E5:e C#5>D5:q~ | _D5>C#5:e B4:e G4:e A4:e B4:h~ | -:h G5:e A5:e A5>B5:q~ | _B5>A5:e F#5:e A5:e F#5:e E5:e D5:e E5:q"
+      + " | A5:s B5:s C#6:s E6:s E6:h~~ -:e C#6:e | D6:e B5:e G5:e E5:e G5:q~ -:q | -:e B4:e D5:e B4:e G4:e A4:e B4:q | A4:s C#5:s D5:s E5:s F#5:q~ _E5:e D5:e A4:q"
+      + " | C5:t F5:t A5:t C6:t A5:t F5:t C6:q~ A5:e C6:e | D6:t B5:t G5:t D6:t B5:t G5:t D6:q~ B5:e D6:e | E6:t C#6:t A5:t E6:t C#6:t A5:t E6:h~~"
+      + " | _D6:e C#6:e A5:e G5:e E5:e G5:e A5:q | F5:e A5:e C6:e D6:e C6>D6:q~ C6:e A5:e | G5:e B5:e D6:e E6:e D6>E6:q~ D6:e B5:e"
+      + " | E6:q~ C#6:e B5:e C#6:e E6:e F#6:e E6:e | C6>C#6:q~ A5:e G5:e E5:e G5:e A5:e C6:e"
+      + ` | ${times(5, "C6>C#6:e A5:s").join(" ")} E5:s | ${times(5, "D6>E6:e B5:s").join(" ")} G5:s | D6>E6:q~~ _E6>D6:e B5:e D6:e E6:e G6:q`
+      + " | A5:x D6:x E6:x F#6:x E6:x D6:x A5:x D6:x E6:x F#6:x A6:x E6:x F#6>G6:h~"
+      + " | _G6>A6:w~~ | _A6>G6:e E6:e D6:e B5:e D6:e E6:e G6:q~ | F#6:e D6:e A5:e F#5:e A5:e D6:e E6>F#6:q~ | _F#6>E6:e C#6:e A5:e E5:e C#5:e A4:e B4>C#5:q";
+    const wake = { kick: "K.........K.....", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const wake2 = { kick: "K.K.......K...K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const deck = { kick: "K...K...K...K...", snare: "....S.......S...", hat: "O.H.O.H.O.H.O.H." };
+    const light = { kick: "K.........K.....", hat: "H.H.H.H.H.H.H.H." };
+    const parts = {
+      intro: part(8, fingers("Asus2 A Em7 Em7 G G Dsus4 D", voicing, picking, { contour: [0.7, 1] })),
+      verse: part(8, fingers("A Em7 G D", voicing, picking, { level: 0.8 }), lead(theme, { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 }),
+        bassline("A1:h A2:h | E2:h E1:h | G1:h G2:h | D2:w | A1:h A2:h | E2:h E1:h | G1:h G2:h | D2:h~ -:h", { level: 0.8, contour: [0.5, 1] }),
+        drums(drummer(times(7, {}), { kick: "K.......K.K.K...", tom: "........TTMMFFFF" }))),
+      build: part(4, fingers("A Em7 G D", voicing, picking, { level: 0.7, contour: [1, 0.4] }), riff(sail, { level: 0.8, contour: [0.6, 1] }),
+        drums(drummer(crash(light), light, light, toms))),
+      theme: part(8, riff(`${sail} | ${sail}`, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(rock), rock, rock2, toms, crash(rock), rock, rock2, down))),
+      solo: part(24, riff(`${drive} | ${drive} | ${bridge} | ${bridge} | ${drive} | ${hold}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(wake), wake, wake2, toms, wake, wake, wake2, down, crash(deck), deck, crash(deck), triplets, crash(deck), deck, crash(deck), triplets,
+          crash(wake), wake, wake2, toms, crash(ride), ride, ride2, thunder))),
+      end: part(2, riff("A2^:dh~ -:q | -:w", { level: 0.8 }), fingers("A A", voicing, ["05240314", "0.5.2.4.0......."], { contour: [0.9, 0.6], lanes: 6 }),
+        drums(drummer(crash({ kick: "K..." }), {}))),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo theme end" });
+  })(),
+  khamsin: (() => {
+    const bpm = 74;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.055, slide: 0.03, echo: 0.75, tail: "F#1" });
+    const voicing = {
+      Bm: ["B2", "F#3", "B3", "D4", "F#4", "B4"], C: ["C3", "G3", "C4", "E4", "G4", "B4"], Em: ["E3", "G3", "B3", "E4", "G4", "B4"],
+      "F#7": ["F#2", "C#3", "F#3", "A#3", "E4", "F#4"],
+    };
+    const picking = ["05152535", "05154321"];
+    const theme = "B4:q D5:q F#5:dq E5:e | G5:q~ E5:e C5:e B4:h~ | -:e E5:e G5:e B5:e A5:q G5:e E5:e | F#5>G5:q~ _G5>F#5:e E5:e A#4:h"
+      + " | B4:q D5:q F#5:e A5:e B5:q~ | C6:dq B5:e G5:q E5:q | G5:e F#5:e E5:e D5:e E5:e G5:e B5>C6:q~ | _C6>B5:e A#5:e F#5:e E5:e C#5:e A#4:e F#4:q";
+    const heat = "B2^:q~ B2^,:s B2^,:s C3^:e~ B2^:h~ | C3^:q~ C3^,:s C3^,:s D3^:e~ C3^:h~"
+      + " | E2^:q~ E2^,:s E2^,:s F#2^:e~ E2^:q~ G2:e A2:e | F#2^:q~ F#2^,:s F#2^,:s G2^:e~ F#2^:q A#2:e C#3:e";
+    const drive = ["B2", "C3", "E2", "F#2"].map((x) => `${x}^:q ${x},:e ${x},:e ${x},:e ${x}^:dq`).join(" | ");
+    const held = "B2^:w~ | C3^:w~ | E2^:w~ | F#2^:h~ F#2:e A#2:e C#3:e E3:e";
+    const solo = "-:q F#4:e A4:e B4>C#5:dq~ -:e | -:q E5:e D5:e C5:q~ B4:q | -:e G4:e B4:e D5:e E5>F#5:h~ | _F#5>E5:e C#5:e A#4:e C#5:e F#4:h~"
+      + " | -:e D5:e F#5:e A5:e B5:q~~ A5:e F#5:e | G5:e E5:e C5:e E5:e G5>A5:q~ -:q | B5:s A5:s G5:s E5:s G5:s E5:s D5:s B4:s D5:q~ E5:q | C#5:e E5:e F#5:e A#5:e C#6:q~ -:q"
+      + " | F#5:x B5:x D6:x C#6:x B5:x F#5:x D5:x F#5:x B5:x A5:x F#5:x D5:x F#5:h~ | E5:x G5:x C6:x B5:x G5:x E5:x C5:x E5:x G5:x B5:x C6:x B5:x G5:h~"
+      + " | E6:x D6:x B5:x G5:x B5:x D6:x E6:x D6:x B5:x G5:x E5:x D5:x E5:s G5:s B5:s D6:s E6:q | C#6:x A#5:x F#5:x C#6:x A#5:x F#5:x E6:x C#6:x A#5:x E6:x C#6:x A#5:x F#6:h~~"
+      + ` | ${times(4, "D6:s C#6:s B5:s C#6:s").join(" ")} | ${times(4, "E6:s D6:s B5:s D6:s").join(" ")} | ${times(2, "G6:s F#6:s E6:s F#6:s").join(" ")} G6>A6:h~`
+      + " | A#5:e C#6:e E6:e F#6:e A#6:h~"
+      + " | _A#6>B6:w~~ | _B6:e G6:e E6:e C6:e G6:e E6:e C6:e G5:e | B4:e E5:e G5:e B5:e A5>B5:h~ | _B5>A#5:e F#5:e E5:e C#5:e A#4:e C#5:e F#4:q";
+    const slow = { kick: "K.....K.........", snare: "........S.......", hat: "H...H...H...H..." };
+    const slow2 = { kick: "K.....K...K.....", snare: "........S.....g.", hat: "H...H...H...H.h." };
+    const dune = { kick: "K.........K.....", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const dune2 = { kick: "K.K.......K...K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const clean = { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 };
+    const parts = {
+      intro: part(8, fingers("Bm Bm C C Bm Bm Em F#7", voicing, picking, { contour: [0.6, 1] })),
+      verse: part(4, fingers("Bm C Em F#7", voicing, picking, { level: 0.8 }), lead(theme.split("|").slice(0, 4).join("|"), clean),
+        bassline("B1:w | C2:w | E2:w | F#1:h~ -:h", { level: 0.8, contour: [0.5, 1] }), drums(drummer({}, {}, {}, { kick: "K.......K.K.....", tom: "....TT..MMMMFFFF" }))),
+      build: part(4, fingers("Bm C Em F#7", voicing, picking, { level: 0.7, contour: [1, 0.4] }), riff(heat, { level: 0.85, contour: [0.6, 1] }),
+        drums(drummer(crash(slow), slow, slow2, toms))),
+      theme: part(8, riff(`${heat} | ${heat}`, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(rock), rock, rock2, toms, crash(rock), rock, rock2, down))),
+      calm: part(4, fingers("Bm C Em F#7", voicing, picking, { level: 0.8 }), lead(theme.split("|").slice(4).join("|"), clean),
+        bassline("B1:w | C2:w | E2:w | F#1:w", { level: 0.8 }), drums(drummer({ hat: "H...H...H...H..." }, { hat: "H...H...H...H..." }, { hat: "H...H...H...H..." }, { kick: "K.......K.K.K.K.", tom: "........TTMMFFFF" }))),
+      solo: part(20, riff(`${drive} | ${drive} | ${drive} | ${drive} | ${held}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(dune), dune, dune2, toms, dune, dune, dune2, down, crash(dune), dune, dune2, triplets, crash(rock), rock, rock2, thunder, crash(ride), ride, ride2, down))),
+      outro: part(4, riff(heat, { level: 0.85 }), lead("F#5:q B5:h~ A5:e F#5:e | G5:h~ E5:q C5:q | B4:e D5:e E5:e F#5:e G5:q E5:q | F#5:w~~", { level: 0.9 }),
+        drums(drummer(crash(rock), rock, rock2, { kick: "K.......K...K...", tom: "........TTMMFFFF", cym: "C..." }))),
+      end: part(2, riff("B2^:dh~ -:q | -:w", { level: 0.8 }), fingers("Bm Bm", voicing, ["05152535", "0.5.1.5.2......."], { contour: [0.9, 0.6], lanes: 6 }),
+        drums(drummer(crash({ kick: "K..." }), {}))),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme calm solo outro end" });
+  })(),
+  tramontane: (() => {
+    const bpm = 78;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
+    const voicing = {
+      G: ["G2", "D3", "G3", "B3", "D4", "G4"], Cadd9: ["C3", "G3", "C4", "D4", "E4", "G4"], Em7: ["E3", "B3", "D4", "G4", "B4", "D5"],
+      Dsus4: ["D3", "A3", "D4", "G4", "A4", "D5"], D: ["D3", "A3", "D4", "F#4", "A4", "D5"], Bm: ["B2", "F#3", "B3", "D4", "F#4", "B4"],
+      C: ["C3", "G3", "C4", "E4", "G4", "C5"],
+    };
+    const picking = ["034543134543", "034543135453"];
+    const theme = "D5:q G5:q~ A5:e B5:e A5:q | F#5:dq D5:e B4:h~ | C5:q E5:e G5:e C6:q~ B5:e A5:e | A5:h~ F#5:q -:e D5:e"
+      + " | D5:q G5:q B5:e D6:e B5:q | A5:e B5:e F#5:e D5:e F#5:h~ | E5:q G5:e C6:e B5:q~ A5:e G5:e | A5>B5:q~ _B5>A5:e F#5:e G5:h~";
+    const peaks = "G2^:e G2^,:e A2:s B2:s D3:e~ G2^:q B2:e A2:e | B2^:e B2^,:e C#3:s D3:s F#3:e~ B2^:q D3:e C#3:e"
+      + " | C3^:e C3^,:e D3:s E3:s G3:e~ C3^:q E3:e D3:e | D3^:q D3^,:e D3^,:e D3^:e C3:e B2:e A2:e";
+    const drive = ["E2", "C3", "G2", "D3"].map((x) => `${x}^:q ${x}^:e ${x}^:q~ ${x}^:e ${x}^:q`).join(" | ");
+    const held = "C3^:w~ | D3^:w~ | G2^:w~ | G2^:h~ G2^:e F#2:e E2:e D2:e";
+    const solo = "-:q E5:q~ G5:e A5:e B5:q | C6>D6:dh~ -:q | _D6>C6:e B5:e G5:e D5:e B4:h~ | -:e A4:e D5:e F#5:e A5:q~ G5:e F#5:e"
+      + " | E5:q~ -:e B4:e E5:e G5:e B5>C6:q~ | _C6>B5:e G5:e E5:e C5:e E5:h~ | -:e D6:e B5:e G5:e B5:e D6:e G6:q~ | F#6:e E6:e D6:e A5:e F#5:q~ -:q"
+      + " | G5:t A5:t B5:t D6:t B5:t A5:t G5:t A5:t B5:t E6:q~ | D6:t C6:t B5:t G5:t A5:t C6:t D6>E6:h~"
+      + " | _E6>D6:t B5:t G5:t B5:t D6:t G6:t E6:t D6:t B5:t G5:q~ | A5:t F#5:t D5:t F#5:t A5:t D6:t F#6:t E6:t D6:t E6:q"
+      + " | B5>D6:dq~ _D6>B5:e A5:e G5:e E5:q | G5>A5:dq~ _A5>G5:e E5:e C5:e E5:q | D5>E5:dq~ _E5>D5:e B4:e G4:e B4:q | A4:e D5:e F#5:e A5:e D6:e F#6:e A6:q~"
+      + ` | _G6:s F#6:s E6:s D6:s B5:s D6:s E6:s G6:s G6>A6:h~ | ${times(4, "C6:s E6:s G6:s E6:s").join(" ")} | ${times(2, "B5:s D6:s G6:s D6:s").join(" ")} D6>E6:h~`
+      + " | F#6:x D6:x A5:x F#6:x D6:x A5:x F#6:x D6:x A5:x F#5:x A5:x D6:x F#6>G6:h~"
+      + " | -:e G5:e C6:e E6:e G6:q~ A6:e G6:e | F#6:e A6:e F#6:e D6:e A5:e D6:e F#6:e A6:e | _A6>B6:w~~ | _B6>A6:e G6:e D6:e B5:e G5:e D5:e B4:e A4:e";
+    const breeze = { kick: "K.......K.......", snare: "........S.......", hat: "H.h.H.h.H.h.H.h." };
+    const ridge = { kick: "K.....K...K.....", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const ridge2 = { kick: "K.....K...K...K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const clean = { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 };
+    const parts = {
+      intro: part(8, fingers("G G Cadd9 Cadd9 Em7 Em7 Dsus4 D", voicing, picking, { contour: [0.6, 1] })),
+      verse: part(8, fingers("G Bm C D", voicing, picking, { level: 0.8 }), lead(theme, clean),
+        bassline("G1:w | B1:w | C2:w | D2:w | G1:w | B1:w | C2:w | D2:h~ -:h", { level: 0.8, contour: [0.4, 1] }),
+        drums(drummer(times(7, {}), { kick: "K.......K...K...", tom: "........TTTTMMFF" }))),
+      build: part(4, fingers("G Bm C D", voicing, picking, { level: 0.7, contour: [1, 0.4] }), riff(peaks, { level: 0.85, contour: [0.6, 1] }),
+        drums(drummer(crash(breeze), breeze, breeze, toms))),
+      theme: part(8, riff(`${peaks} | ${peaks}`, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(rock), rock, rock2, toms, crash(rock), rock, rock2, down))),
+      solo: part(24, riff(`${drive} | ${drive} | ${drive} | ${drive} | ${drive} | ${held}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(ridge), ridge, ridge2, toms, ridge, ridge, ridge2, down, crash(ridge), ridge, ridge2, triplets, crash(ridge), ridge, ridge2, toms,
+          crash(rock), rock, rock2, thunder, crash(ride), ride, crash(ride), { kick: "K.......K.......", snare: "........S.......", cym: "C..." }))),
+      home: part(4, fingers("G Bm C D", voicing, picking, { level: 0.8 }), lead(theme.split("|").slice(4).join("|"), clean),
+        bassline("G1:w | B1:w | C2:w | D2:w", { level: 0.7 }), drums(drummer(times(4, { ride: "Y...Y...Y...Y..." })), { level: 0.6 })),
+      end: part(2, fingers("G G", voicing, ["034543134543", "054321......"], { contour: [0.9, 0.6], lanes: 6 })),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo home end" });
+  })(),
+  zonda: (() => {
+    const bpm = 92;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.045, slide: 0.022, echo: 0.75, tail: "F#1" });
+    const voicing = {
+      "F#m": ["F#2", "C#3", "F#3", "A3", "B3", "E4"], A: ["A2", "E3", "A3", "C#4", "E4", "A4"], E: ["E3", "B3", "E4", "G#4", "B4", "E5"],
+      B: ["B2", "F#3", "B3", "D#4", "F#4", "B4"], Bsus: ["B2", "F#3", "B3", "E4", "F#4", "B4"],
+    };
+    const picking = ["04231423", "0.4.2.3.15432.1."];
+    const theme = "C#5:e F#5:e A5:e G#5:e F#5:q E5:e C#5:e | E5:dq F#5:e A5:q~ C#6:e B5:e | B5:q G#5:e E5:e F#5:e G#5:e B5:q | A5>B5:h~ _B5>A5:e F#5:e D#5:q"
+      + " | C#6:q~ B5:e A5:e G#5:e A5:e F#5:q | E6:q~ C#6:e B5:e A5:e E5:e C#5:q | B4:e E5:e G#5:e B5:e A5:e G#5:e E5>F#5:q~ | _F#5:e D#5:e F#5:e A5:e B5:h~";
+    const rush = "F#2^:q F#2^,:e F#2^:e A2:s B2:s C#3:s B2:s A2:s F#2:s E2:s G#2:s | A2^:q A2^,:e A2^:e C#3:s B2:s A2:s F#2:s E2:s F#2:s G#2:s D#2:s"
+      + " | E2^:q E2^,:e E2^:e G#2:s A2:s B2:s C#3:s B2:s G#2:s F#2:s A#2:s | B2^:q B2^,:e B2^:e~ -:e A2:e B2:e C#3:e";
+    const drive = ["F#2", "A2", "E2", "B2"].map((x) => `${x}^:e ${x},:e ${x}^:e ${x},:e ${x},:e ${x}^:e ${x},:s ${x},:s ${x}^:e`).join(" | ");
+    const calls = "-:h F#2^:e F#2^:e F#2^:e A2^:e | -:h A2^:e A2^:e A2^:e E2^:e | -:h E2^:e E2^:e E2^:e B2^:e | -:h B2^:e B2^:e A2^:e B2^:e";
+    const stop = "F#2^:w~ | -:w | A2^:w~ | B2^:h~ B2^:e A2^:e E2^:e B2^:e";
+    const solo = "F#5:s G#5:s A5:s C#6:s E6:s C#6:s A5:s G#5:s F#5:s A5:s C#6:s E6:s F#6:q~ | _E6:e C#6:e A5:e E5:e C#5:q~ -:q"
+      + " | -:h -:e B4:e E5:e G#5:e | F#5>G#5:h~ _G#5>F#5:e D#5:e B4:e D#5:e"
+      + " | -:e A5:e C#6:e E6:e E6>F#6:q~ -:q | -:e A5:e B5:e C#6:e E6:e C#6:e B5:e A5:e | G#5:q~ E5:e B4:e G#4:e B4:e E5>F#5:q~ | _F#5>E5:e D#5:e B4:e A4:e B4:h~"
+      + " | F#5:e A5:e C#6:e E6>F#6:e~ -:h | E6:e C#6:e A5:e C#6>E6:e~ -:h | B5:e G#5:e E5:e G#5>A5:e~ -:h | F#5:s A5:s B5:s D#6:s F#6>G#6:q~ -:h"
+      + " | A5:e A5:s B5:s C#6:e C#6:s E6:s F#6:e F#6:s E6:s C#6:e A5:e | C#6:e C#6:s E6:s F#6:e F#6:s E6:s C#6:e E6:e F#6>G#6:q~"
+      + " | _G#6:e E6:e F#6:e B5:e B5:s D#6:s E6:s F#6:s G#6:q | F#6:x D#6:x B5:x F#6:x D#6:x B5:x F#6:x D#6:x B5:x A5:x F#5:x D#5:x F#5:h~"
+      + " | E6:x C#6:x B5:x A5:x B5:x C#6:x E6:x C#6:x B5:x G#5:x A5:x F#5:x E5:x F#5:x A5:x B5:x C#6:x E6:x F#6:q~"
+      + " | E6:s C#6:s E6:s B5:s E6:s A5:s E6:s B5:s E6:s C#6:s E6:s B5:s E6:s A5:s C#6:s E6:s"
+      + " | G#6:s E6:s G#6:s B5:s G#6:s E6:s G#6:s B5:s G#6:s F#6:s G#6:s E6:s G#6:s B5:s E6:s G#6:s"
+      + " | F#6>G#6:q~~ _G#6>F#6:e D#6:e B5:e D#6:e F#6:e G#6:e"
+      + " | _G#6>A6:w~~ | _A6:h~ G#6:e F#6:e E6:e C#6:e | B5:e A5:e F#5:e E5:e C#5:e E5:e F#5>G#5:q~ | _G#5>F#5:e D#5:e B4:e D#5:e F#5:e A5:e B5:e C#6:e";
+    const charge = { kick: "K.....K.K.K.K.K.", snare: "....S.......S...", hat: "H.H.H.H.H.H.H.H." };
+    const charge2 = { kick: "K.....K.K.K.K...", snare: "....S.......S.GG", hat: "H.H.H.H.H.H.H.O." };
+    const spur = { kick: "K.........K...K.", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const spur2 = { kick: "K...K.....K...K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const answer = { kick: "........K.K.K.K.", snare: "........S.S.S.S.", hat: "H.H.H.H........." };
+    const hit = { kick: "K...", cym: "C..." };
+    const parts = {
+      intro: part(8, fingers("F#m F#m A A E E Bsus B", voicing, picking, { contour: [0.6, 1] })),
+      build: part(4, fingers("F#m A E B", voicing, picking, { level: 0.7, contour: [1, 0.4] }), riff(rush, { level: 0.85, contour: [0.6, 1] }),
+        drums(drummer(crash(charge), charge, charge2, toms))),
+      theme: part(8, riff(`${rush} | ${rush}`, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(charge), charge, charge2, toms, crash(charge), charge, charge2, down))),
+      verse: part(4, fingers("F#m A E B", voicing, picking, { level: 0.8 }), lead(theme.split("|").slice(0, 4).join("|"), { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 }),
+        bassline("F#2:w | A1:w | E2:w | B1:h~ -:h", { level: 0.8 })),
+      brk: part(2, drums(drummer({ kick: "K.....K.K.....K.", snare: "....S.......SSSS", hat: "H.H.H.H.H.H....." }, thunder))),
+      solo: part(24, riff(`${drive} | ${drive} | ${calls} | ${drive} | ${drive} | ${stop}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(spur), spur, spur2, toms, spur, spur, spur2, down, answer, answer, answer, answer, crash(spur), spur, spur2, triplets,
+          crash(charge), charge, charge2, thunder, hit, {}, hit, { kick: "K.......K.K.K.K.", snare: "........S.S.S.S.", cym: "C..." }))),
+      end: part(2, riff("F#2^:dh~ -:q | -:w", { level: 0.8 }), fingers("F#m F#m", voicing, ["04231423", "0.4.2.3.1......."], { contour: [0.9, 0.6], lanes: 6 }),
+        drums(drummer(crash({ kick: "K..." }), {}))),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro build theme verse brk solo theme end" });
+  })(),
+  halny: (() => {
+    const bpm = 72;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.06, slide: 0.03, echo: 0.75, tail: "G1" });
+    const voicing = {
+      Am: ["A2", "E3", "A3", "C4", "E4", "A4"], Em: ["E3", "B3", "E4", "G4", "B4", "E5"], F: ["F2", "C3", "F3", "A3", "C4", "F4"],
+      C: ["C3", "G3", "C4", "E4", "G4", "C5"], Dm: ["D3", "A3", "D4", "F4", "A4", "D5"], Bm7b5: ["B2", "F3", "A3", "D4", "F4", "A4"],
+      E7: ["E3", "B3", "D4", "G#4", "B4", "E5"],
+    };
+    const chords = "Am Em F C Dm Am Bm7b5 E7";
+    const picking = ["05432143", "05432.1.4.3.5..."];
+    const theme = "E5:h~ C5:e D5:e E5:q | G5:dq F#5:e E5:h~ | A5:q~ G5:e F5:e C5:q F5:q | E5:dh~ -:e G4:e"
+      + " | A4:q D5:q F5:e E5:e D5:e F5:e | E5:h~ C5:q A4:q | D5:q F5:q~ A5:e G#5:e F5:e D5:e | E5>F5:q~ _F5>E5:e D5:e B4:h~";
+    const toll = "A2^:dh~ C3:s B2:s A2:s G2:s | E2^:dh~ G2:s F#2:s E2:s D2:s | F2^:dh~ A2:s G2:s F2:s E2:s | C3^:h~ C3^,:e C3^,:e B2:e G2:e"
+      + " | D3^:dh~ F3:s E3:s D3:s C3:s | A2^:dh~ C3:s B2:s A2:s G#2:s | B2:q~ F3:e D3:e B2:e F3:e A3:e F3:e | E2^:q~ E2^,:e E2^,:e G#2:e B2:e D3:e G#2:e";
+    const pulse = (x, c = "^") => `${x}${c}:h~ ${x}${c},:e ${x}${c},:e ${x}${c}:q`;
+    const drive = [pulse("A2"), pulse("E2"), pulse("F2"), pulse("C3"), pulse("D3"), pulse("A2"), pulse("B2", ""), pulse("E2")].join(" | ");
+    const held = "A2^:w~ | E2^:w~ | F2^:w~ | C3^:w~ | D3^:w~ | A2^:w~ | B2:w~ | E2^:h~ E2^,:e E2^,:e G#2:e B2:e";
+    const solo = "-:dq C5:e D5>E5:h~ | _E5>D5:e B4:e G4:e B4:e E5:h~ | -:e A5:e G5:e F5:e G5>A5:h~ | _A5>G5:e E5:e C5:e E5:e G5:q~ -:q"
+      + " | -:e D5:e F5:e A5:e C6>D6:h~ | _D6>C6:e A5:e E5:e C5:e E5:q~ -:q | -:e B4:e D5:e F5:e A5:q~ G#5:q | B5>C6:dq~ _C6>B5:e G#5:e E5:e D5:e B4:e"
+      + " | A5:s C6:s E6:s C6:s A5:s E5:s C5:s E5:s A5:s C6:s E6:s G6:s E6:q~ | _D6:s B5:s G5:s E5:s G5:s B5:s D6:s E6:s G6:s E6:s D6:s B5:s G5:q"
+      + " | F5:s A5:s C6:s F6:s E6:s C6:s A5:s G5:s A5:s C6:s E6:s F6:s E6:q~ | _D6:e C6:e G5:e E5:e C5:e E5:e G5:q"
+      + " | A5/D6:q~ C6:e A5:e F5/A5:q~ G5:e F5:e | E5/A5:q~ G5:e E5:e C5/E5:q~ D5:e C5:e | D5/F5:q~ A5:e F5:e D5/F5:q~ B4:e D5:e | E5/G#5:q~ B5:e D6:e E6>F6:h~"
+      + " | _F6>E6:e C6:e A5:e C6:e E6:q~ G6:q | E6>G6:h~ _G6>E6:e D6:e B5:e G5:e | C6:e F6:e E6:e C6:e E6>F6:h~ | _F6>E6:e C6:e G5:e C6:e E6:q~ G6:q"
+      + " | _G6>A6:w~~ | _A6>G6:e E6:e C6:e A5:e E6:e C6:e A5:e E5:e | F5:e A5:e D6:e F6:e E6>F6:q~ _F6>E6:e D6:e | B5>C6:q~ _C6>B5:e G#5:e E5:e D5:e B4:q";
+    const lean = { kick: "K.......K.......", snare: "........S.......", ride: "Y...Y...Y...Y..." };
+    const sway = { kick: "K.......K.K.....", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const sway2 = { kick: "K.......K.K...K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const parts = {
+      intro: part(8, fingers(chords, voicing, picking, { contour: [0.6, 1] })),
+      verse: part(8, fingers(chords, voicing, picking, { level: 0.8 }), lead(theme, { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 }),
+        bassline("A2:w | E2:w | F2:w | C2:w | D2:w | A1:w | B1:w | E2:h~ -:h", { level: 0.8, contour: [0.5, 1] }),
+        drums(drummer(times(7, {}), { kick: "........K.......", tom: "....T...M...F.F." }))),
+      build: part(4, fingers(chords, voicing, picking, { level: 0.7, contour: [1, 0.4] }), riff(toll.split("|").slice(0, 4).join("|"), { level: 0.85, contour: [0.6, 1] }),
+        drums(drummer(crash(lean), lean, lean, toms))),
+      theme: part(8, riff(toll, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(rock), rock, rock2, toms, crash(rock), rock, rock2, down))),
+      solo: part(24, riff(`${drive} | ${drive} | ${held}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(sway), sway, sway2, sway, sway, sway, sway2, down, crash(sway), sway, sway2, toms, sway, sway, sway2, triplets,
+          crash(ride), ride, ride2, ride, crash(ride), ride, ride2, thunder))),
+      outro: part(4, riff("A2^:w~ | F2^:w~ | E2^:w~ | A2^:w~", { level: 0.8 }), lead("C6:h~ B5:e G#5:e E5:q | F5:dh~ E5:q | D5:e B4:e G#4:e B4:e E5:h~ | A4:w~~", { level: 0.9 }),
+        drums(drummer(crash(rock), rock, { kick: "K.......K...K...", tom: "........TTMMFFFF" }, crash({ kick: "K..." })))),
+      end: part(2, fingers("Am Am", voicing, ["05432143", "0.5.4.3.2.1....."], { contour: [0.9, 0.6], lanes: 6 })),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo outro end" });
+  })(),
+  sundowner: (() => {
+    const bpm = 76;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.055, slide: 0.03, echo: 0.75, tail: "G1" });
+    const voicing = {
+      Fmaj7: ["F2", "C3", "E3", "A3", "C4", "E4"], Em7: ["E3", "B3", "D4", "G4", "B4", "D5"], Dm7: ["D3", "A3", "D4", "F4", "A4", "C5"],
+      C: ["C3", "G3", "C4", "E4", "G4", "C5"], G7sus: ["G2", "D3", "F3", "C4", "D4", "G4"],
+    };
+    const picking = ["03524135", "0.3.5.24..1.3.5."];
+    const theme = "C5:e E5:e A5:q~ G5:e E5:e C5:q | B4:q~ D5:e E5:e G5:h~ | F5:q A5:q~ G5:e F5:e D5:q | E5:h~ -:e C5:e D5:e E5:e"
+      + " | A5:q C6:q~ B5:e A5:e G5:q | G5:e B5:e E6:q~ D6:e B5:e G5:q | A5:e F5:e D5:e F5:e A5:e C6:e D6>E6:q~ | _E6>D6:e C6:e G5:e E5:e C5:h~";
+    const sun = "F2^:e F2^,:e F2^:e~ -:e A2:e C3:e -:e E2^:e~ | -:e E2^,:e E2^:e~ -:e G2:e B2:e -:e D3^:e~"
+      + " | -:e D3^,:e D3^:e~ -:e F3:e A3:e -:e C3^:e~ | -:e C3^,:e C3^:e~ -:e E3:e G3:e E3:e D3:e";
+    const drive = [["F2", "G2"], ["G2", "E2"], ["E2", "A2"], ["A2", "F2"]].map(([x, y]) => `-:e ${x},:e ${x},:e ${x},:e ${x}^:e~ -:e ${x},:e ${y}^:e~`).join(" | ");
+    const held = "-:q F2^:dh~ | G2^:w~ | C3^:w~ | C3^:h~ C3^:e G2:e E2:e G2:e";
+    const solo = "-:q A5:e G5:e Eb5>E5:q~ C5:q | D5:e B4:e D5:e G5:e F5>G5:h~ | -:e E5:e G5:e B5:e A5>B5:q~ G5:q | E5:e C5:e A4:e C5:e E5:h~"
+      + " | -:e C6:e A5:e F5:e A5/C6:q~ -:q | B5:e D6:e B5:e G5:e D5:q~ -:q | -:e G4:e A4:e B4:e D5:e E5:e G5:e E5:e | D5>E5:q~ _E5>D5:e C5:e A4:h~"
+      + " | A5:s C6:s D6:s C6:s Eb6>E6:q~ _E6>D6:s C6:s A5:s G5:s A5:q | G5:s A5:s B5:s A5:s D6>E6:q~ _E6>D6:s B5:s G5:s D5:s G5:q"
+      + " | E5:s G5:s B5:s G5:s D6>E6:q~ _E6>D6:s B5:s G5:s E5:s G5:q | A5:x C6:x E6:x C6:x A5:x E5:x A5:x C6:x E6:x G6:x E6:x C6:x A5:h~"
+      + ` | ${times(3, "C6/D6:e C6:s A5:s").join(" ")} F5:q | ${times(3, "D6/E6:e D6:s B5:s").join(" ")} G5:q | ${times(3, "E6/G6:e E6:s B5:s").join(" ")} G5:q`
+      + " | A5:e C6:e E6:e G6:e E6>G6:h~"
+      + " | _G6>A6:w~~ | _A6>G6:e D6:e B5:e G5:e B5:e D6:e E6:e G6:e | E6:q~ C6:e G5:e E5:e G5:e C6:e E6:e | D6>E6:q~ _E6>D6:e C6:e A5:e G5:e E5:e C5:e";
+    const lazy = { snare: 0.028, hat: 0.01, tom: 0.012 };
+    const glow = { kick: "K.........K...K.", snare: "....S.......S...", hat: "H.H.H.H.H.H.H.H." };
+    const glow2 = { kick: "K.K.......K...K.", snare: "....S.......S..G", hat: "H.H.H.H.H.H.H.O." };
+    const dusk = { kick: "K.......K.....K.", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const dusk2 = { kick: "K.......K.K...K.", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const half = { kick: "K.......K.......", snare: "........S.......", hat: "H.h.H.h.H.h.H.h." };
+    const clean = { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 };
+    const parts = {
+      intro: part(4, fingers("Fmaj7 Em7 Dm7 G7sus", voicing, picking, { contour: [0.6, 1] })),
+      verse: part(8, fingers("Fmaj7 Em7 Dm7 C", voicing, picking, { level: 0.8 }), lead(theme, clean),
+        bassline("F2:w | E2:w | D2:w | C2:w | F2:w | E2:w | D2:w | C2:h~ -:h", { level: 0.8, contour: [0.5, 1] }),
+        drums(drummer(times(7, {}), { kick: "K.......K.....K.", tom: "........TTMM.FF." }), { late: lazy })),
+      build: part(4, fingers("Fmaj7 Em7 Dm7 C", voicing, picking, { level: 0.7, contour: [1, 0.4] }), riff(sun, { level: 0.85, contour: [0.6, 1] }),
+        drums(drummer(crash(half), half, half, toms), { late: lazy })),
+      theme: part(8, riff(`${sun} | ${sun}`, { level: 0.85 }), lead(theme, { level: 0.9 }),
+        drums(drummer(crash(glow), glow, glow2, toms, crash(glow), glow, glow2, down), { late: lazy })),
+      solo: part(20, riff(`${drive.replace("-:e", "F2^:e~")} | ${drive} | ${drive} | ${drive} | ${held}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(dusk), dusk, dusk2, toms, dusk, dusk, dusk2, down, crash(dusk), dusk, dusk2, triplets, crash(dusk), dusk, dusk2, thunder,
+          crash(ride), ride, ride2, down), { late: lazy })),
+      dusk: part(8, riff(`${sun} | ${sun}`, { level: 0.6 }), lead(theme, clean),
+        drums(drummer(crash(glow), glow, glow2, glow, glow, glow, glow2, { kick: "K.......K.......", snare: "........S.......", cym: "C..." }), { level: 0.7, late: lazy })),
+      end: part(2, fingers("C C", voicing, ["03524135", "0.3.5.2........."], { contour: [0.9, 0.6], lanes: 6 })),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo dusk end" });
+  })(),
+  shamal: (() => {
+    const bpm = 82;
+    const { lead, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
+    const voicing = {
+      Gm9: ["G2", "D3", "F3", "Bb3", "D4", "A4"], Gm: ["G2", "D3", "G3", "Bb3", "D4", "G4"], Cm: ["C3", "G3", "C4", "Eb4", "G4", "C5"],
+      Eb: ["Eb3", "Bb3", "Eb4", "G4", "Bb4", "Eb5"], D: ["D3", "A3", "D4", "F#4", "A4", "D5"],
+    };
+    const picking = ["03241354", "0.3.2.4.1.354.3."];
+    const dust = "G2^:e G2,:s G2,:s Bb2:s C3:s D3:e~ -:s F3:s D3:s C3:s Bb2:e A2:e | C3^:e C3,:s C3,:s Eb3:s F3:s G3:e~ -:s Bb3:s G3:s F3:s Eb3:e D3:e"
+      + " | Eb3^:e Eb3,:s Eb3,:s G3:s F3:s Eb3:e~ -:s D3:s C3:s Bb2:s C3:e D3:e | D3^:q~ D3^,:e D3^,:e F#2:e A2:e C3:e A2:e";
+    const figure = transpose(dust.replace(/[\^,]/g, ""), 12);
+    const theme = "D5:q G5:e A5:e Bb5:q~ A5:e G5:e | Eb5:dq D5:e C5:q G4:q | Bb4:e Eb5:e G5:e Bb5:e Ab5:q~ G5:e Eb5:e | F#5:h~ A5:q D5:q"
+      + " | G5:q Bb5:e C6:e D6:q~ C6:e Bb5:e | C6:dq Bb5:e G5:q Eb5:q | F5:e G5:e Bb5:e G5:e F5:e Eb5:e Bb4>C5:q~ | _C5>Bb4:e A4:e F#4:e A4:e D5:h~";
+    const answers = "-:h -:e G5:e Bb5:e C6:e | Db6>D6:q~ _D6>C6:e Bb5:e G5:h | -:h -:e Eb5:e G5:e Bb5:e | A5:q~ F#5:e D5:e -:h";
+    const drive = ["G2", "C3", "Eb3", "D3"].map((x) => `${x}^:de ${x}^:de ${x},:de ${x},:de ${x}^:q`).join(" | ");
+    const pound = "G2^:q G2^:q G2^:q G2^:q | C3^:q C3^:q C3^:q C3^:q | Eb3^:q Eb3^:q Eb3^:q Eb3^:q | D3^:q D3^:q D3^:e D3^:e D3^:e D3^:e";
+    const solo = "G4:q~ Bb4:e C5:e Db5>D5:q~ -:q | C5:e Bb4:e G4:e Bb4:e C5:h~ | -:e Eb5:e G5:e Bb5:e Ab5>Bb5:q~ G5:q | F#5:e A5:e F#5:e D5:e C5:e A4:e D5:q~"
+      + " | -:e D6:e Bb5:e G5:e C6>D6:h~ | _D6>C6:e Bb5:e G5:e Eb5:e C5:h~ | -:e G4:e Bb4:e C5:e Eb5:e F5:e G5:e Bb5:e | A5>Bb5:q~ _Bb5>A5:e F#5:e D5:h~"
+      + " | D5:s G5:s C6:s G5:s F5:s Bb5:s Eb6:s Bb5:s G5:s C6:s F6:s C6:s Bb5:s Eb6:s G6:s Eb6:s | F6:q~ Eb6:e C6:e G5:e Eb5:e C5:q"
+      + " | G5:x Bb5:x Eb6:x Bb5:x G5:x Eb5:x G5:x Bb5:x C6:x Eb6:x C6:x Bb5:x Eb6:h~ | D6:s A5:s F#5:s A5:s C6:s A5:s F#5:s D5:s F#5:q~ A5:q"
+      + ` | ${times(4, "D6:s Db6:s C6:s Bb5:s").join(" ")} | ${times(4, "G6:s Gb6:s F6:s Eb6:s").join(" ")}`
+      + " | Eb6>F6:q~~ _F6>Eb6:e C6:e Bb5:e G5:e Bb5:q | A5:s C6:s D6:s F#6:s A6:q~ _G6:s F#6:s D6:s C6:s A5:q"
+      + " | Bb5:e D6:e G6:e F6:e D6:e Bb5:e G5:q | C6:e Eb6:e G6:e Eb6:e C6:e G5:e Eb5:q"
+      + " | Eb6:x G6:x Bb6:x G6:x Eb6:x Bb5:x Eb6:x G6:x Bb6:x G6:x Eb6:x Bb5:x Eb6:h~ | D6:e F#6:e A6:e F#6:e C6:e A5:e F#6>G6:q~"
+      + " | _G6>Bb6:w~~ | _Bb6>G6:e Eb6:e C6:e G5:e Eb6:e C6:e G5:e Eb5:e | Bb5:e G5:e Eb5:e G5:e Bb5:e C6:e D6>Eb6:q~ | _Eb6>D6:e C6:e A5:e F#5:e D5:e A4:e D5:q";
+    const devil = { kick: "K.KK..K.........", snare: "....S.......S...", hat: "H.H.H.H.H.H.H.H." };
+    const devil2 = { kick: "K.KK..K.....K...", snare: "....S.......S..G", hat: "H.H.H.H.H.H.H.O." };
+    const haze = { kick: "K..K........K...", snare: "....S.......S...", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const haze2 = { kick: "K..K......K.K...", snare: "....S.......S..G", ride: "Y.Y.Y.Y.Y.Y.Y.Y." };
+    const stomp = { kick: "K...K...K...K...", snare: "....S.......S...", hat: "O...O...O...O..." };
+    const parts = {
+      intro: part(8, fingers("Gm9 Gm9 Cm Cm Gm Cm Eb D", voicing, picking, { contour: [0.6, 1] }),
+        lead(`${times(4, "-:w").join(" | ")} | ${figure}`, { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 })),
+      storm: part(4, riff(dust, { level: 0.9 }), drums(drummer(crash(devil), devil, devil2, toms))),
+      theme: part(8, riff(`${dust} | ${dust}`, { level: 0.85 }), lead(theme, { level: 0.9 }), drums(drummer(crash(devil), devil, devil2, toms, crash(devil), devil, devil2, down))),
+      storm2: part(4, riff(dust, { level: 0.9 }), lead(answers, { level: 0.85 }), drums(drummer(crash(devil), devil, devil2, triplets))),
+      solo: part(24, riff(`${drive} | ${drive} | ${drive} | ${drive} | ${dust} | ${pound}`, { level: 0.8 }), lead(solo, { contour: [0.85, 0.95, 1.05, 1] }),
+        drums(drummer(crash(haze), haze, haze2, toms, haze, haze, haze2, down, crash(haze), haze, haze2, triplets, crash(haze), haze, haze2, toms,
+          crash(devil), devil, devil2, thunder, crash(stomp), stomp, crash(stomp), { kick: "K...K...K.K.K.K.", snare: "....S...S.S.SSSS" }))),
+      end: part(2, riff("G2^:dh~ -:q | -:w", { level: 0.8 }), fingers("Gm9 Gm9", voicing, ["03241354", "0.3.2.4.1......."], { contour: [0.9, 0.6], lanes: 6 }),
+        drums(drummer(crash({ kick: "K..." }), {}))),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro storm theme storm2 solo storm end" });
+  })(),
+  williwaw: (() => {
+    const bpm = 86;
+    const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.045, slide: 0.022, echo: 0.75, tail: "G1" });
+    const voicing = {
+      "C#m": ["C#3", "G#3", "B3", "E4", "G#4", "C#5"], E: ["E3", "B3", "E4", "G#4", "B4", "E5"], "F#": ["F#2", "C#3", "F#3", "A#3", "C#4", "F#4"],
+      A: ["A2", "E3", "A3", "C#4", "E4", "A4"], "G#7": ["G#2", "D#3", "F#3", "C4", "D#4", "G#4"],
+    };
+    const chords = "C#m E F# A";
+    const picking = ["02453421", "02453.4.2.1.3.5."];
+    const theme = "G#4:q C#5:q E5:e D#5:e C#5:e B4:e | E5:q~ B4:e G#4:e B4:h~ | A#4:q C#5:e F#5:e A#5:q~ G#5:e F#5:e | E5:h~ C#5:q A4:q"
+      + " | G#5:q~ E5:e C#5:e E5:e G#5:e B5:q | B5:e G#5:e E5:e B4:e E5:h~ | F#5:e A#5:e C#6:e A#5:e G#5:q F#5:q | E5>F#5:q~ _F#5>E5:e C#5:e G#4:h~";
+    const blast = "C#3^:h~ C#3^:e~ -:e C#3,:s C#3,:s C#3,:s C#3,:s | E2^:h~ E2^:e~ -:e E2,:s E2,:s E2,:s E2,:s"
+      + " | F#2^:h~ F#2^:e~ -:e F#2,:s F#2,:s F#2,:s F#2,:s | A2^:h~ A2^:e~ -:e A2,:s A2,:s B2,:s B2,:s";
+    const drive = ["C#3", "E2", "F#2", "A2"].map((x) => `${x}^:e ${x},:e ${x}^:e ${x},:e ${x}^:e ${x},:e ${x},:s ${x},:s ${x},:s ${x},:s`).join(" | ");
+    const calm = "-:q C#5:q~ E5:e D#5:e C#5:q | B4:h~ -:e G#4:e B4:e E5:e | F#5:dq E5:e C#5:e A#4:e C#5:q | E5:e C#5:e B4:e A4:e B4:h~"
+      + " | -:e E5:e G#5:e B5:e C#6:q~ B5:q | G#5:e E5:e B4:e E5:e G#5:h~ | A#5:q~ G#5:e F#5:e C#5:e F#5:e A#5:e C#6:e | B5:q~ A5:e E5:e C#5:q -:q";
+    const fierce = "B5>C#6:h~~ _C#6>B5:e G#5:e E5:e G#5:e | B5:s G#5:s E5:s G#5:s B5:s E6:s B5:s G#5:s B5:s E6:s G#6:s E6:s B5:q~"
+      + " | C#6:e A#5:e F#5:e A#5:e C#6:e F#6:e E6>F#6:q~ | _F#6>E6:e C#6:e B5:e A5:e E5:e A5:e C#6:q"
+      + " | E6:x D#6:x C#6:x G#5:x C#6:x D#6:x E6:x D#6:x C#6:x G#5:x E5:x C#5:x E5:h~ | -:e B5:e E6:e G#6:e F#6>G#6:q~ E6:q"
+      + " | A#5:s C#6:s E6:s F#6:s F#6>G#6:h~ _G#6>F#6:e C#6:e | E6:s C#6:s A5:s C#6:s E6:s A6:s E6:s C#6:s E6:s G#6:s E6:s G#6:s A6:q~"
+      + " | G#6:e~ -:s G#6:s E6:s C#6:s G#6:e~ -:s G#6:s E6:s C#6:s G#6:q | G#6:e~ -:s G#6:s E6:s B5:s G#6:e~ -:s G#6:s E6:s B5:s E6:q"
+      + " | A#6:e~ -:s A#6:s F#6:s C#6:s A#6:e~ -:s A#6:s F#6:s C#6:s F#6:q | A6:x G#6:x E6:x C#6:x E6:x G#6:x A6:x G#6:x E6:x C#6:x E6:x G#6:x A6:h~"
+      + " | _A6>B6:w~~ | _B6>A6:e G#6:e E6:e B5:e G#5:e B5:e E6:e G#6:e | F#6:e C#6:e A#5:e F#5:e A#5:e C#6:e E6>F#6:q~ | _F#6:e E6:e C#6:e B5:e G#5:e E5:e C#5:e B4:e";
+    const rest = (bars) => times(bars, "-:w").join(" | ");
+    const gust = { kick: "K.......K.......", snare: "....S.......gGGS", hat: "O...O...O......." };
+    const gust2 = { kick: "K.....K.K.......", snare: "....S.......gGGS", hat: "O...O...O......." };
+    const roll = { kick: "K.......K.....K.", snare: "....S...g.g.GGGS" };
+    const rush = { kick: "K...K...K.......", snare: "....S.......gGGS", ride: "Y.Y.Y.Y.Y.Y....." };
+    const rush2 = { kick: "K...K...K.K.....", snare: "....S.......gGGS", ride: "Y.Y.Y.Y.Y.Y....." };
+    const hush = { kick: "K.......K.......", ride: "Y...Y...Y...Y..." };
+    const clean = { wave: "triangle", level: 1.05, pick: 1.1, share: 0.35 };
+    const parts = {
+      intro: part(8, fingers("C#m C#m E E F# F# A G#7", voicing, picking, { contour: [0.6, 1] })),
+      verse: part(8, fingers(chords, voicing, picking, { level: 0.8 }), lead(theme, clean),
+        bassline("C#2:w | E2:w | F#2:w | A1:w | C#2:w | E2:w | F#2:w | A1:h~ -:h", { level: 0.8, contour: [0.5, 1] })),
+      blast: part(8, riff(`${blast} | ${blast}`, { level: 0.9 }), lead(theme, { level: 0.9 }), drums(drummer(crash(gust), gust, gust2, gust, crash(gust), gust, gust2, roll))),
+      solo: part(24, fingers(`${chords} ${chords} ${times(16, "-").join(" ")}`, voicing, picking, { level: 0.8 }),
+        bassline(`C#2:w | E2:w | F#2:w | A1:w | C#2:w | E2:w | F#2:w | A1:h~ -:h | ${rest(16)}`, { level: 0.8 }),
+        riff(`${rest(8)} | ${drive} | ${drive} | ${drive} | ${blast}`, { level: 0.8 }),
+        lead(`${calm} | ${rest(16)}`, clean), lead(`${rest(8)} | ${fierce}`, { contour: [1, 1, 1, 0.9, 1, 1.05, 1.05, 1] }),
+        drums(drummer(times(7, hush), { kick: "K...", ride: "Y...Y...Y......." }, times(16, {})), { level: 0.6 }),
+        drums(drummer(times(8, {}), crash(rush), rush, rush2, toms, crash(rush), rush, rush2, triplets, crash(rush), rush, rush2, down, crash(gust), gust, gust2, roll))),
+      end: part(2, riff("C#3^:q~ -:dh | -:w", { level: 0.8 }), fingers("C#m C#m", voicing, ["02453421", "0.2.4.5.3......."], { contour: [0.9, 0.6], lanes: 6 }),
+        drums(drummer(crash({ kick: "K..." }), {}))),
+    };
+    return record({ voices: { ...band, ...strings }, parts, form: "intro verse blast solo blast end" });
   })(),
 };

@@ -47,6 +47,14 @@ export const catalog = [
       albedo: "Albedo", umbra: "Umbra", lagrange: "Lagrange", redshift: "Redshift", nadir: "Nadir",
     },
   },
+  {
+    style: "Classic Rock",
+    icon: "ti-guitar-pick", color: "red",
+    songs: {
+      chinook: "Chinook", bora: "Bora", meltemi: "Meltemi", khamsin: "Khamsin", tramontane: "Tramontane",
+      zonda: "Zonda", halny: "Halny", sundowner: "Sundowner", shamal: "Shamal", williwaw: "Williwaw",
+    },
+  },
 ];
 
 const titles = Object.assign({}, ...catalog.map((shelf) => shelf.songs));
