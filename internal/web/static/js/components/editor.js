@@ -195,6 +195,7 @@ async function init(root) {
   const revdiffCloseBtn = root.querySelector("[data-editor-revdiff-close]");
   const revdiffGroupBtn = root.querySelector("[data-editor-revdiff-group]");
   const revdiffModeEl = root.querySelector("[data-editor-revdiff-mode]");
+  const revdiffResetBtn = root.querySelector("[data-editor-revdiff-reset]");
   const revdiffListEl = root.querySelector("[data-editor-revdiff-list]");
   const revdiffFilterEl = root.querySelector("[data-editor-revdiff-filter]");
   const revdiffFilterCountEl = root.querySelector("[data-editor-revdiff-filter-count]");
@@ -3567,7 +3568,9 @@ async function init(root) {
   const revdiffPair = readRevdiffPair();
 
   // A device that never picked a pair starts on the working copy, a stored
-  // pair stays what it was.
+  // pair stays what it was. An empty side is never written back with the
+  // name it resolved to: it asks for the repository's suggestion on every
+  // load, so a new tag or another branch moves it.
   function readRevdiffPair() {
     const saved = store.getJSON(revdiffKey, null);
     return {
@@ -3581,6 +3584,8 @@ async function init(root) {
   function storeRevdiffPair() {
     store.setJSON(revdiffKey, revdiffPair);
   }
+
+  const revdiffSuggested = () => !revdiffPair.from && !revdiffPair.to && revdiffPair.worktree && revdiffPair.mode === "since";
 
   const revdiffList = changeList({
     listEl: revdiffListEl,
@@ -3602,9 +3607,9 @@ async function init(root) {
       const el = document.createElement("div");
       el.className = "text-secondary small p-3";
       if (revdiffLoading || !revdiffAnswer || revdiffErrorEl.hidden === false) return el;
-      const from = revdiffPair.from;
+      const from = revdiffAnswer.from.name;
       const worktree = revdiffAnswer.worktree;
-      const to = worktree ? "the working copy" : revdiffPair.to;
+      const to = worktree ? "the working copy" : revdiffAnswer.to.name;
       const line = document.createElement("div");
       if (query !== "") {
         line.textContent = `No change matches "${query}".`;
@@ -3661,6 +3666,7 @@ async function init(root) {
     revdiffModeEl.options[1].textContent = `${a}..${b}`;
     revdiffModeEl.value = revdiffPair.mode;
     revdiffModeEl.title = revdiffModeEl.options[revdiffModeEl.selectedIndex].textContent;
+    revdiffResetBtn.hidden = revdiffSuggested();
   }
 
   function syncRevdiffControls() {
@@ -3725,11 +3731,6 @@ async function init(root) {
     const same = !!revdiffAnswer && revdiffAnswer.base === data.base && revdiffAnswer.to.sha === data.to.sha
       && revdiffAnswer.since === data.since && !!revdiffAnswer.worktree === !!data.worktree;
     revdiffAnswer = data;
-    revdiffPair.from = data.from.name;
-    revdiffPair.to = data.worktree ? "" : data.to.name;
-    revdiffPair.worktree = !!data.worktree;
-    revdiffPair.mode = data.since ? "since" : "direct";
-    storeRevdiffPair();
     let added = 0;
     let removed = 0;
     for (const entry of data.files || []) {
@@ -3772,8 +3773,8 @@ async function init(root) {
   // compares again instead of keeping the pair it had.
   function openRevdiffAt(from, to) {
     revdiffPair.from = from || "";
-    revdiffPair.to = to || "";
-    revdiffPair.worktree = false;
+    revdiffPair.worktree = to === WORKTREE_PICK;
+    revdiffPair.to = to === WORKTREE_PICK ? "" : to || "";
     storeRevdiffPair();
     if (revdiffOn) {
       paintRevdiffHead();
@@ -3798,7 +3799,10 @@ async function init(root) {
     else openRevdiff();
   }
 
+  // A pick ends the suggestion for both sides, the left one keeps the name
+  // it resolved to instead of moving under a right side somebody chose.
   function setRevdiffSide(side, rev) {
+    if (!revdiffPair.from && revdiffAnswer) revdiffPair.from = revdiffAnswer.from.name;
     if (side === "to") revdiffPair.worktree = rev === WORKTREE_PICK;
     revdiffPair[side] = rev === WORKTREE_PICK ? "" : rev;
     storeRevdiffPair();
@@ -3997,6 +4001,16 @@ async function init(root) {
     storeRevdiffPair();
     paintRevdiffHead();
     void loadRevdiff();
+  }, { signal });
+  // The answer on the screen belongs to the pair being left, so the head
+  // names nothing of it until the suggestion answers.
+  revdiffResetBtn.addEventListener("click", () => {
+    store.remove(revdiffKey);
+    Object.assign(revdiffPair, readRevdiffPair());
+    revdiffAnswer = null;
+    paintRevdiffHead();
+    void loadRevdiff();
+    if (pointerMedia.matches) revdiffFilterEl.focus();
   }, { signal });
   revdiffToggleBtn.addEventListener("click", toggleRevdiff, { signal });
   revdiffCloseBtn.addEventListener("click", closeRevdiff, { signal });
@@ -4264,9 +4278,10 @@ async function init(root) {
   // it belongs to: the history keeps standing where it was scrolled to, which
   // a drilled sheet level could not do, it renders itself and its Back put
   // the reader back at the top of a freshly loaded list.
-  // diffItem and hashItem are the two entries a commit carries wherever it is
-  // offered, the history's cells and a line's menu: the file diffed against
-  // the commit, read under the path it had there, and the hash.
+  // diffItem, compareItems and hashItem are the entries a commit carries
+  // wherever it is offered, the history's cells and a line's menu: the file
+  // diffed against the commit, read under the path it had there, the revision
+  // comparison of the commit, and the hash.
   function diffItem(path, commit, label, from = "") {
     return {
       label: path ? label : "Show the diff",
@@ -4283,11 +4298,25 @@ async function init(root) {
     return { label: "Copy the hash", icon: "ti-copy", action: () => void copyHash(commit.sha) };
   }
 
+  // A root commit has no parent, and an empty side would take the panel's
+  // own suggestion instead.
+  function compareItems(commit) {
+    const compare = (from, to) => () => {
+      closeSheet();
+      openRevdiffAt(from, to);
+    };
+    return [
+      { label: "Compare with its parent", icon: "ti-git-compare", disabled: !commit.parent, action: compare(commit.parent, commit.sha) },
+      { label: "Compare with the working copy", icon: "ti-file-pencil", action: compare(commit.sha, WORKTREE_PICK) },
+    ];
+  }
+
   function commitMenuItems(commit, path, paintChips) {
     const diffTab = path ? null : activeTab();
     const diffPath = path || (diffTab && !diffTab.kind && !diffTab.compare && !diffTab.external ? diffTab.path : "");
     const items = [
       diffItem(diffPath, commit, `Diff ${baseName(diffPath)} against this`),
+      ...compareItems(commit),
       hashItem(commit),
       { divider: true },
       can("git-local") && { label: "Tag this commit", icon: "ti-tag", action: () => void tagDialog(commit, paintChips) },
@@ -5778,11 +5807,12 @@ async function init(root) {
   // commitGroup is what the line's commit can do, read off the blame gutter:
   // headed by the commit, the file against it, what the commit changed in the
   // file (the file at the commit's first parent against the commit), the
-  // revision comparison started on that pair, the file's history and the
-  // hash. The two entries that need a parent are dead for a root commit. A
-  // file blame followed through a rename is read under the path it had in
-  // that commit, and the parent side under the one it had before. A line
-  // without a commit, the gutter off or the line uncommitted, gets none of it.
+  // revision comparison with that parent or with the working copy, the file's
+  // history and the hash. The two entries that need a parent are dead for a
+  // root commit. A file blame followed through a rename is read under the path
+  // it had in that commit, and the parent side under the one it had before. A
+  // line without a commit, the gutter off or the line uncommitted, gets none
+  // of it.
   function commitGroup(tab, line) {
     const commit = editor.blameAt ? editor.blameAt(line) : null;
     if (!commit) return [];
@@ -5810,7 +5840,7 @@ async function init(root) {
           rightLabel: commit.short,
         }),
       },
-      { label: "Compare", icon: "ti-git-compare", disabled: !commit.parent, action: () => openRevdiffAt(commit.parent, commit.sha) },
+      ...compareItems(commit),
       { label: "File history", icon: "ti-history", action: () => openFileHistory(tab.path) },
       hashItem(commit),
     ];

@@ -11,8 +11,11 @@ import (
 // shape. NUL between the fields, because a subject may hold anything but a
 // newline, and the subject stays last for the same reason. The ref names ride
 // along (%D), which is where the tags come from: asking git for the tags of a
-// page of commits separately would be a second call and a second moment.
-const commitFormat = "--format=%H%x00%an%x00%at%x00%D%x00%s"
+// page of commits separately would be a second call and a second moment. The
+// parents (%P) are the commit's own, also in a history of one file, which
+// rewrites no parent without --parents, so the first one is what the commit
+// changed against.
+const commitFormat = "--format=%H%x00%P%x00%an%x00%at%x00%D%x00%s"
 
 // parseCommits reads what commitFormat wrote, one commit per line.
 func parseCommits(out []byte) []Commit {
@@ -21,12 +24,15 @@ func parseCommits(out []byte) []Commit {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\x00", 5)
-		if len(parts) < 5 {
+		parts := strings.SplitN(line, "\x00", 6)
+		if len(parts) < 6 {
 			continue
 		}
-		commit := Commit{SHA: parts[0], Short: shortSHA(parts[0]), Author: parts[1], Summary: parts[4], Tags: parseTags(parts[3])}
-		commit.Time, _ = strconv.ParseInt(parts[2], 10, 64)
+		commit := Commit{SHA: parts[0], Short: shortSHA(parts[0]), Author: parts[2], Summary: parts[5], Tags: parseTags(parts[4])}
+		if parents := strings.Fields(parts[1]); len(parents) > 0 {
+			commit.Parent = parents[0]
+		}
+		commit.Time, _ = strconv.ParseInt(parts[3], 10, 64)
 		commits = append(commits, commit)
 	}
 	return commits

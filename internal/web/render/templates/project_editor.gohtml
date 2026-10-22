@@ -117,10 +117,15 @@
               <span class="text-truncate" data-editor-revdiff-name="to">…</span>
             </button>
           </div>
-          <select class="form-select form-select-sm" data-editor-revdiff-mode aria-label="What to compare">
-            <option value="since">What the branch changed since it split</option>
-            <option value="direct">Everything that differs between the two</option>
-          </select>
+          <div class="d-flex align-items-center gap-1">
+            <select class="form-select form-select-sm flex-fill min-w-0" data-editor-revdiff-mode aria-label="What to compare">
+              <option value="since">What the branch changed since it split</option>
+              <option value="direct">Everything that differs between the two</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-ghost-secondary p-1 flex-shrink-0" data-editor-revdiff-reset aria-label="Back to the suggested pair" title="Back to the suggested pair" hidden>
+              <i class="ti ti-restore"></i>
+            </button>
+          </div>
         </div>
         <div class="editor-commit-filter" data-editor-revdiff-filter-row>
           <i class="ti ti-search" aria-hidden="true"></i>

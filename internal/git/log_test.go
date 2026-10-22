@@ -83,3 +83,32 @@ func TestLogWithoutRepositoryOrCommitIsEmptyAndNoError(t *testing.T) {
 		t.Fatalf("unborn: %+v %v", unborn, err)
 	}
 }
+
+// A history names each commit's own first parent, also where it lists one
+// file and a commit between them touched another, and the root commit none.
+func TestLogNamesEachCommitsOwnFirstParent(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	for _, step := range []struct{ file, message string }{{"a.txt", "root"}, {"b.txt", "only b"}, {"a.txt", "a again"}} {
+		writeAt(t, dir, step.file, step.message+"\n")
+		runGit(t, dir, "add", "-A")
+		runGit(t, dir, "commit", "-qm", step.message)
+	}
+
+	all, err := New(dir).Log(context.Background(), "", 0, 10)
+	if err != nil || len(all.Commits) != 3 {
+		t.Fatalf("log: %+v %v", all, err)
+	}
+	again, onlyB, root := all.Commits[0], all.Commits[1], all.Commits[2]
+	if root.Parent != "" || onlyB.Parent != root.SHA || again.Parent != onlyB.SHA {
+		t.Fatalf("parents: %+v", all.Commits)
+	}
+
+	file, err := New(dir).Log(context.Background(), "a.txt", 0, 10)
+	if err != nil || len(file.Commits) != 2 {
+		t.Fatalf("log: %+v %v", file, err)
+	}
+	if file.Commits[0].Parent != onlyB.SHA || file.Commits[1].Parent != "" {
+		t.Fatalf("file history parents: %+v", file.Commits)
+	}
+}

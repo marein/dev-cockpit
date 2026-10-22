@@ -4025,7 +4025,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       return "wide: side by side, inline on the setting and back at once, read only in both, both revisions named in both";
     });
 
-    await run("compare: Tab walks from, to, the question, the filter and the list in order both ways, the rows stay the arrows' business, in the commit view too", async () => {
+    await run("compare: Tab walks from, to, the question, the reset off the suggested pair, the filter and the list in order both ways, the rows stay the arrows' business, in the commit view too", async () => {
       await openEditor(page);
       await diffReady(page);
       await closeRevdiffTabs(page);
@@ -4046,8 +4046,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         return seen;
       };
       await page.focus('[data-editor-revdiff-pick="from"]');
-      const forward = await walk("Tab", 4);
-      assert(JSON.stringify(forward) === JSON.stringify(["revdiff-pick=to", "revdiff-mode", "revdiff-filter", "revdiff-list"]),
+      const forward = await walk("Tab", 5);
+      assert(JSON.stringify(forward) === JSON.stringify(["revdiff-pick=to", "revdiff-mode", "revdiff-reset", "revdiff-filter", "revdiff-list"]),
         `Tab walks ${JSON.stringify(forward)}`);
       const ring = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
       assert(ring !== "none", "the list carries no visible focus");
@@ -4058,8 +4058,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         `Tab from a row stayed inside the list, on ${await focused()}`);
       await page.keyboard.press("Shift+Tab");
       assert(await focused() === "revdiff-list", `Shift+Tab back lands on ${await focused()}`);
-      const backward = await walk("Shift+Tab", 4);
-      assert(JSON.stringify(backward) === JSON.stringify(["revdiff-filter", "revdiff-mode", "revdiff-pick=to", "revdiff-pick=from"]),
+      const backward = await walk("Shift+Tab", 5);
+      assert(JSON.stringify(backward) === JSON.stringify(["revdiff-filter", "revdiff-reset", "revdiff-mode", "revdiff-pick=to", "revdiff-pick=from"]),
         `Shift+Tab walks ${JSON.stringify(backward)}`);
       const stops = await page.evaluate(() => {
         const list = document.querySelector("[data-editor-revdiff-list]");
@@ -4143,7 +4143,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       return "forty rows: the mark stays in view down, around and back up, the list never jumps while the row is in view";
     });
 
-    await compareChecks.worktreeChecks({ page, run, tag, author, editorBase, project, runInShell, shellText, openEditor, diffReady, openCommitView, setEditorSwitch, toggleDiff, diffPressed, h: compareKit });
+    await require("./editor-git-compare-worktree").worktreeChecks({ page, run, tag, author, editorBase, project, runInShell, shellText, openEditor, diffReady, openCommitView, setEditorSwitch, toggleDiff, diffPressed, h: compareKit });
+    await compareChecks.resetChecks({ page, run, runInShell, openEditor, diffReady, h: compareKit });
 
     await run("compare: the phone reaches the panel, both pickers and the diff inside the drawer at 390", async () => {
       const mp = await mobile();
@@ -4649,7 +4650,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         `${al.short} · Al · ${day}`,
         `Diff ${blamed} against ${al.short}`,
         `Show what ${al.short} changed in ${blamed}`,
-        "Compare",
+        "Compare with its parent",
+        "Compare with the working copy",
         "File history",
         "Copy the hash",
       ];
@@ -4696,8 +4698,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       labels = await openLineMenu(2);
       const dead = labels.find((l) => l.text === `Show what ${init.short} changed in root.txt`);
       assert(dead && dead.disabled, `the root commit's entry is not dead: ${JSON.stringify(labels.map((l) => [l.text, l.disabled]))}`);
-      const compare = labels.find((l) => l.text === "Compare");
-      assert(compare && compare.disabled, "Compare is live for a root commit, the panel would fill the empty side with a default");
+      const compare = labels.find((l) => l.text === "Compare with its parent");
+      assert(compare && compare.disabled && labels.some((l) => l.text === "Compare with the working copy" && !l.disabled), "Compare with its parent is live for a root commit, or the working copy is not offered");
       assert(labels.some((l) => l.text === `Diff root.txt against ${init.short}` && !l.disabled), "the diff against the root commit is not offered");
       await page.keyboard.press("Escape");
       await sleep(200);
@@ -4719,8 +4721,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.waitForSelector(".cm-blame", { timeout: 20000 });
 
       // The second opens the file at the commit's parent against the commit
-      // as a read only comparison, and the third the revision comparison on
-      // that pair.
+      // as a read only comparison.
       await openLineMenu(1);
       await menuItem(`^Show what ${al.short} changed in ${blamed}$`).first().click();
       await page.waitForSelector('.editor-tab[data-path^="//revdiff/"].active', { timeout: 20000 });
@@ -4731,15 +4732,10 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.waitForSelector('.editor-tab[data-path^="//revdiff/"]', { state: "detached", timeout: 8000 });
       await page.click(`.editor-tab[data-path="${blamed}"]`);
       await page.waitForSelector(".cm-blame", { timeout: 20000 });
-      await openLineMenu(1);
-      await menuItem("^Compare$").first().click();
-      await page.waitForSelector("[data-editor-revdiff]:not([hidden])", { timeout: 10000 });
-      const pair = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "{}"), `dc-editor-revdiff:${project}`);
-      assert(pair.from === al.parent && pair.to === al.sha, `the comparison opened on ${JSON.stringify(pair)}`);
-      await page.click("[data-editor-revdiff-close]");
-      await page.waitForSelector("[data-editor-revdiff]", { state: "hidden", timeout: 8000 });
       return `${wanted.length} entries headed ${JSON.stringify(wanted[0])}, dead on an uncommitted line and for a root commit's parent`;
     });
+
+    await compareChecks.commitChecks({ page, run, mobile, editorBase, blamed, openEditor, diffReady, openGitSheet, openLineMenu, h: compareKit });
 
     await run("typing with blame on keeps the gutter standing, its lines follow the buffer and the save refreshes them in place", async () => {
       // The gutter standing now is the one that has to stand through every
