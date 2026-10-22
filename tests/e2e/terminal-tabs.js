@@ -1,4 +1,5 @@
 const L = require("./lib");
+const terminalTabsNewMenu = require("./terminal-tabs-new-menu");
 const terminalTabsSwitcher = require("./terminal-tabs-switcher");
 const { assert, sleep, BASE } = L;
 
@@ -80,16 +81,13 @@ const { assert, sleep, BASE } = L;
 // and no badges; the current session's row is marked by the current class
 // (accent bar) without extra row content. The + button at the strip's end
 // also answers Cmd+T (Cmd is no terminal modifier, so nothing is taken from the
-// pane): the menu opens with its first row selected and the arrows walk it,
-// Enter takes the row, Esc closes. Opened with the mouse it selects nothing,
-// the pointer is the pointer; the arrows still reach the rows from there. What
+// pane): the menu opens with its first row selected and the keyboard in its
+// filter field, which hides and ranks the rows (`terminal-tabs-new-menu.js`).
+// Opened with the mouse it selects nothing, the pointer is the pointer. What
 // decides is the last input before the open (`openedByKeyboard` in
 // @dc/contextmenu), so Enter on the focused + button opens on the first row
-// like Cmd+T. The
-// selection is a class on the row and
-// never the focus, like the switcher's: the menu hangs in the sticky strip and
-// focusing anything in there scrolls the page under it, which is what made
-// Bootstrap's own dropdown keys jump around. It
+// like Cmd+T. The selection is a class on the row and never the focus, like
+// the switcher's. It
 // opens New coder / New shell with the current project preselected, followed by
 // a resume section listing every inactive coder grouped by project (same source
 // as the sheet project browser, plain form POST to
@@ -557,77 +555,16 @@ L.runFeature("TERMINAL-TABS", async ({ engine, browser, page, run, mobilePage })
       await sleep(200);
     });
 
-    // Cmd is no terminal modifier, so the pane loses nothing by it: Cmd+T opens
-    // the plus menu and hands it the keyboard, the arrows walk it from there.
-    await run("Cmd+T opens the + menu on its first row, a mouse open selects nothing", async () => {
-      const selected = () => page.evaluate(() => {
-        const row = document.querySelector("terminal-tabs .terminal-tabs-new-menu .dropdown-item.selected");
-        return {
-          row: row ? (row.getAttribute("data-tabs-new") || row.textContent.trim()) : "",
-          count: document.querySelectorAll("terminal-tabs .terminal-tabs-new-menu .dropdown-item.selected").length,
-          focusedToggle: Boolean(document.activeElement?.hasAttribute?.("data-tabs-new-menu")),
-        };
-      });
-      await page.keyboard.press("Meta+t");
-      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "visible", timeout: 4000 });
-      let sel = await selected();
-      assert(sel.row === "coder" && sel.count === 1, `the menu did not open on its first row: ${JSON.stringify(sel)}`);
-      assert(!sel.focusedToggle, "the + button took the focus, the selection belongs to the row");
-      await page.keyboard.press("ArrowDown");
-      sel = await selected();
-      assert(sel.row === "shell" && sel.count === 1, `the arrow did not step to the new shell row: ${JSON.stringify(sel)}`);
-      await page.keyboard.press("ArrowUp");
-      sel = await selected();
-      assert(sel.row === "coder", `the arrow did not step back: ${JSON.stringify(sel)}`);
-      await page.keyboard.press("Escape");
-      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "detached", timeout: 4000 });
-      assert((await selected()).count === 0, "the selection outlived the closed menu");
-
-      // A menu opened with the mouse preselects nothing, the pointer is the
-      // pointer. The arrows still work, they take the first row from there.
-      await page.click("terminal-tabs [data-tabs-new-menu]");
-      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "visible", timeout: 4000 });
-      sel = await selected();
-      assert(sel.count === 0, `the mouse opened menu preselected a row: ${JSON.stringify(sel)}`);
-      await page.keyboard.press("ArrowDown");
-      sel = await selected();
-      assert(sel.row === "coder" && sel.count === 1, `the arrow did not take the first row: ${JSON.stringify(sel)}`);
-      // The pointer marks the row it moves over, the arrows continue from
-      // there, and leaving the menu clears the mark.
-      await page.hover('terminal-tabs .terminal-tabs-new-menu [data-tabs-new="shell"]');
-      sel = await selected();
-      assert(sel.row === "shell" && sel.count === 1, `the pointer did not mark the hovered row: ${JSON.stringify(sel)}`);
-      await page.keyboard.press("ArrowUp");
-      sel = await selected();
-      assert(sel.row === "coder", `the arrow did not continue from the hovered row: ${JSON.stringify(sel)}`);
-      const vp = page.viewportSize();
-      await page.mouse.move(vp.width - 2, vp.height - 2);
-      sel = await selected();
-      assert(sel.count === 0, `leaving the menu left a row marked: ${JSON.stringify(sel)}`);
-      await page.keyboard.press("Escape");
-      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "detached", timeout: 4000 });
-
-      // Enter on the focused + button is a keyboard open too.
-      await page.focus("terminal-tabs [data-tabs-new-menu]");
-      await page.keyboard.press("Enter");
-      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "visible", timeout: 4000 });
-      sel = await selected();
-      assert(sel.row === "coder" && sel.count === 1, `Enter on the + button did not open on the first row: ${JSON.stringify(sel)}`);
-      await page.keyboard.press("Escape");
-      await page.waitForSelector("terminal-tabs .terminal-tabs-new-menu.show", { state: "detached", timeout: 4000 });
-      return "keyboard opens on the first row, the mouse on none";
-    });
-
     await run("the + menu offers new coder and new shell only, project preselected", async () => {
       await page.click(".terminal-tabs-new-btn");
       await page.waitForSelector("terminal-tabs .dropdown-menu.show", { state: "visible", timeout: 4000 });
-      const hrefs = await page.$$eval("terminal-tabs .dropdown-menu.show > a", (as) => as.map((a) => a.getAttribute("href")));
+      const hrefs = await page.$$eval("terminal-tabs .dropdown-menu.show [data-tabs-new-rows] > a", (as) => as.map((a) => a.getAttribute("href")));
       assert(hrefs.length === 2, `expected 2 links, got ${hrefs.length}`);
       // What the menu is mostly used for stands first.
       assert(hrefs[0].startsWith("/coders/new?") && hrefs[0].includes(`project=${project}`), `coder link ${hrefs[0]}`);
       assert(hrefs[1].startsWith("/shells/new?") && hrefs[1].includes(`project=${project}`), `shell link ${hrefs[1]}`);
       assert(hrefs[1].includes(`return=%2Fshells%2F${ids[2]}`), `shell link return target ${hrefs[1]}`);
-      assert(!(await page.$("terminal-tabs .dropdown-menu.show > a[href='/assistants']")), "the assistant is a menu entry");
+      assert(!(await page.$("terminal-tabs .dropdown-menu.show [data-tabs-new-rows] > a[href='/assistants']")), "the assistant is a menu entry");
       assert(await page.$("terminal-tabs [data-tabs-assistant], terminal-tabs [data-tabs-assistant-instance]"), "the switcher lost its assistant data");
       // The entry opens the app wide create dialog (see shells.js), which
       // fetches the same /shells/new and carries the menu's project into it.
@@ -1400,6 +1337,7 @@ L.runFeature("TERMINAL-TABS", async ({ engine, browser, page, run, mobilePage })
       await page.waitForSelector("dc-assistant[ready]", { timeout: 8000 });
     });
 
+    await terminalTabsNewMenu({ run, page, mobilePage, project, shellUrl: shellUrls[0] });
     await terminalTabsSwitcher({ run, page, project, ids });
 
     await run("the strip stays hidden on coarse pointer (mobile) clients", async () => {

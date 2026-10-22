@@ -227,7 +227,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Open the plus menu",
 					Keys:  []DocsKeys{{Caps: []string{"Cmd", "T"}}},
-					Desc:  `Opens the plus menu <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> of the tab strip with the keyboard in it, so the arrows walk to a new coder, a new shell or a coder to resume and Enter takes it.`,
+					Desc:  `Opens the plus menu <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> of the tab strip with the keyboard in its filter. Typing narrows it to the new coder, the new shell and the coders to resume that match, the arrows walk what is left and Enter takes it. <i class="ti ti-x align-text-bottom" aria-hidden="true"></i> empties the filter.`,
 				},
 				{
 					Title: "Close the current terminal",

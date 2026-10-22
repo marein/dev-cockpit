@@ -40,6 +40,34 @@ export function rankTokens(name, haystack, query) {
   return Math.min(...[].concat(name).map((each) => rankName(each, first)));
 }
 
+// rankRows hides the rows ranked below zero and sorts the others of each
+// group by rank where the group stands, so the groups keep their place: the
+// units of a group, the elements that carry its rows (unitOf), stand next to
+// each other. Equal ranks keep the order the rows come in, so an empty query
+// gives that order back. It answers the rows left, in their new order.
+export function rankRows(rows, rankOf, { groupOf = () => "", unitOf = (row) => row } = {}) {
+  const groups = new Map();
+  rows.forEach((row, index) => {
+    const rank = rankOf(row);
+    unitOf(row).hidden = rank < 0;
+    const key = groupOf(row);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ row, index, rank: rank < 0 ? Infinity : rank });
+  });
+  const shown = [];
+  for (const members of groups.values()) {
+    members.sort((a, b) => a.rank - b.rank || a.index - b.index);
+    const units = new Set(members.map(({ row }) => unitOf(row)));
+    const last = [...units].find((unit) => !units.has(unit.nextElementSibling));
+    const after = last?.nextSibling || null;
+    for (const { row } of members) {
+      last?.parentNode?.insertBefore(unitOf(row), after);
+      if (!unitOf(row).hidden) shown.push(row);
+    }
+  }
+  return shown;
+}
+
 // The lowercased name keeps every offset of the original, which alone still
 // carries the case a camel case word start is read from.
 function lowerInPlace(text) {

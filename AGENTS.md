@@ -236,7 +236,7 @@ templates plus ES modules.
   travels in attributes.
 - **Shared Modules**: There is one `escapeHtml` (`@dc/dom`), one context
   menu with row menus and long press (`@dc/contextmenu`), one row drag
-  (`@dc/rowdrag`), one swipe (`@dc/swipe`), one token match (`@dc/filter`),
+  (`@dc/rowdrag`), one swipe (`@dc/swipe`), one token match with its row ranking (`@dc/filter`, `rankRows`),
   one project palette (`@dc/project-palette` over the `project_palette_*`
   templates), one tag filter over a project list (`@dc/tags`), one terminal
   theme table (`@dc/terminal`), one popup door

@@ -1,23 +1,18 @@
-import { followPointer, openMenu, openedByKeyboard, wireRowMenus } from "@dc/contextmenu";
+import { openMenu, wireRowMenus } from "@dc/contextmenu";
 import { confirm, promptText } from "@dc/dialog";
 import { el, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { onServerEvent } from "@dc/events";
-import { rankTokens } from "@dc/filter";
-import { applyFold } from "@dc/fold";
-import { ensureOk, getText, landingURL, pagePath, postForm, postJSON } from "@dc/http";
-import * as projectSort from "@dc/project-sort";
+import { ensureOk, getText, pagePath, postForm, postJSON } from "@dc/http";
 import { splitCreateItems } from "@dc/split";
 import { renameCoder, renameShell } from "@dc/rename";
 import { RowDrag } from "@dc/rowdrag";
 import { get } from "@dc/store";
 import { notifyError, notifySuccess } from "@dc/toast";
 import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
+import { NewMenu } from "@dc/terminal-new-menu";
+import { Switcher } from "@dc/terminal-switcher";
 import { openFormModal } from "dc-form-modal";
-
-const RESUME_FOLD_LIMIT = 3;
-
-const switcherKey = ({ dataset: d }) => [d.switcherToggle, d.switcherResume, d.switcherId || d.switcherUrl].join("\n");
 
 class TerminalTabs extends HTMLElement {
   connectedCallback() {
@@ -29,49 +24,15 @@ class TerminalTabs extends HTMLElement {
     this.ac = new AbortController();
     this.switcher = null;
     this.confirming = false;
-    this.resuming = false;
     this.inFlight = false;
     this.dirty = false;
     this.pendingIndex = null;
-    this.menuOpen = false;
-    this.menuIndex = -1;
     this.tap = new DoubleTap();
     const signal = this.ac.signal;
 
     this.revealActive(this.vertical);
-    this.expandedResume = new Set();
-    const resumeProjects = this.querySelector("[data-tabs-resume-projects]");
-    if (resumeProjects) projectSort.sort(resumeProjects);
-    const editors = this.querySelector("[data-tabs-editors]");
-    if (editors) projectSort.sort(editors);
-    this.querySelectorAll("[data-tabs-resume-fold]").forEach((group) => this.foldResume(group));
-
-    for (const toggle of this.querySelectorAll(".terminal-tabs-new-btn")) {
-      const focus = toggle.focus.bind(toggle);
-      toggle.focus = (options) => focus({ preventScroll: true, ...options });
-      toggle.addEventListener("mousedown", (event) => event.preventDefault(), { signal });
-    }
-    const newMenuEvent = (event) => event.target instanceof Element
-      && (event.target.matches("[data-tabs-new-menu]") || Boolean(event.target.querySelector("[data-tabs-new-menu]")));
-    this.addEventListener("shown.bs.dropdown", (event) => {
-      if (!newMenuEvent(event)) return;
-      this.menuOpen = true;
-      this.menuIndex = openedByKeyboard() ? 0 : -1;
-      this.paintMenuSelection();
-    }, { signal });
-    this.addEventListener("hidden.bs.dropdown", (event) => {
-      if (!newMenuEvent(event)) return;
-      this.menuOpen = false;
-      this.paintMenuSelection();
-    }, { signal });
-    const newMenu = this.querySelector(".terminal-tabs-new-menu");
-    if (newMenu) {
-      followPointer(newMenu, {
-        signal,
-        enter: (row) => this.markMenuRow(this.menuRows().indexOf(row)),
-        leave: () => this.markMenuRow(-1),
-      });
-    }
+    const menu = this.querySelector(".terminal-tabs-new-menu");
+    this.newMenu = menu ? new NewMenu(menu, signal) : null;
     this.strip.addEventListener("wheel", (event) => this.onWheel(event), { signal, passive: false });
     if (!this.hasAttribute("data-tabs-guest")) this.wireDrag(signal);
     this.strip.addEventListener("click", (event) => this.onClick(event), { signal, capture: true });
@@ -155,24 +116,6 @@ class TerminalTabs extends HTMLElement {
     postJSON("/terminal-tabs/order", { ids })
       .then((response) => ensureOk(response, "Could not save the tab order."))
       .catch((error) => notifyError(error.message));
-  }
-
-  foldResume(group) {
-    const key = group.getAttribute("data-tabs-resume-fold");
-    applyFold(group, {
-      limit: RESUME_FOLD_LIMIT,
-      expanded: this.expandedResume.has(key),
-      toggleAttr: "data-tabs-resume-toggle",
-      toggleClass: "dropdown-item text-center text-secondary small py-1",
-      signal: this.ac.signal,
-      onToggle: (event, next) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (next) this.expandedResume.add(key);
-        else this.expandedResume.delete(key);
-        this.foldResume(group);
-      },
-    });
   }
 
   revealTab(tab, center = false) {
@@ -545,7 +488,7 @@ class TerminalTabs extends HTMLElement {
       return;
     }
     if ((event.key === "t" || event.key === "T") && event.metaKey && !event.ctrlKey && !event.altKey && !this.switcher) {
-      if (this.switcherOnly || !this.openNewMenu()) return;
+      if (this.switcherOnly || !this.newMenu?.show()) return;
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -560,100 +503,8 @@ class TerminalTabs extends HTMLElement {
       void this.closeTarget({ ...active.dataset });
       return;
     }
-    if (this.menuOpen && !this.switcher) {
-      const menuActions = {
-        ArrowDown: () => this.moveMenuSelection(1),
-        ArrowUp: () => this.moveMenuSelection(-1),
-        Enter: () => this.commitMenuSelection(),
-        Escape: () => this.closeNewMenu(),
-      };
-      const menuAction = menuActions[event.key];
-      if (menuAction) {
-        event.preventDefault();
-        event.stopPropagation();
-        menuAction();
-        return;
-      }
-    }
-    if (!this.switcher) return;
-    if (event.key === "Control" || event.key === "Shift" || event.key === "Alt" || event.key === "Meta") return;
-    // The switcher cycles with the arrows only. Tab stays swallowed so it neither
-    // moves the selection nor pulls the focus out of the filter field.
-    if (event.key === "Tab") {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    const actions = {
-      ArrowDown: () => this.moveSelection(1),
-      ArrowUp: () => this.moveSelection(-1),
-      Enter: () => this.commitSelection(),
-      Escape: () => this.closeSwitcher(),
-    };
-    const action = actions[event.key];
-    if (!action) return;
-    event.preventDefault();
-    event.stopPropagation();
-    action();
-  }
-
-  openNewMenu() {
-    const toggle = this.querySelector("[data-tabs-new-menu]");
-    if (!toggle || !toggle.offsetParent || !window.bootstrap?.Dropdown) return false;
-    window.bootstrap.Dropdown.getOrCreateInstance(toggle).show();
-    toggle.blur();
-    return true;
-  }
-
-  closeNewMenu() {
-    const toggle = this.querySelector("[data-tabs-new-menu]");
-    if (toggle) window.bootstrap?.Dropdown.getInstance(toggle)?.hide();
-  }
-
-  menuRows() {
-    const menu = this.querySelector(".terminal-tabs-new-menu");
-    if (!menu) return [];
-    return Array.from(menu.querySelectorAll(".dropdown-item")).filter((row) => row.offsetParent);
-  }
-
-  paintMenuSelection() {
-    const menu = this.querySelector(".terminal-tabs-new-menu");
-    if (!menu) return;
-    const rows = this.menuRows();
-    for (const row of menu.querySelectorAll(".dropdown-item.selected")) {
-      row.classList.remove("selected");
-      row.removeAttribute("aria-current");
-    }
-    if (!this.menuOpen || this.menuIndex < 0 || !rows.length) return;
-    this.menuIndex = Math.min(this.menuIndex, rows.length - 1);
-    const selected = rows[this.menuIndex];
-    selected.classList.add("selected");
-    selected.setAttribute("aria-current", "true");
-    const top = selected.offsetTop;
-    const bottom = top + selected.offsetHeight;
-    if (top < menu.scrollTop) menu.scrollTop = top;
-    else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight;
-  }
-
-  moveMenuSelection(delta) {
-    const rows = this.menuRows();
-    if (!rows.length) return;
-    if (this.menuIndex < 0) this.menuIndex = delta > 0 ? 0 : rows.length - 1;
-    else this.menuIndex = (this.menuIndex + delta + rows.length) % rows.length;
-    this.paintMenuSelection();
-  }
-
-  markMenuRow(index) {
-    if (index === this.menuIndex) return;
-    this.menuIndex = index;
-    this.paintMenuSelection();
-  }
-
-  commitMenuSelection() {
-    const selected = this.menuRows()[this.menuIndex];
-    if (!selected) return;
-    selected.click();
-    if (this.menuOpen) this.paintMenuSelection();
+    if (this.newMenu?.open && !this.switcher && this.newMenu.onKeydown(event)) return;
+    this.switcher?.onKeydown(event);
   }
 
   switchTo(direction) {
@@ -674,305 +525,10 @@ class TerminalTabs extends HTMLElement {
     else window.location.href = url;
   }
 
-  switcherRow(tab) {
-    const current = tab.classList.contains("active");
-    const row = el(
-      "div",
-      {
-        role: "option",
-        class: "terminal-switcher-item" + (current ? " current" : ""),
-        dataset: {
-          switcherId: tab.dataset.tabId || "",
-          switcherUrl: tab.getAttribute("href") || "",
-          switcherName: (tab.dataset.tabName || "") + " " + (tab.dataset.tabProject || ""),
-        },
-      },
-      tab.querySelector("[data-tab-icon]")?.cloneNode(true),
-      el("span", { class: "terminal-switcher-name text-truncate" }, tab.dataset.tabName || ""),
-      tab.dataset.tabProject
-        ? el("span", { class: "terminal-switcher-project text-truncate" }, tab.dataset.tabProject)
-        : null,
-    );
-    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
-    return row;
-  }
-
-  editorRow(link) {
-    const row = el(
-      "div",
-      {
-        role: "option",
-        class: "terminal-switcher-item",
-        dataset: {
-          switcherUrl: link.getAttribute("href") || "",
-          switcherName: `${link.dataset.editorProject || ""} ${link.dataset.editorTags || ""} editor`,
-          switcherSection: "editors",
-        },
-      },
-      Array.from(link.children, (node) => node.cloneNode(true)),
-    );
-    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
-    return row;
-  }
-
-  // The assistants are destinations like a terminal, not "new" actions: they
-  // sit right under the open tabs so the switcher reaches them in the same two
-  // keys.
-  assistantRow(link) {
-    const icon = link.querySelector(".dc-term-icon");
-    const row = el(
-      "div",
-      {
-        role: "option",
-        class: "terminal-switcher-item",
-        dataset: {
-          switcherUrl: link.getAttribute("href") || "/assistants",
-          switcherName: "Assistants",
-          switcherSection: "assistant",
-        },
-      },
-      icon ? icon.cloneNode(true) : el("span", { class: "terminal-tab-icon dc-term-icon assistant", "aria-hidden": "true" }, el("i", { class: "ti ti-sparkles" })),
-      el("span", { class: "terminal-switcher-name text-truncate" }, "Assistants"),
-    );
-    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
-    return row;
-  }
-
-  assistantInstanceRow(link) {
-    const name = link.dataset.assistantName || "";
-    const row = el(
-      "div",
-      {
-        role: "option",
-        class: "terminal-switcher-item",
-        dataset: {
-          switcherUrl: link.getAttribute("href") || "",
-          switcherName: name + " assistant",
-          switcherSection: "assistant",
-        },
-      },
-      link.querySelector(".dc-term-icon")?.cloneNode(true),
-      el("span", { class: "terminal-switcher-name text-truncate" }, name),
-      el("span", { class: "terminal-switcher-project text-truncate" }, "Assistant"),
-    );
-    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
-    return row;
-  }
-
-  actionRow(link) {
-    const kind = link.dataset.tabsNew;
-    const label = kind === "coder" ? "New coder" : "New shell";
-    const url = link.getAttribute("href") || "";
-    const project = new URL(url, window.location.href).searchParams.get("project") || "";
-    const row = el(
-      "div",
-      {
-        role: "option",
-        class: "terminal-switcher-item",
-        dataset: {
-          switcherUrl: url,
-          switcherName: label + " " + project,
-          switcherSection: "new",
-        },
-      },
-      el("span", { class: "terminal-tab-icon dc-term-icon", "aria-hidden": "true" }, el("i", { class: kind === "coder" ? "ti ti-robot" : "ti ti-terminal-2" })),
-      el("span", { class: "terminal-switcher-name text-truncate" }, label),
-      project ? el("span", { class: "terminal-switcher-project text-truncate" }, project) : null,
-    );
-    row.addEventListener("click", () => this.navigate(row.dataset.switcherUrl), { signal: this.ac.signal });
-    return row;
-  }
-
-  resumeRow(button, project, folded) {
-    const dataset = {
-      switcherResume: button.dataset.resumeId || "",
-      switcherName: (button.dataset.resumeName || "") + " " + (project || ""),
-      switcherGroup: project,
-      switcherSection: "inactive",
-    };
-    if (folded) dataset.switcherFolded = project;
-    const row = el(
-      "div",
-      { role: "option", class: "terminal-switcher-item terminal-switcher-item-inactive", dataset },
-      button.querySelector("[data-resume-icon]")?.cloneNode(true),
-      el("span", { class: "terminal-switcher-name text-truncate" }, button.dataset.resumeName || ""),
-    );
-    row.addEventListener("click", () => void this.resumeTarget(row), { signal: this.ac.signal });
-    return row;
-  }
-
-  resumeToggleRow(project, count) {
-    const row = el(
-      "div",
-      {
-        role: "option",
-        class: "terminal-switcher-item terminal-switcher-item-inactive terminal-switcher-item-toggle",
-        dataset: { switcherToggle: project, switcherGroup: project, switcherSection: "inactive" },
-      },
-      el("span", { class: "terminal-switcher-name text-truncate" }, "Show " + count + " more"),
-    );
-    row.addEventListener("pointerdown", (event) => event.preventDefault(), { signal: this.ac.signal });
-    row.addEventListener("click", () => this.expandGroup(project), { signal: this.ac.signal });
-    return row;
-  }
-
-  expandGroup(project) {
-    const sw = this.switcher;
-    if (!sw) return;
-    const list = sw.overlay.querySelector(".terminal-switcher-list");
-    const scrollTop = list.scrollTop;
-    sw.expanded.add(project);
-    this.applyFilter();
-    list.scrollTop = scrollTop;
-    const first = sw.visible.find((row) => row.dataset.switcherFolded === project);
-    if (first) {
-      sw.index = sw.visible.indexOf(first);
-      this.paintSelection();
-    }
-  }
-
-  async resumeTarget(row) {
-    if (this.resuming) return;
-    this.resuming = true;
-    try {
-      const id = row.dataset.switcherResume;
-      const response = await postForm(`/coders/${id}/resume`, {});
-      await ensureOk(response, "Could not resume the coder.");
-      this.navigate((await landingURL(response)) || `/coders/${id}`);
-    } catch (error) {
-      notifyError(error.message);
-      this.switcher?.input.focus();
-    } finally {
-      this.resuming = false;
-    }
-  }
-
-  buildSwitcherLists() {
-    const rows = this.tabs().map((tab) => this.switcherRow(tab));
-    const resumeRows = [];
-    const inactiveNodes = [];
-    const groupLabels = [];
-    for (const group of this.querySelectorAll("[data-tabs-resume-fold]")) {
-      const project = group.getAttribute("data-tabs-resume-fold");
-      const buttons = Array.from(group.querySelectorAll("[data-resume-id]"));
-      if (!buttons.length) continue;
-      const label = el(
-        "div",
-        { class: "terminal-switcher-group" },
-        el("i", { class: "ti ti-folder", "aria-hidden": "true" }),
-        el("span", { class: "text-truncate" }, project),
-      );
-      groupLabels.push({ key: project, node: label });
-      inactiveNodes.push(label);
-      buttons.forEach((button, index) => {
-        const row = this.resumeRow(button, project, index >= RESUME_FOLD_LIMIT);
-        resumeRows.push(row);
-        inactiveNodes.push(row);
-      });
-      if (buttons.length > RESUME_FOLD_LIMIT) {
-        const toggle = this.resumeToggleRow(project, buttons.length - RESUME_FOLD_LIMIT);
-        resumeRows.push(toggle);
-        inactiveNodes.push(toggle);
-      }
-    }
-    const editorRows = Array.from(this.querySelectorAll("[data-tabs-editors] [data-editor-project]"))
-      .map((link) => this.editorRow(link));
-    const actionRows = Array.from(this.querySelectorAll(".terminal-tabs-new-menu [data-tabs-new]"))
-      .map((link) => this.actionRow(link));
-    const assistantRows = Array.from(this.querySelectorAll("[data-tabs-assistant]"))
-      .map((link) => this.assistantRow(link))
-      .concat(Array.from(this.querySelectorAll("[data-tabs-assistant-instance]"))
-        .map((link) => this.assistantInstanceRow(link)));
-    const sections = [];
-    const listNodes = [...rows];
-    const addSection = (key, title, nodes) => {
-      if (!nodes.length) return;
-      const node = el("div", { class: "terminal-switcher-section", dataset: { switcherSection: key } }, title);
-      sections.push({ key, node });
-      listNodes.push(node, ...nodes);
-    };
-    addSection("assistant", "Assistants", assistantRows);
-    addSection("inactive", "Inactive coders", inactiveNodes);
-    addSection("editors", "Editors", editorRows);
-    addSection("new", "New", actionRows);
-    const cycleRows = rows.concat(assistantRows, resumeRows, editorRows, actionRows);
-    return { rows, cycleRows, listNodes, sections, groupLabels };
-  }
-
   openSwitcher(direction) {
     this.rowDrag?.cancel();
-    const { rows, cycleRows, listNodes, sections, groupLabels } = this.buildSwitcherLists();
-    if (!cycleRows.length) return;
-    const input = el("input", {
-      type: "text",
-      class: "terminal-switcher-filter",
-      placeholder: "Type to filter…",
-      autocomplete: "off",
-      autocorrect: "off",
-      autocapitalize: "none",
-      spellcheck: "false",
-      "aria-label": "Filter coders and shells",
-    });
-    const empty = el("div", { class: "terminal-switcher-empty", hidden: true }, "No matches");
-    const overlay = el(
-      "div",
-      { class: "terminal-switcher", role: "dialog", "aria-modal": "true", "aria-label": "Switch coder or shell" },
-      el(
-        "div",
-        { class: "terminal-switcher-panel" },
-        input,
-        el("div", { class: "terminal-switcher-list", role: "listbox" }, listNodes, empty),
-        el("div", { class: "terminal-switcher-hint" }, "Type to filter, arrows to cycle, Enter to switch, Esc to close"),
-      ),
-    );
-    input.addEventListener("input", () => this.applyFilter(true), { signal: this.ac.signal });
-    overlay.addEventListener("pointerdown", (event) => {
-      if (event.target === overlay) this.closeSwitcher();
-    }, { signal: this.ac.signal });
-    document.body.appendChild(overlay);
-    const current = rows.findIndex((row) => row.classList.contains("current"));
-    this.switcher = {
-      overlay,
-      rows: cycleRows,
-      sections,
-      groupLabels,
-      expanded: new Set(),
-      input,
-      empty,
-      visible: cycleRows.slice(),
-      index: 0,
-      prevFocus: document.activeElement,
-    };
-    input.focus();
-    this.applyFilter();
-    this.switcher.index = current === -1 ? 0 : (current + direction + rows.length) % rows.length;
-    this.paintSelection();
-    this.tryRefresh();
-  }
-
-  // The place is held by a row, not by pixels: the marked row while in view,
-  // else the top row, keeps its offset. Revealing the mark undid a wheel scroll.
-  rebuildSwitcher() {
-    const sw = this.switcher;
-    if (!sw) return;
-    const list = sw.overlay.querySelector(".terminal-switcher-list");
-    const top = list.getBoundingClientRect().top;
-    const rect = (row) => row.getBoundingClientRect();
-    const inView = (row) => row && rect(row).bottom > top && rect(row).top < top + list.clientHeight;
-    const anchorAt = inView(sw.visible[sw.index]) ? sw.index : sw.visible.findIndex((row) => rect(row).bottom > top);
-    const offset = anchorAt === -1 ? 0 : rect(sw.visible[anchorAt]).top - top;
-    const keys = sw.visible.map(switcherKey);
-    const { cycleRows, listNodes, sections, groupLabels } = this.buildSwitcherLists();
-    list.replaceChildren(...listNodes, sw.empty);
-    Object.assign(sw, { rows: cycleRows, sections, groupLabels });
-    this.filterSwitcher();
-    const fresh = new Map(sw.visible.map((row, index) => [switcherKey(row), index]));
-    const nearest = (at) => keys.flatMap((_, d) => [keys[at + d], keys[at - d]])
-      .map((key) => fresh.get(key)).find((hit) => hit !== undefined) ?? -1;
-    sw.index = Math.max(nearest(sw.index), 0);
-    this.paintSelection(false);
-    const anchor = sw.visible[nearest(anchorAt)];
-    if (anchor) list.scrollTop += rect(anchor).top - top - offset;
+    this.switcher = Switcher.open(this, direction, this.ac.signal);
+    if (this.switcher) this.tryRefresh();
   }
 
   // refresh marks the strip dirty and pulls the fresh strip and menu when nothing
@@ -1033,18 +589,8 @@ class TerminalTabs extends HTMLElement {
           syncAnimations(this.strip);
           this.revealActive();
         }
-        const menu = this.querySelector(".terminal-tabs-new-menu");
-        const freshMenu = fresh.querySelector(".terminal-tabs-new-menu");
-        if (menu && freshMenu) {
-          menu.innerHTML = freshMenu.innerHTML;
-          const projects = menu.querySelector("[data-tabs-resume-projects]");
-          if (projects) projectSort.sort(projects);
-          const editors = menu.querySelector("[data-tabs-editors]");
-          if (editors) projectSort.sort(editors);
-          menu.querySelectorAll("[data-tabs-resume-fold]").forEach((group) => this.foldResume(group));
-          this.paintMenuSelection();
-        }
-        if (this.switcher) this.rebuildSwitcher();
+        this.newMenu?.swap(fresh);
+        this.switcher?.rebuild();
       })
       .catch(() => {})
       .finally(() => {
@@ -1055,97 +601,10 @@ class TerminalTabs extends HTMLElement {
   }
 
   closeSwitcher() {
-    const sw = this.switcher;
-    if (!sw) return;
+    const switcher = this.switcher;
+    if (!switcher) return;
     this.switcher = null;
-    sw.overlay.remove();
-    if (sw.prevFocus?.isConnected) sw.prevFocus.focus();
-  }
-
-  applyFilter(fromInput) {
-    const sw = this.switcher;
-    if (!sw) return;
-    const selected = sw.visible[sw.index];
-    this.filterSwitcher();
-    sw.index = Math.max(fromInput ? -1 : sw.visible.indexOf(selected), 0);
-    this.paintSelection();
-  }
-
-  filterSwitcher() {
-    const sw = this.switcher;
-    const query = sw.input.value.trim();
-    const ranks = new Map();
-    for (const row of sw.rows) {
-      let rank;
-      if (row.dataset.switcherToggle) {
-        rank = !query && !sw.expanded.has(row.dataset.switcherToggle) ? 0 : -1;
-      } else if (query) {
-        const name = row.querySelector(".terminal-switcher-name")?.textContent || "";
-        rank = rankTokens(name, row.dataset.switcherName, query);
-      } else {
-        rank = row.dataset.switcherFolded && !sw.expanded.has(row.dataset.switcherFolded) ? -1 : 0;
-      }
-      row.hidden = rank < 0;
-      ranks.set(row, !query ? 0 : rank < 0 ? Infinity : rank);
-    }
-    sw.visible = this.rankSwitcherGroups(sw.rows, ranks).filter((row) => !row.hidden);
-    sw.empty.hidden = sw.visible.length > 0;
-    for (const { node, key } of sw.sections) node.hidden = !sw.visible.some((row) => row.dataset.switcherSection === key);
-    for (const { node, key } of sw.groupLabels) node.hidden = !sw.visible.some((row) => row.dataset.switcherGroup === key);
-    syncAnimations(sw.overlay);
-  }
-
-  // Each group (the open tabs, a section, a project's inactive coders) sorts
-  // its rows by rank on its own, so the sections keep their place. The groups
-  // stand contiguous in both the cycle order and the list, so a group is
-  // reordered where it stands. Equal ranks keep the built order.
-  rankSwitcherGroups(rows, ranks) {
-    const groups = new Map();
-    rows.forEach((row, index) => {
-      const key = (row.dataset.switcherSection || "") + "\n" + (row.dataset.switcherGroup || "");
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push({ row, index, rank: ranks.get(row) });
-    });
-    const ordered = [];
-    for (const members of groups.values()) {
-      members.sort((a, b) => a.rank - b.rank || a.index - b.index);
-      const inGroup = new Set(members.map((member) => member.row));
-      const last = members.find((member) => !inGroup.has(member.row.nextSibling))?.row;
-      const after = last?.nextSibling || null;
-      for (const member of members) {
-        last?.parentNode?.insertBefore(member.row, after);
-        ordered.push(member.row);
-      }
-    }
-    return ordered;
-  }
-
-  paintSelection(reveal = true) {
-    const sw = this.switcher;
-    if (!sw) return;
-    const selected = sw.visible[sw.index];
-    for (const row of sw.rows) {
-      row.classList.toggle("selected", row === selected);
-      row.setAttribute("aria-selected", row === selected ? "true" : "false");
-    }
-    if (reveal) selected?.scrollIntoView({ block: "nearest" });
-  }
-
-  moveSelection(delta) {
-    const sw = this.switcher;
-    if (!sw || !sw.visible.length) return;
-    sw.index = (sw.index + delta + sw.visible.length) % sw.visible.length;
-    this.paintSelection();
-  }
-
-  commitSelection() {
-    const sw = this.switcher;
-    if (!sw) return;
-    const selected = sw.visible[sw.index];
-    if (!selected) return;
-    if (selected.dataset.switcherToggle) this.expandGroup(selected.dataset.switcherToggle);
-    else if (selected.dataset.switcherResume) void this.resumeTarget(selected);
-    else this.navigate(selected.dataset.switcherUrl);
+    switcher.close();
   }
 
   // closeTarget stops a coder or deletes a shell. purge turns the coder path

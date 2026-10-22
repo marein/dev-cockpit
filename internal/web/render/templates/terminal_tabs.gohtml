@@ -99,53 +99,64 @@
 {{end}}
 
 {{/* The plus menu: new coder or shell, the inactive coders to resume, and
-     the data of the switcher's editor rows. Cmd+T opens it. */}}
+     the data of the switcher's editor rows. Cmd+T opens it. A strip refresh
+     swaps the rows alone, the filter keeps what is typed. */}}
 {{define "terminal_tabs_new.gohtml"}}{{if .Access.Can "terminals"}}
   <div class="dropdown terminal-tabs-new">
     <button type="button" class="btn btn-icon btn-ghost-secondary terminal-tabs-new-btn" data-tabs-new-menu data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" aria-label="New coder or shell" title="New coder or shell (Cmd+T)">
       <i class="ti ti-plus"></i>
     </button>
     <div class="dropdown-menu dropdown-menu-end terminal-tabs-new-menu" data-own-selection>
-      <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="coder" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
-        <i class="ti ti-robot flex-shrink-0"></i><span>New coder</span>
-      </a>
-      <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="shell" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
-        <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
-      </a>
-      {{if and .QuickNav.HasInactiveCoders (not .Access.Guest)}}
-      <div class="dropdown-divider"></div>
-      <h6 class="dropdown-header">Inactive coders</h6>
-      <div data-tabs-resume-projects>
-      {{range $p := .QuickNav.AllProjects}}{{if $p.InactiveCoders}}
-      <div data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}">
-      <h6 class="dropdown-header terminal-tabs-resume-project"><i class="ti ti-folder me-1"></i>{{$p.Name}}</h6>
-      <div data-tabs-resume-fold="{{$p.Name}}">
-      {{range $p.InactiveCoders}}
-      <form method="post" action="{{.URL}}" data-tab-resume>
-        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-        <button type="submit" class="dropdown-item d-flex align-items-center gap-2"
-                data-resume-id="{{.ID}}" data-resume-name="{{.Name}}" data-resume-project="{{$p.Name}}"
-                title="Resume coder {{.Name}}">
-          <span class="terminal-tab-icon dc-term-icon{{if .HasNews}} news{{end}}" data-resume-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
-          <span class="text-truncate">{{.Name}}</span>
-        </button>
-      </form>
-      {{end}}
+      <div class="editor-sheet-filter">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        <input type="text" class="editor-sheet-filter-input" data-tabs-new-filter placeholder="Filter" aria-label="Filter the menu" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+        <span class="editor-sheet-filter-side">
+          <button type="button" class="editor-sheet-filter-clear" data-tabs-new-filter-clear aria-label="Clear the filter" title="Clear the filter"><i class="ti ti-x" aria-hidden="true"></i></button>
+        </span>
       </div>
-      </div>
-      {{end}}{{end}}
-      </div>
-      {{end}}
-      {{/* The switcher's editor rows: one editor link per project sorted
-           client side like the resume groups, never shown in the menu,
-           which offers only what creates a terminal. */}}
-      {{if not .Access.Guest}}
-      <div class="d-none" data-tabs-editors>
-        {{range $p := .QuickNav.AllProjects}}
-        <a data-editor-project="{{$p.Name}}"{{with $p.SearchTags}} data-editor-tags="{{join . " "}}"{{end}} data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}" href="{{$p.EditorURL}}" tabindex="-1"><span class="terminal-tab-icon dc-term-icon" aria-hidden="true"><i class="ti ti-code"></i></span> {{if $p.Tags}}<span class="terminal-switcher-name dc-tagged"><span class="text-truncate">{{$p.Name}}</span>{{template "tag_pie.gohtml" $p.Tags}}</span>{{else}}<span class="terminal-switcher-name text-truncate">{{$p.Name}}</span>{{end}} <span class="terminal-switcher-project text-truncate">Editor</span></a>
+      <div class="terminal-tabs-new-rows py-1" data-tabs-new-rows>
+        <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="coder" href="/coders/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+          <i class="ti ti-robot flex-shrink-0"></i><span>New coder</span>
+        </a>
+        <a class="dropdown-item d-flex align-items-center gap-2" data-tabs-new="shell" href="/shells/new?{{if .QuickNav.CurrentProject}}project={{urlquery .QuickNav.CurrentProject}}&amp;{{end}}return={{urlquery .QuickNav.CurrentPath}}">
+          <i class="ti ti-terminal-2 flex-shrink-0"></i><span>New shell</span>
+        </a>
+        {{if and .QuickNav.HasInactiveCoders (not .Access.Guest)}}
+        <div class="dropdown-divider" data-tabs-resume-divider></div>
+        <h6 class="dropdown-header" data-tabs-resume-head>Inactive coders</h6>
+        <div data-tabs-resume-projects>
+        {{range $p := .QuickNav.AllProjects}}{{if $p.InactiveCoders}}
+        <div data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}">
+        <h6 class="dropdown-header terminal-tabs-resume-project"><i class="ti ti-folder me-1"></i>{{$p.Name}}</h6>
+        <div data-tabs-resume-fold="{{$p.Name}}">
+        {{range $p.InactiveCoders}}
+        <form method="post" action="{{.URL}}" data-tab-resume>
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button type="submit" class="dropdown-item d-flex align-items-center gap-2"
+                  data-resume-id="{{.ID}}" data-resume-name="{{.Name}}" data-resume-project="{{$p.Name}}"
+                  title="Resume coder {{.Name}}">
+            <span class="terminal-tab-icon dc-term-icon{{if .HasNews}} news{{end}}" data-resume-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
+            <span class="text-truncate">{{.Name}}</span>
+          </button>
+        </form>
         {{end}}
+        </div>
+        </div>
+        {{end}}{{end}}
+        </div>
+        {{end}}
+        {{/* The switcher's editor rows: one editor link per project sorted
+             client side like the resume groups, never shown in the menu,
+             which offers only what creates a terminal. */}}
+        {{if not .Access.Guest}}
+        <div class="d-none" data-tabs-editors>
+          {{range $p := .QuickNav.AllProjects}}
+          <a data-editor-project="{{$p.Name}}"{{with $p.SearchTags}} data-editor-tags="{{join . " "}}"{{end}} data-project-name="{{$p.Name}}" data-project-active="{{if $p.Active}}true{{else}}false{{end}}" data-project-used="{{$p.LastUsedUnix}}" href="{{$p.EditorURL}}" tabindex="-1"><span class="terminal-tab-icon dc-term-icon" aria-hidden="true"><i class="ti ti-code"></i></span> {{if $p.Tags}}<span class="terminal-switcher-name dc-tagged"><span class="text-truncate">{{$p.Name}}</span>{{template "tag_pie.gohtml" $p.Tags}}</span>{{else}}<span class="terminal-switcher-name text-truncate">{{$p.Name}}</span>{{end}} <span class="terminal-switcher-project text-truncate">Editor</span></a>
+          {{end}}
+        </div>
+        {{end}}
+        <div class="dropdown-item-text text-secondary small" data-tabs-new-none hidden>No matches</div>
       </div>
-      {{end}}
     </div>
   </div>
 {{end}}{{end}}

@@ -904,7 +904,8 @@ terminal-tabs[data-tabs-vertical] .terminal-tabs-strip { display: flex; flex-dir
 .dc-rows-dragging .list-group-item.active.dc-row-dragging {
   box-shadow: inset 3px 0 0 var(--tblr-primary), 0 0.25rem 0.75rem rgba(0, 0, 0, 0.25);
 }
-.terminal-tabs-new-menu { width: calc(var(--dc-ctx-w) - 16px); max-width: calc(100vw - 2rem); max-height: min(70vh, 26rem); overflow-y: auto; overscroll-behavior: contain; padding-top: 0; }
+.terminal-tabs-new-menu { width: calc(var(--dc-ctx-w) - 16px); max-width: calc(100vw - 2rem); padding: 0; overflow: hidden; }
+.terminal-tabs-new-rows { max-height: min(70vh, 26rem); overflow-y: auto; overscroll-behavior: contain; }
 .terminal-tabs-new-menu .dropdown-item > .text-truncate { min-width: 0; }
 .terminal-tabs-new-menu .dropdown-item.selected { background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18)); }
 .terminal-tabs-resume-project { padding-top: 0.375rem; padding-bottom: 0.125rem; font-size: 0.6875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
