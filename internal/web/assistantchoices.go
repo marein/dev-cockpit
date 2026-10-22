@@ -14,7 +14,7 @@ import (
 func choicesView(messageID string, choices assistant.Choices) *render.ChatChoicesView {
 	view := &render.ChatChoicesView{MessageID: messageID, NoteMax: assistant.MaxChoiceNoteRunes}
 	for _, q := range choices.Questions {
-		question := render.ChatQuestionView{Text: q.Text}
+		question := render.ChatQuestionView{Text: q.Text, Multi: q.Multi}
 		for _, option := range q.Options {
 			question.Options = append(question.Options, render.ChatOptionView{Text: option})
 		}
@@ -67,9 +67,7 @@ func answerChoices(view *render.ChatMessageView, messages []assistant.Message, i
 				break
 			}
 			question := &choices.Questions[i]
-			if pick.Option >= 0 && pick.Option < len(question.Options) {
-				question.Options[pick.Option].Picked = true
-			}
+			markPicked(question, pick)
 			question.Note = plainTextHTML(pick.Text)
 		}
 	case replied:
@@ -85,10 +83,7 @@ func answerChoices(view *render.ChatMessageView, messages []assistant.Message, i
 				break
 			}
 			question := &choices.Questions[i]
-			picked := pick.Option >= 0 && pick.Option < len(question.Options)
-			if picked {
-				question.Options[pick.Option].Picked = true
-			}
+			picked := markPicked(question, pick)
 			question.Draft = pick.Text
 			if picked || strings.TrimSpace(pick.Text) != "" {
 				choices.Done++
@@ -97,9 +92,23 @@ func answerChoices(view *render.ChatMessageView, messages []assistant.Message, i
 	}
 }
 
+// markPicked marks the options one pick picked and says whether there were
+// any.
+func markPicked(question *render.ChatQuestionView, pick assistant.Pick) bool {
+	picked := false
+	for _, option := range pick.Picked() {
+		if option >= 0 && option < len(question.Options) {
+			question.Options[option].Picked = true
+			picked = true
+		}
+	}
+	return picked
+}
+
 // assistantAnswer sends the answers to the questions of one answer as the
 // user's next message. A field per question carries the option picked
-// (pick-<n>, its index) and the words beside it (note-<n>); the service
+// (pick-<n>, its index), or one field per option picked where the question
+// takes several (picks-<n>), and the words beside it (note-<n>); the service
 // checks them against the questions as stored and writes the text.
 func (s *Server) assistantAnswer(c *gin.Context, id string) {
 	if err := s.assistantWriteGuard(id); err != nil {
@@ -148,15 +157,28 @@ func formPicks(c *gin.Context) ([]assistant.Pick, error) {
 	picks := make([]assistant.Pick, assistant.MaxChoiceQuestions)
 	for i := range picks {
 		picks[i] = assistant.Pick{Option: -1, Text: c.PostForm("note-" + strconv.Itoa(i))}
-		raw := c.PostForm("pick-" + strconv.Itoa(i))
-		if raw == "" {
-			continue
+		if raw := c.PostForm("pick-" + strconv.Itoa(i)); raw != "" {
+			option, err := formOption(raw)
+			if err != nil {
+				return nil, err
+			}
+			picks[i].Option = option
 		}
-		option, err := strconv.Atoi(raw)
-		if err != nil || option < 0 {
-			return nil, errors.New("That option does not exist.")
+		for _, raw := range c.PostFormArray("picks-" + strconv.Itoa(i)) {
+			option, err := formOption(raw)
+			if err != nil {
+				return nil, err
+			}
+			picks[i].Options = append(picks[i].Options, option)
 		}
-		picks[i].Option = option
 	}
 	return picks, nil
+}
+
+func formOption(raw string) (int, error) {
+	option, err := strconv.Atoi(raw)
+	if err != nil || option < 0 {
+		return 0, errors.New("That option does not exist.")
+	}
+	return option, nil
 }

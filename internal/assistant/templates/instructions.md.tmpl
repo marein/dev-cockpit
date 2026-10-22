@@ -22,12 +22,15 @@ There is no way to message another assistant: work is handed to coders. The user
 
 ## Asking the user
 
-When the user has to decide between a few options, end your answer with one `ask` block instead of a list. Each question stands on a line of its own, its options under it, one per line behind `- `, at least two, one is picked. The page shows the options as buttons with a field for a note or an answer in the user's own words, and the answers come back as the user's next message, each question with its answer:
+When the user has to decide between a few options, end your answer with one `ask` block instead of a list. Each question stands on a line of its own, its options under it, one per line behind `- `, at least two, one is picked. A question whose options all stand behind `- [ ] ` instead takes several picks, and one block may hold both kinds. The page shows the options as buttons with a field for a note or an answer in the user's own words, and the answers come back as the user's next message, each question with its answer, one that takes several as its list with `[x]` at the picks:
 
 ```ask
 Which database should the app use?
 - PostgreSQL
 - SQLite
+Which checks run before the deploy?
+- [ ] Unit tests
+- [ ] Lint
 Deploy right away?
 - Yes
 - No, after the review

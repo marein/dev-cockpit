@@ -10,7 +10,8 @@ const DRAFT_DEBOUNCE_MS = 200;
 // The questions of one answer while the page may still answer them; the
 // server renders every state, this only answers an open block. Send waits
 // until every question has a pick or words, a second tap takes a pick back,
-// and once the answers went out, or a message of the user stands under the
+// where a question takes several its checkboxes toggle on their own, and
+// once the answers went out, or a message of the user stands under the
 // answer, the block reloads itself and the server renders it over. What is
 // picked and typed belongs to the assistant's draft, like the composer's
 // words: saved when the hand rests, rendered back by the server on every
@@ -99,13 +100,14 @@ class AssistantChoices extends HTMLElement {
   // question, so what the page shows and what the draft holds compare as text.
   answers() {
     return this.shape(this.questions().map((q) => ({
-      option: Number(q.querySelector("input:checked")?.value ?? -1),
+      option: Number(q.querySelector('input[type="radio"]:checked')?.value ?? -1),
+      options: [...q.querySelectorAll('input[type="checkbox"]:checked')].map((box) => Number(box.value)),
       text: q.querySelector("textarea")?.value || "",
     })));
   }
 
   shape(picks) {
-    return JSON.stringify(this.questions().map((_, i) => [picks[i]?.option ?? -1, picks[i]?.text || ""]));
+    return JSON.stringify(this.questions().map((_, i) => [picks[i]?.option ?? -1, picks[i]?.options || [], picks[i]?.text || ""]));
   }
 
   queueSave() {
@@ -183,7 +185,8 @@ class AssistantChoices extends HTMLElement {
     if (shown !== this.saved) return;
     this.questions().forEach((q, i) => {
       const option = String(picks[i]?.option ?? -1);
-      q.querySelectorAll('input[type="radio"]').forEach((radio) => { radio.checked = radio.value === option; });
+      const options = (picks[i]?.options || []).map(String);
+      q.querySelectorAll("input").forEach((input) => { input.checked = input.value === option || options.includes(input.value); });
       const note = q.querySelector("textarea");
       if (note && note.value !== (picks[i]?.text || "")) {
         note.value = picks[i]?.text || "";

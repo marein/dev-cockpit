@@ -15,7 +15,12 @@ import (
 // choicesAnswer, still open.
 func askedAssistant(t *testing.T) (*Service, *Store, string, string) {
 	t.Helper()
-	svc, store, _ := newTestService(t, &fakeRunner{events: []Event{{Kind: EventDelta, Text: choicesAnswer}}})
+	return askedWith(t, choicesAnswer)
+}
+
+func askedWith(t *testing.T, answer string) (*Service, *Store, string, string) {
+	t.Helper()
+	svc, store, _ := newTestService(t, &fakeRunner{events: []Event{{Kind: EventDelta, Text: answer}}})
 	created, _ := svc.create("claude")
 	if _, err := svc.Send(created.ID, "Set the app up", nil); err != nil {
 		t.Fatalf("send: %v", err)
@@ -184,6 +189,7 @@ func TestAnAnswersSaveIsCheckedAgainstTheBlock(t *testing.T) {
 		"below none":      {asked, []Pick{{Option: -2}}},
 		"more than asked": {asked, []Pick{{Option: -1}, {Option: -1}, {Option: 0}}},
 		"note too long":   {asked, []Pick{{Option: -1, Text: strings.Repeat("x", MaxChoiceNoteRunes+1)}}},
+		"several on one":  {asked, []Pick{{Option: -1, Options: []int{0, 1}}}},
 	} {
 		if changed, err := svc.SaveAnswers(id, tc.message, tc.picks); err == nil || changed {
 			t.Errorf("%s: want a refusal, got %v (changed %v)", name, err, changed)
@@ -194,5 +200,57 @@ func TestAnAnswersSaveIsCheckedAgainstTheBlock(t *testing.T) {
 	}
 	if got, _ := svc.Draft(id); got.Answers != nil {
 		t.Fatalf("want nothing stored, got %+v", got.Answers)
+	}
+}
+
+// Picks on a question that takes several are stored in the question's order:
+// one more pick or one taken back is a change, the same picks in another
+// order are none, and a block with every pick taken back has no entry. A list
+// longer than the question's options never reaches the draft.
+func TestAChangedPickOnAQuestionThatTakesSeveralIsStored(t *testing.T) {
+	svc, _, id, asked := askedWith(t, mixedAnswer)
+	for i, step := range []struct {
+		options []int
+		changed bool
+		want    []int
+	}{
+		{[]int{0}, true, []int{0}},
+		{[]int{2, 0}, true, []int{0, 2}},
+		{[]int{0, 2}, false, []int{0, 2}},
+		{[]int{2}, true, []int{2}},
+	} {
+		changed, err := svc.SaveAnswers(id, asked, []Pick{{Option: -1, Options: step.options}})
+		if err != nil || changed != step.changed {
+			t.Fatalf("step %d: want changed %v, got %v %v", i, step.changed, changed, err)
+		}
+		if got, _ := svc.Draft(id); !reflect.DeepEqual(got.Answers[asked], []Pick{{Option: -1, Options: step.want}, {Option: -1}}) {
+			t.Fatalf("step %d: want %v stored, got %+v", i, step.want, got.Answers[asked])
+		}
+	}
+	if changed, err := svc.SaveAnswers(id, asked, []Pick{{Option: -1, Options: []int{0, 1, 2, 0, 1}}}); err == nil || changed {
+		t.Fatalf("want a list longer than the options refused, got %v (changed %v)", err, changed)
+	}
+	if changed, _ := svc.SaveAnswers(id, asked, []Pick{{Option: -1}}); !changed {
+		t.Fatal("want the picks taken back")
+	}
+	if got, _ := svc.Draft(id); got.Answers[asked] != nil {
+		t.Fatalf("want no entry for a block with nothing in it, got %+v", got.Answers)
+	}
+}
+
+// A draft stored before a question could take several picks reads as it
+// always did, and saving the same picks again writes nothing.
+func TestADraftOfSinglePicksStoredBeforeReadsAsBefore(t *testing.T) {
+	svc, store, id, asked := askedAssistant(t)
+	path := filepath.Join(store.InstanceDir(id), draftFileName)
+	if err := os.WriteFile(path, []byte(`{"text":"words","answers":{"`+asked+`":[{"option":1},{"option":-1,"text":"note"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	picks := []Pick{{Option: 1}, {Option: -1, Text: "note"}}
+	if got, _ := svc.Draft(id); got.Text != "words" || !reflect.DeepEqual(got.Answers[asked], picks) {
+		t.Fatalf("want the stored draft as before, got %+v", got)
+	}
+	if changed, err := svc.SaveAnswers(id, asked, picks); err != nil || changed {
+		t.Fatalf("want the same picks to change nothing: %v (changed %v)", err, changed)
 	}
 }

@@ -81,7 +81,7 @@ func (s *DraftStore) saveAnswers(messageID string, fit func() ([]Pick, error)) (
 			delete(d.Answers, messageID)
 			return true
 		}
-		if slices.Equal(d.Answers[messageID], picks) {
+		if slices.EqualFunc(d.Answers[messageID], picks, Pick.same) {
 			return false
 		}
 		if d.Answers == nil {
@@ -121,7 +121,7 @@ func (s *DraftStore) update(change func(*Draft) bool) (Draft, bool) {
 
 func untouched(picks []Pick) bool {
 	for _, p := range picks {
-		if p.Option >= 0 || p.Text != "" {
+		if len(p.Picked()) > 0 || p.Text != "" {
 			return false
 		}
 	}

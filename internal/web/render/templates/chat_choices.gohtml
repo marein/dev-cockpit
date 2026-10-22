@@ -3,21 +3,22 @@
      from the assistant's draft, over with what was picked, and read only
      where the page cannot send. A note's textarea opens with a newline the
      parser drops, so a note that starts with one keeps it. The
-     options are radios drawn as buttons, so a page whose script never ran
-     still reads them, a pick included; dc-assistant-choices only answers an
-     open block. An option breaks anywhere, a path has no space to wrap at.
-     The card is the radios' containing block: a radio stands absolutely
-     positioned, and outside the thread's scroller it would grow the page. */}}
+     options are radios drawn as buttons, checkboxes where the question takes
+     several, so a page whose script never ran still reads them, a pick
+     included; dc-assistant-choices only answers an open block. An option
+     breaks anywhere, a path has no space to wrap at. The card is the inputs'
+     containing block: an input stands absolutely positioned, and outside the
+     thread's scroller it would grow the page. */}}
 {{define "chat_choices.gohtml"}}
 <dc-assistant-choices class="d-block my-2" message-id="{{.MessageID}}" data-choices-state="{{.State}}"{{if .PostURL}} post-url="{{.PostURL}}" fragment-url="{{.FragmentURL}}" draft-url="{{.DraftURL}}" assistant-id="{{.AssistantID}}"{{end}}>
   <form class="d-flex flex-column gap-2" data-choices-form novalidate>
     <fieldset class="d-flex flex-column gap-2 border-0 m-0 p-0 min-w-0"{{if not .PostURL}} disabled{{end}}>
       {{range $q, $question := .Questions}}
-      <div class="position-relative border rounded p-2" role="radiogroup" aria-labelledby="choices-{{$.MessageID}}-{{$q}}" data-choices-question>
+      <div class="position-relative border rounded p-2" role="{{if .Multi}}group{{else}}radiogroup{{end}}" aria-labelledby="choices-{{$.MessageID}}-{{$q}}" data-choices-question>
         <div class="fw-medium mb-2 text-break" id="choices-{{$.MessageID}}-{{$q}}">{{.Text}}</div>
         <div class="d-flex flex-wrap gap-2">
           {{range $o, $option := .Options}}
-          <input type="radio" class="btn-check" name="pick-{{$q}}" value="{{$o}}" id="choices-{{$.MessageID}}-{{$q}}-{{$o}}" autocomplete="off"{{if .Picked}} checked{{end}}>
+          <input type="{{if $question.Multi}}checkbox{{else}}radio{{end}}" class="btn-check" name="{{if $question.Multi}}picks{{else}}pick{{end}}-{{$q}}" value="{{$o}}" id="choices-{{$.MessageID}}-{{$q}}-{{$o}}" autocomplete="off"{{if .Picked}} checked{{end}}>
           <label class="btn btn-sm btn-outline-primary text-wrap text-break text-start" for="choices-{{$.MessageID}}-{{$q}}-{{$o}}" data-choices-option>{{.Text}}</label>
           {{end}}
         </div>

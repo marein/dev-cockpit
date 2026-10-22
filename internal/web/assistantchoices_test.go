@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -271,5 +272,99 @@ func TestAnAnswersDraftSaveTellsTheOtherDevicesOnlyOfAChange(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &draft); err != nil || len(draft.Answers["a1"]) != 2 || draft.Answers["a1"][0].Option != 0 || draft.Answers["a1"][1].Text != " Friday " {
 		t.Fatalf("want the draft read to carry the answers as typed, got %s", rec.Body.String())
+	}
+}
+
+func mixedThread(rest ...assistant.Message) []assistant.Message {
+	asked := assistant.Message{ID: "a1", Role: assistant.RoleAssistant, State: assistant.StateComplete,
+		Content: "```ask\nWhich checks?\n- [ ] Unit tests\n- [ ] Lint\n- [ ] e2e\nDeploy now?\n- Yes\n- No\n```\n"}
+	return append([]assistant.Message{asked}, rest...)
+}
+
+// A question that takes several picks stands as checkboxes drawn like the
+// radios of one that takes one, filled from every pick of the draft, and an
+// answered one shows every pick. A pick or words answer it.
+func TestAQuestionThatTakesSeveralPicksStandsAsCheckboxes(t *testing.T) {
+	html := renderChoices(t, choicesServer(t), mixedThread(), choicesAnswering{instanceID: choicesInstance})
+	for _, want := range []string{
+		`role="group" aria-labelledby="choices-a1-0"`,
+		`role="radiogroup" aria-labelledby="choices-a1-1"`,
+		`<input type="checkbox" class="btn-check" name="picks-0" value="2" id="choices-a1-0-2" autocomplete="off">`,
+		`<input type="radio" class="btn-check" name="pick-1" value="0" id="choices-a1-1-0" autocomplete="off">`,
+		`class="btn btn-sm btn-outline-primary text-wrap text-break text-start" for="choices-a1-0-2" data-choices-option>e2e</label>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("want %q in %s", want, html)
+		}
+	}
+	drafts := map[string][]assistant.Pick{"a1": {{Option: -1, Options: []int{0, 2}}}}
+	html = renderChoices(t, choicesServer(t), mixedThread(), choicesAnswering{instanceID: choicesInstance, drafts: drafts})
+	if !strings.Contains(html, `name="picks-0" value="0" id="choices-a1-0-0" autocomplete="off" checked`) || !strings.Contains(html, `name="picks-0" value="2" id="choices-a1-0-2" autocomplete="off" checked`) ||
+		strings.Count(html, " checked") != 2 || !strings.Contains(html, "1 of 2 answered") {
+		t.Fatalf("want both picks of the draft checked and one question answered: %s", html)
+	}
+	words := map[string][]assistant.Pick{"a1": {{Option: -1, Text: "only the fast ones"}, {Option: 1}}}
+	html = renderChoices(t, choicesServer(t), mixedThread(), choicesAnswering{instanceID: choicesInstance, drafts: words})
+	if !strings.Contains(html, "2 of 2 answered") || strings.Contains(html, "disabled") {
+		t.Fatalf("want words alone to answer the question: %s", html)
+	}
+	reply := assistant.Message{ID: "u1", Role: assistant.RoleUser, State: assistant.StateComplete, Content: "…",
+		Answers: &assistant.Answers{Message: "a1", Picks: []assistant.Pick{{Option: -1, Options: []int{1, 2}, Text: "before Friday"}, {Option: 0}}}}
+	html = renderChoices(t, choicesServer(t), mixedThread(reply), choicesAnswering{instanceID: choicesInstance})
+	for _, want := range []string{`data-choices-state="answered"`, `name="picks-0" value="1" id="choices-a1-0-1" autocomplete="off" checked`, `name="picks-0" value="2" id="choices-a1-0-2" autocomplete="off" checked`, `name="pick-1" value="0" id="choices-a1-1-0" autocomplete="off" checked`, "before Friday"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("want %q in %s", want, html)
+		}
+	}
+	if strings.Count(html, " checked") != 3 {
+		t.Fatalf("want the three picks checked: %s", html)
+	}
+}
+
+// The picks of a question that takes several come as one picks-<n> field
+// each and land in the draft in the question's order; a pick named twice or
+// in the field of the other kind is refused.
+func TestPicksOfSeveralAreSavedFromTheirFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stateDir := t.TempDir()
+	conversations, workspace, err := assistant.New(stateDir, oneCoder{}, assistant.Cockpit{StateDir: stateDir})
+	if err != nil {
+		t.Fatalf("assistant: %v", err)
+	}
+	created, _ := conversations.Create("claude")
+	created.Messages = mixedThread()
+	assistant.NewStore(stateDir).Save(created)
+	s := &Server{assistants: conversations, workspace: workspace, bus: eventbus.New()}
+	r := gin.New()
+	r.POST("/assistants/:id", s.handleAssistantAction)
+	post := func(form url.Values) int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/assistants/"+created.ID, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		r.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for name, form := range map[string]url.Values{
+		"twice":         {"picks-0": {"1", "1"}},
+		"one on many":   {"pick-0": {"1"}},
+		"many on one":   {"picks-1": {"0", "1"}},
+		"not a number":  {"picks-0": {"x"}},
+		"out of range":  {"picks-0": {"3"}},
+		"below nothing": {"picks-0": {"-1"}},
+	} {
+		form.Set("form", "answers-draft")
+		form.Set("message_id", "a1")
+		if code := post(form); code != http.StatusBadRequest {
+			t.Errorf("%s: want a refusal, got %d", name, code)
+		}
+	}
+	if code := post(url.Values{"form": {"answers-draft"}, "message_id": {"a1"}, "picks-0": {"2", "0"}, "pick-1": {"1"}}); code != http.StatusOK {
+		t.Fatalf("want the picks saved, got %d", code)
+	}
+	draft, _ := conversations.Draft(created.ID)
+	if got := draft.Answers["a1"]; len(got) != 2 || !slices.Equal(got[0].Options, []int{0, 2}) || got[0].Option != -1 || got[1].Option != 1 {
+		t.Fatalf("want both picks in order beside the one pick, got %+v", got)
 	}
 }

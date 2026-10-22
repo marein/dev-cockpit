@@ -14,8 +14,11 @@ const { assert, BASE, sleep } = L;
 // typed in an open block is the assistant's draft, beside the composer's
 // words: a second browser of the owner shows it live and after a reload, a
 // send there answers the block in the first and leaves the words typed there.
+// A question whose options stand behind "- [ ] " takes several picks, its
+// checkboxes drawn like the radios, and one block mixes both kinds.
 // SHOTS_DIR with a mount takes the phone screenshots of an open block, of an
-// answered one with its row and of an answered one above an open one.
+// answered one with its row, of an answered one above an open one and of an
+// open mixed block with two picks on its question that takes several.
 // Gotchas:
 // - the block is server rendered in every state, the element only answers an
 //   open one, so a check reads data-choices-state, never the script,
@@ -41,6 +44,8 @@ const QUESTIONS = [
 const PROMPT = ["ECHO_ANSWER", "Two things to decide first.", "", "```ask", ...QUESTIONS, "```", "", "Everything else waits for that.", ""].join("\n");
 const PATHS = ["/root/projects/shop/internal/checkout/payment_provider_adapter_test.go", "/root/projects/shop/internal/checkout/payment_provider_adapter.go"];
 const LONG_PROMPT = ["ECHO_ANSWER", "One file first.", "", "```ask", "Which file should change first?", ...PATHS.map((p) => `- ${p}`), "```", ""].join("\n");
+const MIXED = ["Which checks should run before the deploy?", "- [ ] Unit tests", "- [ ] Lint", "- [ ] End to end", "Deploy right away?", "- Yes", "- No"];
+const MIXED_PROMPT = ["ECHO_ANSWER", "Pick what ships.", "", "```ask", ...MIXED, "```", ""].join("\n");
 const MIN_TARGET = 24;
 
 const state = (page) => page.locator(BLOCK).last().getAttribute("data-choices-state");
@@ -89,11 +94,12 @@ function draftOf(page, id) {
 }
 
 // waitStored waits until the assistant's draft holds want for one block, one
-// [option, words] per question, nothing for an empty block.
+// [option, words] per question, [option, options, words] where it took
+// several, nothing for an empty block.
 async function waitStored(page, id, messageID, want) {
   let got = null;
   for (const until = Date.now() + 10000; Date.now() < until; await sleep(150)) {
-    got = ((await draftOf(page, id)).answers || {})[messageID]?.map((p) => [p.option, p.text || ""]) || [];
+    got = ((await draftOf(page, id)).answers || {})[messageID]?.map((p) => (p.options ? [p.option, p.options, p.text || ""] : [p.option, p.text || ""])) || [];
     if (JSON.stringify(got) === JSON.stringify(want)) return;
   }
   throw new Error(`the draft holds ${JSON.stringify(got)} for ${messageID}, want ${JSON.stringify(want)}`);
@@ -580,6 +586,98 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     assert(kept.box === words && kept.draft === words, `the words typed here are gone after the send there: ${JSON.stringify(kept)}`);
     await closePanel(mp);
     return `live in ${ms}ms, served filled and kept across a reload, answered here after the send there, the composer's words kept`;
+  });
+
+  let mixedID = "";
+  const mixedOption = (p, q, o) => p.locator(`${BLOCK}[message-id="${mixedID}"] [data-choices-question]`).nth(q).locator("[data-choices-option]").nth(o);
+  const mixedNote = (p, q) => p.locator(`${BLOCK}[message-id="${mixedID}"] [data-choices-question]`).nth(q).locator("textarea");
+  const twoPicks = ["picks-0=0", "picks-0=2", "pick-1=0"];
+
+  await run("a mixed block toggles several picks on their own and takes one back, drawn like the single ones, a hand built list that does not fit is refused", async () => {
+    await openAssistant(page, id);
+    await ask(page, idle, MIXED_PROMPT);
+    mixedID = await page.locator(BLOCK).last().getAttribute("message-id");
+    const kinds = await page.locator(`${BLOCK}[message-id="${mixedID}"] [data-choices-question]`).evaluateAll((qs) => qs.map((q) => [...q.querySelectorAll("input")].map((i) => i.type).join(",")));
+    assert(JSON.stringify(kinds) === '["checkbox,checkbox,checkbox","radio,radio"]', `the questions are not one of several picks and one of one: ${JSON.stringify(kinds)}`);
+    await page.mouse.move(0, 0);
+    assert(await look(mixedOption(page, 0, 0)) === await look(mixedOption(page, 1, 0)), "an option of several does not look like an option of one");
+    for (const o of [0, 1, 2]) await mixedOption(page, 0, o).click();
+    const all = await blockState(page, mixedID);
+    assert(JSON.stringify(all.checked) === '["picks-0=0","picks-0=1","picks-0=2"]' && all.count === "1 of 2 answered" && all.send, `three picks did not stand together: ${JSON.stringify(all)}`);
+    await mixedOption(page, 0, 1).click();
+    await mixedOption(page, 1, 0).click();
+    await page.mouse.move(0, 0);
+    const two = await blockState(page, mixedID);
+    assert(JSON.stringify(two.checked) === JSON.stringify(twoPicks) && two.count === "2 of 2 answered" && !two.send, `taking one back left ${JSON.stringify(two)}`);
+    assert(await look(mixedOption(page, 0, 0)) === await look(mixedOption(page, 1, 0)), "a pick of several does not look like a pick of one");
+    await waitStored(page, id, mixedID, [[-1, [0, 2], ""], [0, ""]]);
+    for (const extra of [[["picks-0", "1"], ["picks-0", "1"]], [["pick-0", "1"]], [["picks-1", "0"], ["picks-1", "1"]], [["picks-0", "3"]]]) {
+      const bad = await postForm(page, id, [["form", "answers-draft"], ["message_id", mixedID], ...extra]);
+      assert(bad.status === 400, `a hand built draft ${JSON.stringify(extra)} answered ${bad.status}`);
+    }
+    await waitStored(page, id, mixedID, [[-1, [0, 2], ""], [0, ""]]);
+    return "checkboxes beside radios, three picks then two, the draft holding [0, 2], four hand built lists refused";
+  });
+
+  await run("the picks of a question that takes several hand over to a phone and back live, a pick taken back there looks untouched, Ctrl+Enter sends every pick", async () => {
+    const mp = await mobilePage();
+    await openAssistant(mp, id);
+    await waitState(mp, "open");
+    const served = await blockState(mp, mixedID);
+    assert(JSON.stringify(served.checked) === JSON.stringify(twoPicks) && served.count === "2 of 2 answered" && !served.send, `the phone does not open on the picks: ${JSON.stringify(served)}`);
+    await mp.locator(`${BLOCK}[message-id="${mixedID}"]`).scrollIntoViewIfNeeded();
+    const fit = await phoneFit(mp);
+    assert(!fit.sideways && fit.right <= fit.width && fit.outside === 0 && fit.small === 0, `the mixed block does not fit the phone: ${JSON.stringify(fit)}`);
+    if (process.env.SHOTS_DIR) {
+      const clip = await mp.evaluate((sel) => {
+        const box = document.querySelector(sel).getBoundingClientRect();
+        return { x: 0, y: Math.max(0, box.top - 8), width: window.innerWidth, height: box.height + 16 };
+      }, `${BLOCK}[message-id="${mixedID}"]`);
+      await mp.screenshot({ path: path.join(process.env.SHOTS_DIR, "ask-multi.png"), clip });
+    }
+    const untouched = await look(mixedOption(mp, 0, 1));
+    const follows = async (p, want, what) => {
+      let got = null;
+      for (const until = Date.now() + 10000; JSON.stringify(got) !== JSON.stringify(want); await sleep(100)) {
+        assert(Date.now() < until, `${what}: ${JSON.stringify(got)}`);
+        got = (await blockState(p, mixedID)).checked;
+      }
+    };
+    await mixedOption(mp, 0, 1).tap();
+    await follows(page, ["picks-0=0", "picks-0=1", "picks-0=2", "pick-1=0"], "the desktop does not follow the phone's pick");
+    await mixedOption(mp, 0, 1).tap();
+    assert(await look(mixedOption(mp, 0, 1)) === untouched, "the pick taken back on the phone does not look untouched");
+    await follows(page, twoPicks, "the desktop does not follow the pick the phone took back");
+    await mixedNote(page, 0).fill("Before Friday");
+    for (const until = Date.now() + 10000; (await blockState(mp, mixedID)).notes[0] !== "Before Friday"; await sleep(100)) {
+      assert(Date.now() < until, "the phone does not follow the desktop's note");
+    }
+    const sends = countAnswers(page);
+    await mixedNote(page, 0).press("Control+Enter");
+    await waitState(page, "answered");
+    await waitState(mp, "answered");
+    await waitStored(page, id, mixedID, []);
+    await idle(page);
+    assert(sends() === 1, "Ctrl+Enter did not send the answers once");
+    const transcript = await page.evaluate(async (instance) => (await fetch(`/assistants/instances/${instance}?full=1&entries=50`, { headers: { Accept: "application/json" } })).json(), id);
+    const stored = transcript.messages.filter((m) => m.role === "user");
+    const text = stored[stored.length - 1]?.content || "";
+    const want = "Which checks should run before the deploy?\n- [x] Unit tests\n- [ ] Lint\n- [x] End to end\nNote: Before Friday\n\nDeploy right away?\nAnswer: Yes";
+    assert(text === want, `the assistant reads ${JSON.stringify(text)}`);
+    const over = await page.evaluate(([sel, asked]) => {
+      const block = document.querySelector(`${sel}[message-id="${asked}"]`);
+      return {
+        fieldset: block.querySelector("fieldset").disabled,
+        fields: block.querySelectorAll("[data-choices-send], textarea").length,
+        checked: [...block.querySelectorAll("input:checked")].map((i) => i.name + "=" + i.value),
+        notes: [...block.querySelectorAll("[data-choices-note]")].map((n) => n.textContent.trim()),
+      };
+    }, [BLOCK, mixedID]);
+    assert(over.fieldset && over.fields === 0 && JSON.stringify(over.checked) === JSON.stringify(twoPicks) && JSON.stringify(over.notes) === '["Before Friday"]', `the answered block reads ${JSON.stringify(over)}`);
+    const row = await rowAfter(page, mixedID);
+    assert(row?.answered && row.text === `You · ${row.time} · answered`, `the answered row reads ${JSON.stringify(row)}`);
+    await closePanel(mp);
+    return `served with both picks, followed live both ways, answered with ${JSON.stringify(text)}`;
   });
 
   await run("the choices runner's assistant is deleted", async () => {

@@ -477,25 +477,25 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
     });
 
     await run("the questions of an answer stand read only for the guest without the owner's draft, answered live with one slim answered row of the user", async () => {
-      const message = ["ECHO_ANSWER", "Pick one.", "", "```ask", "Which one?", "- This", "- That", "```", ""].join("\n");
+      const message = ["ECHO_ANSWER", "Pick one.", "", "```ask", "Which one?", "- This", "- That", "Which colors?", "- [ ] Red", "- [ ] Blue", "```", ""].join("\n");
       await postJSON(page, `/assistants/${fx.a}`, { form: "message", message });
       await waitIdle(page, fx.a);
       const owner = await page.evaluate(async (p) => (await fetch(p)).text(), `/assistants/${fx.a}`);
       const open = [...owner.matchAll(/<dc-assistant-choices[^>]*message-id="([^"]+)"[^>]*data-choices-state="open"/g)].pop()?.[1];
       assert(open, "the owner's page shows no open block");
-      await postJSON(page, `/assistants/${fx.a}`, { form: "answers-draft", message_id: open, "pick-0": "0", "note-0": "owner draft words" });
+      await postJSON(page, `/assistants/${fx.a}`, { form: "answers-draft", message_id: open, "pick-0": "0", "picks-1": "1", "note-0": "owner draft words" });
       const gp = guest.page;
       await gp.goto(`${BASE}${fx.base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
       await gp.waitForSelector('[data-share-log] dc-assistant-choices[data-choices-state="readonly"]', { state: "visible", timeout: 15000 });
       const readBlock = () => gp.evaluate(() => {
         const nodes = document.querySelectorAll("[data-share-log] dc-assistant-choices");
         const b = nodes[nodes.length - 1];
-        return { post: b.hasAttribute("post-url"), draft: b.hasAttribute("draft-url"), fieldset: b.querySelector("fieldset").disabled, fields: b.querySelectorAll("textarea, [data-choices-send]").length, checked: b.querySelectorAll("input:checked").length, options: [...b.querySelectorAll("[data-choices-option]")].map((l) => l.textContent.trim()), words: document.body.textContent.includes("owner draft words") };
+        return { post: b.hasAttribute("post-url"), draft: b.hasAttribute("draft-url"), fieldset: b.querySelector("fieldset").disabled, fields: b.querySelectorAll("textarea, [data-choices-send]").length, checked: b.querySelectorAll("input:checked").length, options: [...b.querySelectorAll("[data-choices-option]")].map((l) => l.textContent.trim()), kinds: [...b.querySelectorAll("input")].map((i) => i.type).join(","), words: document.body.textContent.includes("owner draft words") };
       });
       const block = await readBlock();
-      assert(!block.post && !block.draft && block.fieldset && block.fields === 0 && JSON.stringify(block.options) === '["This","That"]', `the guest's block is not read only: ${JSON.stringify(block)}`);
+      assert(!block.post && !block.draft && block.fieldset && block.fields === 0 && JSON.stringify(block.options) === '["This","That","Red","Blue"]' && block.kinds === "radio,radio,checkbox,checkbox", `the guest's block is not read only: ${JSON.stringify(block)}`);
       assert(block.checked === 0 && !block.words, `the guest sees the owner's draft: ${JSON.stringify(block)}`);
-      await postJSON(page, `/assistants/${fx.a}`, { form: "answers-draft", message_id: open, "pick-0": "1", "note-0": "owner draft words, moved" });
+      await postJSON(page, `/assistants/${fx.a}`, { form: "answers-draft", message_id: open, "pick-0": "1", "picks-1": "0", "note-0": "owner draft words, moved" });
       await sleep(1500);
       const still = await readBlock();
       assert(still.checked === 0 && !still.words && !fx.requests.some((r) => r.includes("/draft")), `the owner's draft reached the guest: ${JSON.stringify(still)}`);
@@ -515,7 +515,7 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
         return nodes[nodes.length - 1].getAttribute("message-id");
       });
       const users = await gp.locator('[data-share-log] [data-role="user"]').count();
-      await postJSON(page, `/assistants/${fx.a}`, { form: "answers", message_id: asked, "pick-0": "1" });
+      await postJSON(page, `/assistants/${fx.a}`, [["form", "answers"], ["message_id", asked], ["pick-0", "1"], ["picks-1", "0"], ["picks-1", "1"]]);
       await waitIdle(page, fx.a);
       await gp.waitForFunction(() => {
         const replies = document.querySelectorAll('[data-share-log] [data-role="assistant"]');
@@ -532,7 +532,7 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
           users: document.querySelectorAll('[data-share-log] [data-role="user"]').length,
           seen: [...new Set(window.dcGuestUsers)],
           over: b.querySelectorAll("[data-choices-over]").length,
-          picked: b.querySelector("input:checked + label")?.textContent.trim(),
+          picked: [...b.querySelectorAll("input:checked + label")].map((l) => l.textContent.trim()).join(","),
           row: row.textContent.replace(/\s+/g, " ").trim(),
           time: row.querySelector("dc-time")?.textContent.trim() || "",
           words: row.querySelectorAll("[data-assistant-text]").length,
@@ -540,7 +540,7 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       }, asked);
       assert(after.users === users + 1 && JSON.stringify(after.seen) === JSON.stringify([after.rowID]), `the guest saw no single message of the user for the answers: ${JSON.stringify(after)}`);
       assert(after.time && after.row === `You · ${after.time} · answered` && after.words === 0, `the guest's answered row reads ${JSON.stringify(after)}`);
-      assert(after.over === 0 && after.picked === "That", `the guest's block is not answered: ${JSON.stringify(after)}`);
+      assert(after.over === 0 && after.picked === "That,Red,Blue", `the guest's block is not answered: ${JSON.stringify(after)}`);
     });
 
     await run("of the workspace the guest reads the file a message links and nothing else", async () => {

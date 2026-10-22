@@ -110,11 +110,13 @@ func (v ChatChoicesView) State() string {
 	return "readonly"
 }
 
-// ChatQuestionView is one question with its options, the words the user
-// wrote beside it once answered, and the words of the draft while it is open.
+// ChatQuestionView is one question with its options, Multi where it takes
+// several, the words the user wrote beside it once answered, and the words of
+// the draft while it is open.
 type ChatQuestionView struct {
 	Text    string
 	Options []ChatOptionView
+	Multi   bool
 	Note    template.HTML
 	Draft   string
 }

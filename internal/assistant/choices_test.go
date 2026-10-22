@@ -1,12 +1,17 @@
 package assistant
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 )
 
 const choicesAnswer = "Two things first.\n\n```ask\nWhich database should the app use?\n- PostgreSQL\n- SQLite\nDeploy right away?\n- Yes\n- No, after the review\n```\n"
+
+// mixedAnswer asks a question that takes several picks before one that takes
+// one.
+const mixedAnswer = "```ask\nWhich checks run first?\n- [ ] Unit tests\n- [ ] Lint\n- [ ] e2e\nDeploy right away?\n- Yes\n- No\n```\n"
 
 func answered(content string) Message {
 	return Message{ID: "a1", Role: RoleAssistant, State: StateComplete, Content: content}
@@ -38,10 +43,25 @@ func TestAMalformedAskBlockAsksNothing(t *testing.T) {
 		"question too long":   strings.Repeat("x", maxChoiceRunes+1) + "\n- a\n- b\n",
 		"option too long":     "Pick?\n- a\n- " + strings.Repeat("x", maxChoiceRunes+1) + "\n",
 		"no options as lines": "Pick?\n-a\n-b\n",
+		"box after plain":     "Pick?\n- a\n- [ ] b\n",
+		"plain after box":     "Pick?\n- [ ] a\n- b\n",
+		"empty box":           "Pick?\n- [ ] a\n- [ ]\n",
+		"one box":             "Pick?\n- [ ] only\n",
 	} {
 		if _, ok := answered("```ask\n" + body + "```\n").Choices(); ok {
 			t.Errorf("%s: want no questions", name)
 		}
+	}
+}
+
+func TestOptionsWithBoxesTakeSeveralPicksBesideAQuestionThatTakesOne(t *testing.T) {
+	choices, ok := answered(mixedAnswer).Choices()
+	want := []Question{
+		{Text: "Which checks run first?", Options: []string{"Unit tests", "Lint", "e2e"}, Multi: true},
+		{Text: "Deploy right away?", Options: []string{"Yes", "No"}},
+	}
+	if !ok || !reflect.DeepEqual(choices.Questions, want) {
+		t.Fatalf("want a question with several picks and one with one, got %+v %v", choices, ok)
 	}
 }
 
@@ -89,6 +109,71 @@ func TestTheAnswerReadsEveryQuestionWithWhatWasPicked(t *testing.T) {
 	plain, err := answerMessage(c, "a1", []Pick{{Option: 1}, {Option: 0}})
 	if err != nil || plain.Content != "Which database should the app use?\nAnswer: SQLite\n\nDeploy right away?\nAnswer: Yes" {
 		t.Fatalf("want the options alone, got %q %v", plain.Content, err)
+	}
+}
+
+func TestTheAnswerReadsEveryOptionPickedOnAQuestionThatTakesSeveral(t *testing.T) {
+	c := Instance{Messages: []Message{answered(mixedAnswer)}}
+	m, err := answerMessage(c, "a1", []Pick{{Option: -1, Options: []int{2, 0}, Text: " before Friday "}, {Option: 0}})
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	want := "Which checks run first?\n- [x] Unit tests\n- [ ] Lint\n- [x] e2e\nNote: before Friday\n\nDeploy right away?\nAnswer: Yes"
+	if m.Content != want {
+		t.Fatalf("want %q, got %q", want, m.Content)
+	}
+	if !reflect.DeepEqual(m.Answers.Picks, []Pick{{Option: -1, Options: []int{0, 2}, Text: "before Friday"}, {Option: 0}}) {
+		t.Fatalf("want the picks kept in the question's order, got %+v", m.Answers.Picks)
+	}
+	words, err := answerMessage(c, "a1", []Pick{{Option: -1, Text: "only the fast ones"}, {Option: 1}})
+	if err != nil || words.Content != "Which checks run first?\nAnswer in my own words: only the fast ones\n\nDeploy right away?\nAnswer: No" {
+		t.Fatalf("want the words alone, got %q %v", words.Content, err)
+	}
+}
+
+func TestAnOptionHoldingACommaStaysOneOption(t *testing.T) {
+	c := Instance{Messages: []Message{answered("```ask\nWhich checks run first?\n- [ ] Unit, fast\n- [ ] Lint\n- [ ] e2e\n```\n")}}
+	m, err := answerMessage(c, "a1", []Pick{{Option: -1, Options: []int{0, 1}}})
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	want := "Which checks run first?\n- [x] Unit, fast\n- [x] Lint\n- [ ] e2e"
+	if m.Content != want {
+		t.Fatalf("want %q, got %q", want, m.Content)
+	}
+}
+
+func TestPicksOnAQuestionThatTakesSeveralAreRefusedWhereTheyDoNotFit(t *testing.T) {
+	c := Instance{Messages: []Message{answered(mixedAnswer)}}
+	for name, picks := range map[string][]Pick{
+		"none and no words": {{Option: -1}, {Option: 0}},
+		"picked twice":      {{Option: -1, Options: []int{1, 1}}, {Option: 0}},
+		"out of range":      {{Option: -1, Options: []int{0, 3}}, {Option: 0}},
+		"below zero":        {{Option: -1, Options: []int{-1}}, {Option: 0}},
+		"more than offered": {{Option: -1, Options: []int{0, 1, 2, 0}}, {Option: 0}},
+		"one option there":  {{Option: 0}, {Option: 0}},
+		"several on one":    {{Option: -1, Options: []int{0}}, {Option: -1, Options: []int{0, 1}}},
+		"beyond questions":  {{Option: -1, Options: []int{0}}, {Option: 0}, {Option: -1, Options: []int{0}}},
+	} {
+		if _, err := answerMessage(c, "a1", picks); err == nil {
+			t.Errorf("%s: want a refusal", name)
+		}
+	}
+}
+
+// An answer stored before a question could take several picks reads as it
+// always did, and a pick of one option is stored in that shape still.
+func TestAPickOfOneOptionKeepsItsStoredShape(t *testing.T) {
+	var old Answers
+	if err := json.Unmarshal([]byte(`{"message":"a1","picks":[{"option":1,"text":"x"},{"option":-1,"text":"y"}]}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(old.Picks, []Pick{{Option: 1, Text: "x"}, {Option: -1, Text: "y"}}) || !reflect.DeepEqual(old.Picks[0].Picked(), []int{1}) {
+		t.Fatalf("want the stored picks as before, got %+v", old.Picks)
+	}
+	raw, _ := json.Marshal([]Pick{{Option: 1}, {Option: -1, Options: []int{0, 2}}})
+	if string(raw) != `[{"option":1},{"option":-1,"options":[0,2]}]` {
+		t.Fatalf("want one option stored as before and several beside it, got %s", raw)
 	}
 }
 
@@ -185,8 +270,8 @@ func TestTheInstructionsTeachTheAskBlock(t *testing.T) {
 	}
 	end := strings.Index(text[start+3:], "```") + start + 6
 	choices, ok := answered(text[start:end]).Choices()
-	if !ok || len(choices.Questions) != 2 {
-		t.Fatalf("want the example read as two questions, got %+v %v", choices, ok)
+	if !ok || len(choices.Questions) != 3 || choices.Questions[0].Multi || !choices.Questions[1].Multi || choices.Questions[2].Multi {
+		t.Fatalf("want the example read as three questions, the second taking several picks, got %+v %v", choices, ok)
 	}
 	pinned(t, "end your answer with one `ask` block", "the answers come back as the user's next message")
 }

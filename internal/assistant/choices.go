@@ -11,7 +11,8 @@ import (
 
 // AskLanguage names the fenced block an answer asks the user with, a
 // format instructions.md.tmpl teaches: a question on a line of its own, its
-// options under it, one per line behind "- ".
+// options under it, one per line behind "- ", or behind "- [ ] " where the
+// question takes several picks.
 const AskLanguage = "ask"
 
 const (
@@ -24,10 +25,12 @@ const (
 	MaxChoiceNoteRunes = 2000
 )
 
-// Question is one question of an ask block with the options it offers.
+// Question is one question of an ask block with the options it offers,
+// Multi where it takes several of them.
 type Question struct {
 	Text    string
 	Options []string
+	Multi   bool
 }
 
 // Choices are the questions an answer asks: the first well formed ask
@@ -37,11 +40,27 @@ type Choices struct {
 	Questions []Question
 }
 
-// Pick is the answer to one question: the option picked, -1 for none, and
-// what the user wrote beside it, a note on the option or the answer itself.
+// Pick is the answer to one question: the option picked, -1 for none, the
+// options picked where the question takes several, in the question's order,
+// and what the user wrote beside it, a note on the options or the answer
+// itself.
 type Pick struct {
-	Option int    `json:"option"`
-	Text   string `json:"text,omitempty"`
+	Option  int    `json:"option"`
+	Options []int  `json:"options,omitempty"`
+	Text    string `json:"text,omitempty"`
+}
+
+// Picked is every option the pick picked, whichever kind of question it
+// answers.
+func (p Pick) Picked() []int {
+	if p.Option >= 0 {
+		return []int{p.Option}
+	}
+	return p.Options
+}
+
+func (p Pick) same(other Pick) bool {
+	return p.Option == other.Option && p.Text == other.Text && slices.Equal(p.Options, other.Options)
 }
 
 // Answers names the answer whose questions a user message answers and what
@@ -92,14 +111,16 @@ func parseChoices(body string) ([]Question, bool) {
 			continue
 		}
 		if option, ok := strings.CutPrefix(line, "- "); ok {
+			option, multi := strings.CutPrefix(strings.TrimSpace(option), "[ ]")
 			option = strings.TrimSpace(option)
 			if len(questions) == 0 || option == "" || utf8.RuneCountInString(option) > maxChoiceRunes {
 				return nil, false
 			}
 			last := &questions[len(questions)-1]
-			if len(last.Options) == maxChoiceOptions {
+			if len(last.Options) == maxChoiceOptions || len(last.Options) > 0 && last.Multi != multi {
 				return nil, false
 			}
+			last.Multi = multi
 			last.Options = append(last.Options, option)
 			continue
 		}
@@ -185,14 +206,14 @@ func (s *Service) SaveAnswers(id, messageID string, picks []Pick) (bool, error) 
 func checkPicks(questions []Question, picks []Pick) ([]Pick, error) {
 	trimmed := make([]Pick, len(picks))
 	for i, p := range picks {
-		trimmed[i] = Pick{Option: p.Option, Text: strings.TrimSpace(p.Text)}
+		trimmed[i] = Pick{Option: p.Option, Options: p.Options, Text: strings.TrimSpace(p.Text)}
 	}
 	clean, err := fitPicks(questions, trimmed)
 	if err != nil {
 		return nil, err
 	}
 	for _, p := range clean {
-		if p.Option < 0 && p.Text == "" {
+		if len(p.Picked()) == 0 && p.Text == "" {
 			return nil, errors.New("Answer every question first.")
 		}
 	}
@@ -209,7 +230,7 @@ func fitPicks(questions []Question, picks []Pick) ([]Pick, error) {
 	}
 	for i, p := range picks {
 		if i >= len(questions) {
-			if p.Option >= 0 || strings.TrimSpace(p.Text) != "" {
+			if p.Option >= 0 || len(p.Options) > 0 || strings.TrimSpace(p.Text) != "" {
 				return nil, errors.New("There are more answers than questions.")
 			}
 			continue
@@ -217,16 +238,48 @@ func fitPicks(questions []Question, picks []Pick) ([]Pick, error) {
 		if p.Option < -1 || p.Option >= len(questions[i].Options) {
 			return nil, errors.New("That option does not exist.")
 		}
+		if questions[i].Multi && p.Option >= 0 || !questions[i].Multi && len(p.Options) > 0 {
+			return nil, errors.New("That answer does not fit its question.")
+		}
+		options, err := fitOptions(questions[i], p.Options)
+		if err != nil {
+			return nil, err
+		}
 		if utf8.RuneCountInString(p.Text) > MaxChoiceNoteRunes {
 			return nil, errors.New("An answer is too long.")
 		}
-		fit[i] = p
+		fit[i] = Pick{Option: p.Option, Options: options, Text: p.Text}
 	}
 	return fit, nil
 }
 
-// answerText is what the assistant reads: every question with the option
-// picked and what was written beside it, plain text that needs no format.
+// fitOptions puts the options picked on a question that takes several into
+// the question's order. Each stands once, so a list never grows past the
+// options the question offers.
+func fitOptions(question Question, options []int) ([]int, error) {
+	if len(options) == 0 {
+		return nil, nil
+	}
+	if len(options) > len(question.Options) {
+		return nil, errors.New("That option does not exist.")
+	}
+	sorted := slices.Sorted(slices.Values(options))
+	for i, option := range sorted {
+		if option < 0 || option >= len(question.Options) {
+			return nil, errors.New("That option does not exist.")
+		}
+		if i > 0 && sorted[i-1] == option {
+			return nil, errors.New("An option is picked twice.")
+		}
+	}
+	return sorted, nil
+}
+
+// answerText is what the assistant reads: every question with the options
+// picked and what was written beside it, plain text that needs no format. A
+// question that takes several comes back as its whole list with the picks
+// checked, since a joined line could not tell an option holding a comma from
+// two options.
 func answerText(questions []Question, picks []Pick) string {
 	var b strings.Builder
 	for i, q := range questions {
@@ -236,12 +289,22 @@ func answerText(questions []Question, picks []Pick) string {
 		b.WriteString(q.Text)
 		p := picks[i]
 		switch {
-		case p.Option < 0:
+		case len(p.Picked()) == 0:
 			b.WriteString("\nAnswer in my own words: " + p.Text)
-		case p.Text == "":
-			b.WriteString("\nAnswer: " + q.Options[p.Option])
+			continue
+		case q.Multi:
+			for option, text := range q.Options {
+				box := "\n- [ ] "
+				if slices.Contains(p.Options, option) {
+					box = "\n- [x] "
+				}
+				b.WriteString(box + text)
+			}
 		default:
-			b.WriteString("\nAnswer: " + q.Options[p.Option] + "\nNote: " + p.Text)
+			b.WriteString("\nAnswer: " + q.Options[p.Option])
+		}
+		if p.Text != "" {
+			b.WriteString("\nNote: " + p.Text)
 		}
 	}
 	return b.String()
