@@ -112,7 +112,7 @@
     </div>
     {{end}}
     {{if .JobsOlder}}
-    <div class="list-group-item px-0 text-secondary small">and {{.JobsOlder}} older</div>
+    <button type="button" class="btn btn-link btn-sm link-secondary px-0 align-self-start dc-tap" data-assistant-older>and {{.JobsOlder}} older</button>
     {{end}}
   </div>
   {{else}}

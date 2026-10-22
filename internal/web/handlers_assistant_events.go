@@ -53,19 +53,19 @@ func (s *Server) handleAssistantTriggers(c *gin.Context) {
 	if owner == "all" {
 		owner = ""
 	}
+	all := listsAll(c)
 	if wantsJSON(c.Request) {
-		s.assistantTriggersJSON(c, owner)
+		s.assistantTriggersJSON(c, owner, all)
 		return
 	}
-	c.HTML(http.StatusOK, "assistant_triggers_list.gohtml", s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, owner))
+	c.HTML(http.StatusOK, "assistant_triggers_list.gohtml", s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, owner, all))
 }
 
 // assistantTriggersJSON is what `trigger-list` reads: the rows the aside shows,
 // narrowed by a word before the cap and capped the way the aside caps them,
 // with what each of the two left out counted. The whole picture is behind the
 // two flags and nothing is dropped in silence.
-func (s *Server) assistantTriggersJSON(c *gin.Context, owner string) {
-	all, _ := strconv.ParseBool(c.DefaultQuery("all", "false"))
+func (s *Server) assistantTriggersJSON(c *gin.Context, owner string, all bool) {
 	since, err := querySince(c)
 	if err != nil {
 		s.assistantJobError(c, err)
@@ -523,8 +523,8 @@ func parseSpan(raw string) (time.Duration, error) {
 
 // assistantTriggersData is the model of the fragment on page: one assistant's
 // triggers and what its form offers, or everybody's when no owner is named.
-func (s *Server) assistantTriggersData(page render.Page, owner string) render.AssistantTriggersData {
-	triggers, _, older := narrowTriggers(s.triggersOf(owner), "", time.Time{}, false)
+func (s *Server) assistantTriggersData(page render.Page, owner string, all bool) render.AssistantTriggersData {
+	triggers, _, older := narrowTriggers(s.triggersOf(owner), "", time.Time{}, all)
 	data := render.AssistantTriggersData{
 		Page:   page,
 		Owner:  owner,

@@ -22,8 +22,9 @@ const { guestPage } = require("./project-share-guest");
 // wear the owner's steered mark and a working ring that comes and goes live,
 // in the list, the phone's sheet and the head, and the guest hears the
 // working state of nothing else. Beside the chat stand the assistant's jobs
-// and triggers, read only, one made later joining live, the other
-// assistant's nowhere. The assistant at work wears the owner's ring for the
+// and triggers, read only, one made later joining live, the spent ones past
+// the newest five opening on a tap of "and N older" and staying through the
+// next pull, the other assistant's nowhere. The assistant at work wears the owner's ring for the
 // guest, live: a turn on its row, in the switcher, on the phone's head and as
 // the tool line in the answer, a check on its job's row and a reaction on its
 // trigger's row. Share in the owner's row menu of an assistant opens
@@ -436,6 +437,32 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       await notFound(`${fx.link}/assistants/triggers?assistant=${fx.b}`, "the other assistant's triggers");
       const form = await fetchRaw(`${fx.link}/assistants/triggers?form=new&assistant=${fx.a}`);
       assert(form.status === 200 && !form.body.includes("<form") && form.body.includes(`data-assistant-trigger="${fx.trigA}"`), `the trigger form answered ${form.status}`);
+    });
+
+    await run("the guest's and N older opens the spent triggers in place and keeps them through the next pull", async () => {
+      const gp = guest.page;
+      const spent = [];
+      for (let i = 0; i < 6; i++) {
+        spent.push((await postJSON(page, "/assistants/triggers", { form: "new", assistant: fx.a, event: "cron", spec: "0 3 * * *", task: `EVENT_NOTHING older ${i}`, batch: "0", until: "1s" })).id);
+      }
+      const capped = `${fx.link}/assistants/triggers?assistant=${fx.a}`;
+      const deadline = Date.now() + 30000;
+      while (!(await fetchRaw(capped)).body.includes("data-assistant-older") && Date.now() < deadline) await sleep(500);
+      const rows = async (url) => ((await fetchRaw(url)).body.match(/data-assistant-trigger="/g) || []).length;
+      const all = await rows(`${capped}&all=1`);
+      assert(all > await rows(capped), "the guest's list holds nothing back");
+      await gp.goto(`${BASE}${fx.base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+      await gp.click("#assistant-triggers-tab");
+      await gp.click("#assistant-triggers [data-assistant-older]");
+      const whole = (n) => gp.waitForFunction((n) => document.querySelectorAll("#assistant-triggers [data-assistant-trigger]").length === n
+        && !document.querySelector("#assistant-triggers [data-assistant-older]"), n, { timeout: 15000 });
+      await whole(all);
+      for (const id of spent) assert(await gp.isVisible(`#assistant-triggers [data-assistant-trigger="${id}"]`), `the spent trigger ${id} is not shown`);
+      assert(!(await gp.$("#assistant-triggers [data-assistant-trigger-remove], #assistant-triggers form")), "the older rows offer a change");
+      const one = await postJSON(page, "/assistants/triggers", { form: "new", assistant: fx.a, event: "cron", spec: "0 5 * * *", task: "EVENT_NOTHING one more", batch: "0" });
+      await gp.waitForSelector(`#assistant-triggers [data-assistant-trigger="${one.id}"]`, { state: "visible", timeout: 15000 });
+      await whole(all + 1);
+      await postJSON(page, "/assistants/triggers", { form: "remove", id: one.id });
     });
 
     await run("the answer streams to the open guest while it is written and links inside the share when done", async () => {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -22,9 +23,10 @@ const assistantJobsPath = "/assistants/jobs"
 
 // handleAssistantJobs serves the job list on its own, so a check that changed a
 // job reaches the open page without a reload. The `assistant` query narrows it
-// to one assistant's jobs, which is what its own page asks for.
+// to one assistant's jobs, which is what its own page asks for, and `all`
+// lifts the cap on the closed tail, which is what a tap on the count asks for.
 func (s *Server) handleAssistantJobs(c *gin.Context) {
-	jobs, older := s.assistantJobViews(strings.TrimSpace(c.Query("assistant")))
+	jobs, older := s.assistantJobViews(strings.TrimSpace(c.Query("assistant")), listsAll(c))
 	c.HTML(http.StatusOK, "assistant_jobs_list.gohtml", render.AssistantData{
 		Jobs:      jobs,
 		JobsOpen:  openJobs(jobs),
@@ -66,23 +68,31 @@ func openJobs(jobs []render.AssistantJobView) int {
 // as a count, never silently.
 const closedJobsShown = 5
 
+// listsAll reads the `all` query a list of jobs or triggers is asked with: the
+// whole history instead of its capped tail.
+func listsAll(c *gin.Context) bool {
+	all, _ := strconv.ParseBool(c.Query("all"))
+	return all
+}
+
 // assistantJobViews are the coders an assistant steers, open jobs first, the
-// closed tail capped. An empty owner is every assistant's jobs, which is what a
-// surface that is not one assistant's page shows. Returns the views and how
-// many closed jobs were dropped.
-func (s *Server) assistantJobViews(owner string) ([]render.AssistantJobView, int) {
+// closed tail capped unless all lifts it. An empty owner is every assistant's
+// jobs, which is what a surface that is not one assistant's page shows.
+// Returns the views and how many closed jobs were dropped.
+func (s *Server) assistantJobViews(owner string, all bool) ([]render.AssistantJobView, int) {
 	jobs := s.watcher.List()
 	if owner != "" {
 		jobs = s.watcher.ListOf(owner)
 	}
 	out := make([]render.AssistantJobView, 0, len(jobs))
-	closed := 0
+	closed, older := 0, 0
 	for _, w := range jobs {
 		// The list is sorted open first and newest first, so everything past
 		// the cap is the oldest closed history.
 		if !w.State.Open() {
 			closed++
-			if closed > closedJobsShown {
+			if !all && closed > closedJobsShown {
+				older++
 				continue
 			}
 		}
@@ -112,10 +122,6 @@ func (s *Server) assistantJobViews(owner string) ([]render.AssistantJobView, int
 			view.Owner = s.assistantName(w.Owner)
 		}
 		out = append(out, view)
-	}
-	older := closed - closedJobsShown
-	if older < 0 {
-		older = 0
 	}
 	return out, older
 }

@@ -114,7 +114,7 @@ func (s *Server) handleShareAssistant(c *gin.Context) {
 	}
 	base := guestAssistantURL(g, inst.ID)
 	linked := map[string]bool{}
-	jobs, older := s.guestJobViews(g, inst.ID)
+	jobs, older := s.guestJobViews(g, inst.ID, false)
 	data := render.GuestAssistantData{
 		Page:            s.page(c, title, "assistants"),
 		Name:            name,
@@ -127,7 +127,7 @@ func (s *Server) handleShareAssistant(c *gin.Context) {
 		JobsOpen:        openJobs(jobs),
 		JobsOlder:       older,
 		JobsListURL:     g.base + assistantJobsPath + "?assistant=" + url.QueryEscape(inst.ID),
-		Triggers:        s.guestTriggersData(g, inst.ID),
+		Triggers:        s.guestTriggersData(g, inst.ID, false),
 		TriggersListURL: g.base + assistantTriggersPath + "?assistant=" + url.QueryEscape(inst.ID),
 	}
 	data.WatchingOpen = data.JobsOpen + data.Triggers.Open
@@ -139,7 +139,7 @@ func (s *Server) handleShareAssistant(c *gin.Context) {
 // pulls, the owner's fragment read only.
 func (s *Server) handleShareAssistantJobs(c *gin.Context) {
 	g, _ := guestOf(c)
-	jobs, older := s.guestJobViews(g, g.assistant.ID)
+	jobs, older := s.guestJobViews(g, g.assistant.ID, listsAll(c))
 	c.HTML(http.StatusOK, "assistant_jobs_list.gohtml", render.AssistantData{
 		Page:      render.Page{Access: g.access},
 		Jobs:      jobs,
@@ -153,14 +153,14 @@ func (s *Server) handleShareAssistantJobs(c *gin.Context) {
 // path also answers are never a guest's.
 func (s *Server) handleShareAssistantTriggers(c *gin.Context) {
 	g, _ := guestOf(c)
-	c.HTML(http.StatusOK, "assistant_triggers_list.gohtml", s.guestTriggersData(g, g.assistant.ID))
+	c.HTML(http.StatusOK, "assistant_triggers_list.gohtml", s.guestTriggersData(g, g.assistant.ID, listsAll(c)))
 }
 
 // guestJobViews are an assistant's jobs as its guest reads them: the owner's
 // rows, the coder and its editor leading inside the share where the link
 // opens them and nowhere where it does not.
-func (s *Server) guestJobViews(g *guest, id string) ([]render.AssistantJobView, int) {
-	jobs, older := s.assistantJobViews(id)
+func (s *Server) guestJobViews(g *guest, id string, all bool) ([]render.AssistantJobView, int) {
+	jobs, older := s.assistantJobViews(id, all)
 	lead := s.guestLead(g)
 	for i := range jobs {
 		jobs[i].URL, jobs[i].EditorURL = lead(jobs[i].URL), lead(jobs[i].EditorURL)
@@ -171,8 +171,8 @@ func (s *Server) guestJobViews(g *guest, id string) ([]render.AssistantJobView, 
 // guestTriggersData are an assistant's triggers as its guest reads them: the
 // owner's rows without a way to change one, the coder a row waits for leading
 // inside the share where the link shows it.
-func (s *Server) guestTriggersData(g *guest, id string) render.AssistantTriggersData {
-	data := s.assistantTriggersData(render.Page{Access: g.access}, id)
+func (s *Server) guestTriggersData(g *guest, id string, all bool) render.AssistantTriggersData {
+	data := s.assistantTriggersData(render.Page{Access: g.access}, id, all)
 	data.URL = ""
 	lead := s.guestLead(g)
 	for i := range data.Triggers {

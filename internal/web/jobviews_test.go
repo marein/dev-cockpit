@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func TestJobViewsCapTheClosedTail(t *testing.T) {
 	})
 	s := &Server{assistants: conversations, watcher: assistant.NewWatcher(conversations, jobs, nil, nil)}
 
-	views, older := s.assistantJobViews(owner)
+	views, older := s.assistantJobViews(owner, false)
 	if len(views) != 1+closedJobsShown {
 		t.Fatalf("want the open job plus %d closed, got %d", closedJobsShown, len(views))
 	}
@@ -53,6 +54,10 @@ func TestJobViewsCapTheClosedTail(t *testing.T) {
 	}
 	if older != 3 {
 		t.Fatalf("want the dropped tail counted, got %d", older)
+	}
+	views, older = s.assistantJobViews(owner, true)
+	if len(views) != 1+closedJobsShown+3 || older != 0 {
+		t.Fatalf("all has to list every job and hold none back, got %d and %d older", len(views), older)
 	}
 }
 
@@ -89,5 +94,38 @@ func TestDeletingACoderRemovesItsJobAndStoppingKeepsIt(t *testing.T) {
 	}
 	if _, ok := store.Get("deleted-1"); ok {
 		t.Fatal("the job of a deleted coder is still in the store")
+	}
+}
+
+// A standing trigger stops every coder whose job is done, and stopping releases
+// the job. A job that is over keeps the state it ended in, and a release asked
+// for it is refused with that state instead of rewriting it.
+func TestStoppingACoderKeepsAClosedJobsState(t *testing.T) {
+	stateDir := t.TempDir()
+	conversations, _, err := assistant.New(stateDir, noCoders{}, assistant.Cockpit{StateDir: stateDir})
+	if err != nil {
+		t.Fatalf("assistant: %v", err)
+	}
+	owner := "11111111-1111-4111-8111-111111111111"
+	assistant.NewStore(stateDir).Save(assistant.Instance{Summary: assistant.Summary{ID: owner, Title: "One", CoderID: "claude"}})
+	jobs := assistant.NewJobs(assistant.NewStore(stateDir))
+	store := jobs.Of(owner)
+	s := &Server{assistants: conversations, watcher: assistant.NewWatcher(conversations, jobs, nil, nil)}
+	for _, state := range []assistant.JobState{assistant.JobDone, assistant.JobBlocked, assistant.JobExpired} {
+		terminal := "closed-" + string(state)
+		store.Save(assistant.Job{Terminal: terminal, CoderID: "claude", DoneWhen: "x", State: state, CreatedAt: time.Now().UTC()})
+
+		s.jobCalledOff(terminal)
+
+		if job, _ := store.Get(terminal); job.State != state {
+			t.Fatalf("a %s job reads %q after its coder stopped", state, job.State)
+		}
+		err := s.watcher.Release(terminal, "")
+		if err == nil || !strings.Contains(err.Error(), string(state)) {
+			t.Fatalf("a release of a %s job has to be refused with its state, got %v", state, err)
+		}
+		if job, _ := store.Get(terminal); job.State != state {
+			t.Fatalf("a %s job reads %q after a release", state, job.State)
+		}
 	}
 }

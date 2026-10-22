@@ -1898,6 +1898,8 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     return "removed from the row's own button";
   });
 
+  await require("./events-older").olderChecks({ page, run, mobilePage, helpers: { openAssistant, ownAssistant, postTo, startCoder, waitFor, projectDir } });
+
   await run("cleanup", async () => {
     for (const id of [coderID, thenCoder, heldCoder, heldCoder2, slowCoder, editCoder, longCoder, ...barrierCoders, ...grownCoders].filter(Boolean)) {
       await page.evaluate(async (session) => {

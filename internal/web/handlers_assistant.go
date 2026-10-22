@@ -121,7 +121,7 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 	}
 	data.Page = s.page(c, title, "assistants")
 	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
-	data.Triggers = s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, current.ID)
+	data.Triggers = s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, current.ID, false)
 	// The one number on the button that opens the aside: both kinds of standing
 	// work, because the aside holds both and the button is the only thing a
 	// phone sees of it.
@@ -196,7 +196,7 @@ func (s *Server) assistantData(current assistant.Instance, all bool) render.Assi
 	base := "/assistants/" + current.ID
 	messages, earlier, allURL := assistantWindow(s.assistantMessageViews(current, blocked != ""), base, all)
 	s.linkOwnerChat(messages, current.ID)
-	jobs, olderJobs := s.assistantJobViews(current.ID)
+	jobs, olderJobs := s.assistantJobViews(current.ID, false)
 	// Every assistant has a stream of its own, however many of them are open at
 	// once.
 	streamURL := base + "/stream"

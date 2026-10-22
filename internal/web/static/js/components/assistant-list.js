@@ -27,6 +27,11 @@ class AssistantList extends HTMLElement {
       onServerEvent("assistant", () => void this.refresh(), { signal: this.ac.signal });
     }
     this.addEventListener("submit", (event) => void this.onAction(event), { signal: this.ac.signal });
+    this.addEventListener("click", (event) => {
+      if (!event.target.closest("[data-assistant-older]")) return;
+      event.preventDefault();
+      this.showOlder();
+    }, { signal: this.ac.signal });
 
     if (this.hasAttribute("history")) {
       wireRowMenus(this, "[data-assistant-instance]", (row, x, y) => this.openRowMenu(row, x, y), { signal: this.ac.signal });
@@ -58,6 +63,14 @@ class AssistantList extends HTMLElement {
     this.sheet?.addEventListener("show.bs.offcanvas", () => void this.refresh(), { signal: this.ac.signal });
 
     this.revealActive(true);
+  }
+
+  showOlder() {
+    const url = new URL(this.url, window.location.href);
+    url.searchParams.set("all", "1");
+    this.url = url.pathname + url.search;
+    this.setAttribute("list-url", this.url);
+    void this.refresh();
   }
 
   revealActive(center = false) {
