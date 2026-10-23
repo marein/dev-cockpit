@@ -7,8 +7,25 @@ const { assert, sleep } = require("./lib");
 // song is composed: the title turns current with the stop icon and a length
 // of 0:00, and a frame of that is drawn before the length follows.
 const SHELVES = [
-  { genre: "Space Ambient", icon: "ti-planet", art: "planet", color: "purple" },
-  { genre: "Classic Rock", icon: "ti-guitar-pick", art: "guitar pick", color: "red" },
+  {
+    genre: "Party DnB", icon: "ti-flame", art: "flame", color: "yellow",
+    titles: [
+      "Pinatubo", "Tambora", "Bromo", "Stromboli", "Kilauea", "Merapi", "Mayon", "Etna", "Fuji", "Krakatoa",
+      "Cotopaxi", "Hekla", "Teide", "Ruapehu", "Santorini", "Erebus", "Arenal", "Sakurajima", "Surtsey", "Villarrica",
+    ],
+  },
+  {
+    genre: "Party Dubstep", icon: "ti-wave-saw-tool", art: "sawtooth wave", color: "lime",
+    titles: ["Kraken", "Hydra", "Chimera", "Basilisk", "Manticore", "Wyvern", "Gorgon", "Leviathan", "Cerberus", "Banshee"],
+  },
+  {
+    genre: "Space Ambient", icon: "ti-planet", art: "planet", color: "purple",
+    titles: ["Apogee", "Perigee", "Aphelion", "Zenith", "Parallax", "Albedo", "Umbra", "Lagrange", "Redshift", "Nadir"],
+  },
+  {
+    genre: "Classic Rock", icon: "ti-guitar-pick", art: "guitar pick", color: "red",
+    titles: ["Chinook", "Bora", "Meltemi", "Khamsin", "Tramontane", "Zonda", "Halny", "Sundowner", "Shamal", "Williwaw"],
+  },
 ];
 
 async function watchAnswer(page, key) {
@@ -31,12 +48,14 @@ async function watchAnswer(page, key) {
 }
 
 module.exports.genreChecks = async function genreChecks({ page, run, ready, openPanel, setFolds, state, waitPlaying, toggle }) {
-  for (const { genre, icon, art, color } of SHELVES) {
-    await run(`every ${genre} song answers its click before it is composed and plays through the page's scriptune under the genre's ${art} in ${color}`, async () => {
+  for (const { genre, icon, art, color, titles } of SHELVES) {
+    await run(`${genre} holds ${titles[0]} to ${titles.at(-1)}, each answers its click before it is composed and plays through the page's scriptune under the genre's ${art} in ${color}`, async () => {
       await ready(page);
       await openPanel(page);
       await setFolds(page, [genre]);
-      const keys = await page.$$eval(`dc-song-player [data-song-shelf="${genre}"] [data-song]`, (items) => items.map((i) => i.dataset.song));
+      const rows = await page.$$eval(`dc-song-player [data-song-shelf="${genre}"] [data-song]`, (items) => items.map((i) => ({ key: i.dataset.song, title: i.textContent })));
+      assert(rows.map((row) => row.title).join(",") === titles.join(","), `${genre} holds ${JSON.stringify(rows)}`);
+      const keys = rows.map((row) => row.key);
       const lengths = [];
       for (const key of keys) {
         await watchAnswer(page, key);

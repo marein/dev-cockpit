@@ -6,6 +6,24 @@ const music = getPlayer("music");
 
 export const catalog = [
   {
+    style: "Party DnB",
+    icon: "ti-flame", color: "yellow",
+    songs: {
+      pinatubo: "Pinatubo", tambora: "Tambora", bromo: "Bromo", stromboli: "Stromboli", kilauea: "Kilauea",
+      merapi: "Merapi", mayon: "Mayon", etna: "Etna", fuji: "Fuji", krakatoa: "Krakatoa",
+      cotopaxi: "Cotopaxi", hekla: "Hekla", teide: "Teide", ruapehu: "Ruapehu", santorini: "Santorini",
+      erebus: "Erebus", arenal: "Arenal", sakurajima: "Sakurajima", surtsey: "Surtsey", villarrica: "Villarrica",
+    },
+  },
+  {
+    style: "Party Dubstep",
+    icon: "ti-wave-saw-tool", color: "lime",
+    songs: {
+      kraken: "Kraken", hydra: "Hydra", chimera: "Chimera", basilisk: "Basilisk", manticore: "Manticore",
+      wyvern: "Wyvern", gorgon: "Gorgon", leviathan: "Leviathan", cerberus: "Cerberus", banshee: "Banshee",
+    },
+  },
+  {
     style: "Dark Techno",
     icon: "ti-bolt", color: "indigo",
     songs: {
