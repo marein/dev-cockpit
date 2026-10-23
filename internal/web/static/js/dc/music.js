@@ -73,7 +73,7 @@ function loadSheets() {
   if (!sheets) {
     attempts++;
     const url = attempts === 1 ? "@dc/songs" : `${import.meta.resolve("@dc/songs")}?retry=${attempts}`;
-    sheets = import(url).then((module) => module.songs, (error) => {
+    sheets = import(url).then((module) => module.compose, (error) => {
       sheets = null;
       throw error;
     });
@@ -128,21 +128,37 @@ function changed() {
   for (const listener of listeners) listener();
 }
 
-async function start(shelf, key) {
-  const all = await loadSheets();
+// Composing a song blocks the page for a moment, so the answer to a click
+// gets a frame on the screen first. A song that follows on its own waits for
+// none, a hidden page draws no frames.
+const drawn = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+
+async function start(shelf, key, frame = true) {
   if (shelf !== scope) {
     scope = shelf;
     queue = [];
   }
   const next = key ?? shuffled();
   queue = queue.filter((other) => other !== next);
-  if (!lengths.has(next)) lengths.set(next, seconds(all[next]));
   current?.abort.abort();
   const abort = new AbortController();
   current = { key: next, abort, started: performance.now() };
   changed();
-  music.play(all[next], { signal: abort.signal })
-    .then(() => current?.abort === abort && start(scope))
+  let sheet;
+  try {
+    const compose = await loadSheets();
+    if (frame) await drawn();
+    if (abort.signal.aborted) return;
+    sheet = compose(next);
+  } catch (error) {
+    if (current?.abort === abort) stop();
+    throw error;
+  }
+  if (!lengths.has(next)) lengths.set(next, seconds(sheet));
+  current.started = performance.now();
+  changed();
+  music.play(sheet, { signal: abort.signal })
+    .then(() => current?.abort === abort && start(scope, null, false))
     .catch(() => current?.abort === abort && stop());
 }
 

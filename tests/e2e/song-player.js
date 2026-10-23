@@ -33,11 +33,12 @@ const { assert, sleep, BASE, dismissUpdate } = L;
 // data-own-selection, so app.js does not let the focus follow the pointer and
 // typing in the filter keeps working while the mouse rests on the list; the
 // arrows walk the hits from the filter on and Enter plays the focused one.
-// The songs file (@dc/songs) loads on the first play; a load that fails says
-// so in a toast and the next play tries again. The folds, the filter text and
-// the list's scroll position are the browser's (localStorage dc-song-open,
-// dc-song-filter, dc-song-scroll) and come back when the panel opens, also
-// after a reload. The panel follows the light and the dark theme.
+// The songs file (@dc/songs) loads on the first play, which composes only its
+// own song after the click's answer; a load that fails says so in a toast and
+// the next play tries again. The folds, the filter text and the list's scroll
+// position are the browser's (localStorage dc-song-open, dc-song-filter,
+// dc-song-scroll) and come back when the panel opens, also after a reload.
+// The panel follows the light and the dark theme.
 //
 // The runner needs a plain instance, it creates nothing on the server.
 //
@@ -177,8 +178,9 @@ async function setFolds(page, open) {
 
 async function waitPlaying(page, playing) {
   await page.waitForFunction((on) => {
-    const icon = document.querySelector("dc-song-player [data-song-toggle] .ti").className;
-    return on ? icon.includes("ti-player-stop") : icon.includes("ti-player-play");
+    const root = document.querySelector("dc-song-player");
+    const icon = root.querySelector("[data-song-toggle] .ti").className;
+    return on ? icon.includes("ti-player-stop") && root.querySelector("[data-song-length]").textContent !== "0:00" : icon.includes("ti-player-play");
   }, playing, { timeout: 15000 });
 }
 
@@ -498,7 +500,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       await openPanel(page);
       await setFolds(page, ["Deep Dubstep"]);
       await page.click('dc-song-player [data-song="fathom"]');
-      await page.waitForFunction(() => document.querySelector("dc-song-player [data-song-now]").textContent === "Fathom", null, { timeout: 15000 });
+      await page.waitForFunction(() => document.querySelector("dc-song-player [data-song-now]").textContent === "Fathom" && document.querySelector("dc-song-player [data-song-length]").textContent !== "0:00", null, { timeout: 15000 });
       const read = () => page.evaluate(() => {
         const root = document.querySelector("dc-song-player");
         const shown = (el) => el.getBoundingClientRect().height > 0 && getComputedStyle(el).visibility !== "hidden";

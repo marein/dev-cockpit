@@ -1114,8 +1114,8 @@ const house = {
 // key.
 const tuned = (preset, changes) => Object.fromEntries(Object.entries(preset).map(([key, value]) => [key, typeof value === "object" ? { ...value, ...changes[key] } : value]));
 
-export const songs = {
-  ambermile: (() => {
+const scores = {
+  ambermile: () => {
     const cells = {
       Bm: "B3:s F#4:s D5:s F#4:s C#5:s F#4:s B4:s F#4:s", G: "G3:s D4:s B4:s D4:s A4:s D4:s G4:s D5:s",
       D: "D4:s A4:s F#5:s A4:s E5:s A4:s D5:s A4:s", A: "A3:s E4:s C#5:s E4:s B4:s E4:s A4:s E5:s",
@@ -1164,8 +1164,8 @@ export const songs = {
       },
       form: "intro build theme*2 drift break build2 theme*2 outro",
     });
-  })(),
-  goldenhour: (() => {
+  },
+  goldenhour: () => {
     const cells = {
       D: "D4:s F#4:s A4:s C#5:s F#4:s A4:s C#5:s E5:s A4:s C#5:s E5:s F#5:s C#5:s E5:s F#5:s A5:s",
       Bm: "B3:s D4:s F#4:s A4:s D4:s F#4:s A4:s B4:s F#4:s A4:s B4:s D5:s A4:s B4:s D5:s F#5:s",
@@ -1219,8 +1219,8 @@ export const songs = {
       },
       form: "intro build theme*2 cruise*2 breakdown lift theme*2 outro",
     });
-  })(),
-  saltflats: (() => {
+  },
+  saltflats: () => {
     const cells = {
       "F#m": "F#3:e C#4:e G#4:e A4:e C#5:e A4:e G#4:e C#4:e", D: "D3:e A3:e E4:e F#4:e A4:e F#4:e E4:e C#4:e",
       A: "A3:e E4:e B4:e C#5:e E5:e C#5:e B4:e E4:e", E: "E3:e B3:e F#4:e G#4:e B4:e G#4:e F#4:e B3:e",
@@ -1261,8 +1261,8 @@ export const songs = {
       },
       form: "intro build1 build2 build3 theme*2 break theme outro",
     });
-  })(),
-  lowsun: (() => {
+  },
+  lowsun: () => {
     const cells = {
       Em: "E4:s -:s B4:s E5:s -:s B4:s G4:s -:s E4:s -:s B4:s D5:s -:s B4:s G4:s B3:s",
       C: "C4:s -:s G4:s E5:s -:s G4:s B4:s -:s C4:s -:s G4:s D5:s -:s G4:s E4:s G3:s",
@@ -1315,8 +1315,8 @@ export const songs = {
       },
       form: "intro build theme*2 cruise*2 break build2 theme*2 outro",
     });
-  })(),
-  paperlanterns: (() => {
+  },
+  paperlanterns: () => {
     const cells = {
       A: "A3:e E4:e A4:e C#5:e E5:e C#5:e A4:e E4:e", E: "E3:e B3:e E4:e G#4:e B4:e G#4:e E4:e B3:e",
       "F#m": "F#3:e C#4:e F#4:e A4:e C#5:e A4:e F#4:e C#4:e", D: "D3:e A3:e D4:e F#4:e A4:e F#4:e D4:e F#3:e",
@@ -1364,8 +1364,8 @@ export const songs = {
       },
       form: "intro build theme*2 bridge break lift theme*2 outro",
     });
-  })(),
-  coastaldrive: (() => {
+  },
+  coastaldrive: () => {
     const arp = {
       G: "G3:s D4:s G4:s B4:s D5:s B4:s G4:s D4:s ", D: "F#3:s D4:s F#4:s A4:s D5:s A4:s F#4:s D4:s ",
       Em: "E3:s B3:s E4:s G4:s B4:s G4:s E4:s B3:s ", C: "C3:s G3:s C4:s E4:s G4:s E4:s C4:s E4:s ",
@@ -1407,8 +1407,8 @@ export const songs = {
       },
       form: "intro build verse hook verse hook breakdown rise hook*2 outro",
     });
-  })(),
-  willowcreek: (() => {
+  },
+  willowcreek: () => {
     const keys = {
       Cm: "C#3:e G#3:e C#4:e E4:e G#4:e E4:e C#4:e G#3:e ", A: "A2:e E3:e A3:e C#4:e E4:e C#4:e A3:e C#4:e ",
       E: "E3:e B3:e E4:e G#4:e B4:e G#4:e E4:e B3:e ", B: "B2:e F#3:e B3:e D#4:e F#4:e D#4:e B3:e D#4:e ",
@@ -1452,8 +1452,8 @@ export const songs = {
       },
       form: "intro verse hook interlude verse2 hook2 bridge hook2 outro",
     });
-  })(),
-  driftwood: (() => {
+  },
+  driftwood: () => {
     const chop = (dyad, top) => `-:e ${dyad}:e -:e ${dyad}:e -:e ${dyad}:s ${top}:s -:e ${dyad}:e `;
     const pluck = { F: chop("A3+C4", "F4"), Dm: chop("A3+D4", "F4"), Bb: chop("Bb3+D4", "F4"), C: chop("G3+C4", "E4") };
     const chord = { F: "A3+C4+E4:w ", Dm: "A3+D4+F4:w ", Bb: "Bb3+D4+F4:w ", C: "G3+C4+E4:w " };
@@ -1490,8 +1490,8 @@ export const songs = {
       },
       form: "intro groove verse hook drop verse hook bridge hook outro",
     });
-  })(),
-  quietcanyon: (() => {
+  },
+  quietcanyon: () => {
     const chord = {
       Dm: "D4+F4+A4:w C4+F4+A4:w ", Bb: "D4+F4+Bb4:w D4+F4+A4:w ", F: "C4+F4+A4:w C4+E4+A4:w ",
       C: "C4+E4+G4:w D4+E4+G4:w ", Gm: "D4+G4+Bb4:w D4+F4+Bb4:w ", A: "C#4+E4+A4:w C#4+E4+G4:w ",
@@ -1535,8 +1535,8 @@ export const songs = {
       },
       form: "intro call call2 hook call3 hook2 breakdown hook2 outro",
     });
-  })(),
-  rearview: (() => {
+  },
+  rearview: () => {
     const arp = {
       Ab: "Ab3:e Eb4:s Ab4:s C5:e Eb4:e Ab4:e C5:s Eb5:s C5:e Eb4:e ",
       Eb: "G3:e Eb4:s G4:s Bb4:e Eb4:e G4:e Bb4:s Eb5:s Bb4:e Eb4:e ",
@@ -1595,8 +1595,8 @@ export const songs = {
       },
       form: "intro verse rise hook verse hook breakdown rise2 lift*2 outro",
     });
-  })(),
-  midnightbloom: (() => {
+  },
+  midnightbloom: () => {
     const bpm = 122;
     const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
     const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
@@ -1638,8 +1638,8 @@ export const songs = {
       },
       form: "intro groove breakdown build drop rise drop outro",
     });
-  })(),
-  afterglow: (() => {
+  },
+  afterglow: () => {
     const bpm = 120;
     const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
     const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
@@ -1683,8 +1683,8 @@ export const songs = {
       },
       form: "intro groove breakdown build drop*2 outro",
     });
-  })(),
-  oceanfloor: (() => {
+  },
+  oceanfloor: () => {
     const bpm = 123;
     const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
     const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
@@ -1725,8 +1725,8 @@ export const songs = {
       },
       form: "intro groove breakdown build drop rise drop outro",
     });
-  })(),
-  citypulse: (() => {
+  },
+  citypulse: () => {
     const bpm = 124;
     const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
     const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
@@ -1768,8 +1768,8 @@ export const songs = {
       },
       form: "intro groove breakdown build drop rise drop outro",
     });
-  })(),
-  velvethours: (() => {
+  },
+  velvethours: () => {
     const bpm = 121;
     const claps = (bars) => `\n#BPM ${bpm * 8}\n` + beat("....P.......P...".repeat(bars), hitPans);
     const roll = `\n#BPM ${bpm * 8}\n` + beat("P.".repeat(8) + "P".repeat(16), hitPans);
@@ -1822,8 +1822,8 @@ export const songs = {
       },
       form: "intro groove breakdown build drop rise drop outro",
     });
-  })(),
-  distantshores: (() => {
+  },
+  distantshores: () => {
     const bpm = 122;
     const chords = ["C#4+E4+G#4", "C#4+E4+A4", "B3+E4+G#4", "B3+D#4+F#4"];
     const roots = [["C#2", "C#3"], ["A1", "A2"], ["E2", "E3"], ["B1", "B2"]];
@@ -1866,8 +1866,8 @@ export const songs = {
       },
       form: "intro groove build drop*2 groove2 brk build drop2*2 outro end",
     });
-  })(),
-  tidalechoes: (() => {
+  },
+  tidalechoes: () => {
     const bpm = 120;
     const motif = "G5:e A#5:e D6:q C6:e A#5:e -:q G5:e A#5:e D#6:q D6:e A#5:e -:q F5:e A#5:e D6:q C6:e A#5:e -:q F5:e A5:e C6:q A5:h ";
     const echo = (t) => `-:dq ${motif.repeat(t).replace(/A5:h $/, "A5:e ")}`;
@@ -1912,8 +1912,8 @@ export const songs = {
       },
       form: "intro groove build drop*2 groove2 brk build drop2*2 outro end",
     });
-  })(),
-  weightless: (() => {
+  },
+  weightless: () => {
     const bpm = 121;
     const hook = "G5:h F5:q Eb5:q G5:dh Bb5:q C6:h Bb5:q G5:q F5:w G5:h Bb5:q C6:q D6:dh C6:q Bb5:h G5:q F5:q Eb5:w ";
     const chords = ["Eb3+Bb3+G4+D5", "C3+G3+Eb4+Bb4", "Ab2+Eb3+C4+G4", "Bb2+F3+D4+F4"];
@@ -1954,8 +1954,8 @@ export const songs = {
       },
       form: "intro groove build drop*2 groove2 brk build drop2*2 outro end",
     });
-  })(),
-  parallellines: (() => {
+  },
+  parallellines: () => {
     const bpm = 124;
     const upper = "F#5:e D5:e B4:e D5:e F#5:e B5:e A5:e F#5:e G5:e D5:e B4:e D5:e G5:e B5:e A5:e G5:e F#5:e D5:e A4:e D5:e F#5:e A5:e B5:e A5:e E5:e C#5:e A4:e C#5:e E5:e A5:e G5:e E5:e ";
     const lower = "B3:q C#4:q D4:q F#4:q G4:q F#4:q E4:q D4:q F#4:q E4:q D4:q A3:q C#4:q E4:q A4:q G4:q ";
@@ -2001,8 +2001,8 @@ export const songs = {
       },
       form: "intro groove build drop*2 groove2 brk build drop2*2 outro end",
     });
-  })(),
-  daybreak: (() => {
+  },
+  daybreak: () => {
     const bpm = 123;
     const hook = "C6:dq B5:e G5:q E5:q D6:dq C6:e B5:q G5:q C6:dq B5:e A5:q E5:q F5:q A5:q C6:q E6:q ";
     const chords = ["E4+G4+C5", "D4+G4+B4", "E4+A4+C5", "F4+A4+C5"];
@@ -2047,8 +2047,8 @@ export const songs = {
       },
       form: "intro groove build drop*2 groove2 brk build drop2*2 outro end",
     });
-  })(),
-  basalt: (() => {
+  },
+  basalt: () => {
     const bpm = 126;
     const { kick, volume, fade, play, only, later, drone, whine, riser, impact, four } = forge(bpm);
     const low = { g: "G2", f: "F2", a: "Ab2", b: "Bb2", d: "D3", G: "G3" };
@@ -2130,8 +2130,8 @@ export const songs = {
       },
       form: "intro groove layer peak breakdown build return outro",
     });
-  })(),
-  obsidian: (() => {
+  },
+  obsidian: () => {
     const bpm = 128;
     const { kick, volume, fade, play, later, drone, whine, riser, impact, four } = forge(bpm, "A1");
     const low = { a: "A2", c: "C3", g: "G2", A: "A3" };
@@ -2205,8 +2205,8 @@ export const songs = {
       },
       form: "intro bass groove cut peak breakdown build return outro",
     });
-  })(),
-  cinder: (() => {
+  },
+  cinder: () => {
     const bpm = 130;
     const { kick, volume, fade, play, fall, only, drone, riser, impact, four } = forge(bpm, "F1");
     const low = { f: "F2", a: "Ab2", b: "Bb2", c: "C3", e: "Eb3", F: "F3" };
@@ -2274,8 +2274,8 @@ export const songs = {
       },
       form: "intro acid drive gap peak tool gap2 blaze outro",
     });
-  })(),
-  graphite: (() => {
+  },
+  graphite: () => {
     const bpm = 125;
     const { kick, fade, play, fall, later, drone, whine, riser, impact, four } = forge(bpm, "A1");
     const low = { d: "D2", f: "F2", g: "G2" };
@@ -2362,8 +2362,8 @@ export const songs = {
       },
       form: "haze floor pump deep breakdown build return settle dusk",
     });
-  })(),
-  magnetite: (() => {
+  },
+  magnetite: () => {
     const bpm = 129;
     const { kick, volume, fade, play, only, drone, whine, riser, impact, four } = forge(bpm, "B1");
     const low = { e: "E2", f: "F2", d: "D2", E: "E3", F: "F3", D: "D3" };
@@ -2451,8 +2451,8 @@ export const songs = {
       },
       form: "intro groove break1 build1 drive peak break2 build2 final outro",
     });
-  })(),
-  slate: (() => {
+  },
+  slate: () => {
     const bpm = 127;
     const { kick, fade, play, only, drone, whine, riser, impact, four } = forge(bpm, "G1");
     const low = { c: "C3", b: "Bb2", g: "G2", e: "Eb3" };
@@ -2535,8 +2535,8 @@ export const songs = {
       },
       form: "alone floor groove layer half build return cut again outro",
     });
-  })(),
-  caldera: (() => {
+  },
+  caldera: () => {
     const bpm = 130;
     const { kick, fade, play, drone, whine, riser, impact, four } = forge(bpm, "B1");
     const low = { b: "B2", f: "F#2", d: "D3", a: "A2" };
@@ -2618,8 +2618,8 @@ export const songs = {
       },
       form: "vent smoke ash heat glow flow surge erupt crater reload blast stop",
     });
-  })(),
-  faultline: (() => {
+  },
+  faultline: () => {
     const bpm = 128;
     const { kick, fade, play, drone, whine, riser, impact, four } = forge(bpm, "F#1");
     const low = { f: "F#2", e: "E2", d: "D2", c: "C#2" };
@@ -2696,8 +2696,8 @@ export const songs = {
       },
       form: "intro groove stumble drive breakdown build fall build2 return outro",
     });
-  })(),
-  anthracite: (() => {
+  },
+  anthracite: () => {
     const bpm = 125;
     const { kick, volume, fade, play, only, later, drone, whine, riser, impact, four } = forge(bpm, "F1");
     const low = { b: "Bb2", a: "Ab2", g: "Gb2", f: "F2" };
@@ -2767,8 +2767,8 @@ export const songs = {
       },
       form: "alone floor smoulder burn deeper breakdown build blaze embers",
     });
-  })(),
-  tephra: (() => {
+  },
+  tephra: () => {
     const bpm = 127;
     const { kick, volume, fade, play, fall, only, drone, whine, riser, impact, four } = forge(bpm, "G#1");
     const low = { c: "C#3", g: "G#2", b: "B2", e: "E3" };
@@ -2838,8 +2838,8 @@ export const songs = {
       },
       form: "skins floor groove layer rite breakdown build peak outro",
     });
-  })(),
-  undertow: (() => {
+  },
+  undertow: () => {
     const bpm = 96;
     const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
       roots: { E: "E1", F: "F1", G: "G1" }, lows: { E: "E2", F: "F2", G: "G2" }, tones: { E: "B3", F: "A3", G: "D4" },
@@ -2892,8 +2892,8 @@ export const songs = {
       },
       form: "intro rise groove breakdown groove2 outro",
     });
-  })(),
-  fathom: (() => {
+  },
+  fathom: () => {
     const bpm = 88;
     const { sub, growl, near, far, pulse, ping } = depth(bpm, {
       roots: { D: "D1", F: "F1", C: "C1" }, lows: { D: "D2", F: "F2", C: "C2" }, tones: { D: "A3", F: "C4", C: "G3" },
@@ -2940,8 +2940,8 @@ export const songs = {
       },
       form: "surface descent deep floor ascent end",
     });
-  })(),
-  pressure: (() => {
+  },
+  pressure: () => {
     const bpm = 104;
     const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
       roots: { "F#": "F#1", C: "C1" }, lows: { "F#": "F#2", C: "C2" }, tones: { "F#": "C#4", C: "G3" },
@@ -2989,8 +2989,8 @@ export const songs = {
       },
       form: "intro build drop break drop2 outro",
     });
-  })(),
-  silt: (() => {
+  },
+  silt: () => {
     const bpm = 76;
     const { sub, growl, near, pass, ping, echo } = depth(bpm, {
       roots: { A: "A1", F: "F1", D: "D1", E: "E1" }, lows: { A: "A2", F: "F2", D: "D2", E: "E2" },
@@ -3028,8 +3028,8 @@ export const songs = {
       },
       form: "intro settle still settle2 outro",
     });
-  })(),
-  ballast: (() => {
+  },
+  ballast: () => {
     const bpm = 100;
     const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
       roots: { C: "C1", Eb: "Eb1", F: "F1" }, lows: { C: "C2", Eb: "Eb2", F: "F2" }, tones: { C: "G3", Eb: "G3", F: "C4" },
@@ -3075,8 +3075,8 @@ export const songs = {
       },
       form: "intro weight hull cargo cut cargo2 dock",
     });
-  })(),
-  nightferry: (() => {
+  },
+  nightferry: () => {
     const bpm = 92;
     const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
       roots: { G: "G1", D: "D1", C: "C1" }, lows: { G: "G2", D: "D2", C: "C2" }, tones: { G: "Bb3", D: "A3", C: "G3" },
@@ -3119,8 +3119,8 @@ export const songs = {
       },
       form: "departure cruise open cruise2 harbor",
     });
-  })(),
-  landslide: (() => {
+  },
+  landslide: () => {
     const bpm = 108;
     const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
       roots: { B: "B1", A: "A1" }, lows: { B: "B2", A: "A2" }, tones: { B: "D4", A: "C4" },
@@ -3164,8 +3164,8 @@ export const songs = {
       },
       form: "intro one two three four six stop",
     });
-  })(),
-  sonar: (() => {
+  },
+  sonar: () => {
     const bpm = 84;
     const { sub, growl, near, far, ping, echo } = depth(bpm, {
       roots: { Eb: "Eb1", Gb: "Gb1", Db: "Db1" }, lows: { Eb: "Eb2", Gb: "Gb2", Db: "Db2" }, tones: { Eb: "Bb3", Gb: "Bb3", Db: "Ab3" },
@@ -3203,8 +3203,8 @@ export const songs = {
       },
       form: "surface descent deep abyss floor",
     });
-  })(),
-  tremor: (() => {
+  },
+  tremor: () => {
     const bpm = 112;
     const tones = { "G#": "D#4", "F#": "C#4", E: "B3", "D#": "A#3" };
     const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
@@ -3254,8 +3254,8 @@ export const songs = {
       },
       form: "intro quake lull build quake2 after",
     });
-  })(),
-  blackice: (() => {
+  },
+  blackice: () => {
     const bpm = 80;
     const { sub, growl, near, far, pulse, ping, echo } = depth(bpm, {
       roots: { F: "F1", Bb: "Bb1", Gb: "Gb1" }, lows: { F: "F2", Bb: "Bb2", Gb: "Gb2" }, tones: { F: "C4", Bb: "Db4", Gb: "Db4" },
@@ -3293,8 +3293,8 @@ export const songs = {
       },
       form: "open thaw thin frost gone",
     });
-  })(),
-  apogee: (() => {
+  },
+  apogee: () => {
     const bpm = 100;
     const { melody, guitar, coda, record } = space(bpm, { EG: ["E4", "G4"], DF: ["D4", "F#4"], BD: ["B3", "D4"], CE: ["C4", "E4"], FA: ["F#4", "A4"] });
     const verse = "EG DF BD CE EG FA BD CE";
@@ -3342,8 +3342,8 @@ export const songs = {
       end: coda("EG", "G4"),
     };
     return record({ root: "E2", parts, form: "void seed theme orbit drift return orbit2 outro end" });
-  })(),
-  perigee: (() => {
+  },
+  perigee: () => {
     const bpm = 92;
     const { melody, guitar, coda, record } = space(bpm, {
       D: ["F#3", "D4"], A: ["E3", "C#4"], Bm: ["D3", "B3"], G: ["B3", "G4"], D6: ["A3", "F#4"], Em: ["G3", "E4"],
@@ -3386,8 +3386,8 @@ export const songs = {
       end: coda("D", "F#4"),
     };
     return record({ root: "D2", echo: 1, parts, form: "intro verse lift still verse2 lift2 outro end" });
-  })(),
-  aphelion: (() => {
+  },
+  aphelion: () => {
     const bpm = 66;
     const { melody, guitar, coda, record } = space(bpm, {
       Fm: ["F#3", "C#4"], D: ["D3", "A3"], A: ["A3", "E4"], E: ["E3", "B3"], Bm: ["B3", "F#4"], Cs: ["C#4", "G#4"],
@@ -3418,8 +3418,8 @@ export const songs = {
       end: coda("Fm", "C#5", "swell", bow),
     };
     return record({ root: "F#2", echo: 1.5, buzz: 0.012, parts, form: "void near far near2 drift end" });
-  })(),
-  zenith: (() => {
+  },
+  zenith: () => {
     const bpm = 112;
     const chords = { A: ["E4", "A4"], B: ["F#4", "B4"], Fm: ["C#4", "F#4"], E: ["B3", "E4"], D: ["A3", "D4"], Cm: ["G#3", "C#4"] };
     const { melody, guitar, bell, coda, record } = space(bpm, chords);
@@ -3462,8 +3462,8 @@ export const songs = {
       end: coda("A", "C#5"),
     };
     return record({ root: "A2", echo: 0.5, parts, form: "intro verse summit air verse2 summit2 outro end" });
-  })(),
-  parallax: (() => {
+  },
+  parallax: () => {
     const bpm = 96;
     const { melody, guitar, coda, record } = space(bpm, {
       Bm: ["D4", "F#4"], E: ["G#3", "B3"], D: ["F#3", "A3"], A: ["C#4", "E4"], G: ["B3", "D4"], Fm: ["A3", "C#4"],
@@ -3499,8 +3499,8 @@ export const songs = {
       end: coda("Bm", "F#4"),
     };
     return record({ root: "B1", echo: 2, parts, form: "intro verse shift verse2 shift2 outro end" });
-  })(),
-  albedo: (() => {
+  },
+  albedo: () => {
     const bpm = 84;
     const chords = { C: ["C3", "E4"], D: ["D3", "F#4"], Em: ["E3", "G4"], Am: ["A2", "C4"], G: ["G2", "B3"] };
     const { melody, guitar, bell, coda, record } = space(bpm, chords);
@@ -3537,8 +3537,8 @@ export const songs = {
       end: coda("C", "E4", "swell"),
     };
     return record({ root: "C2", parts, form: "intro verse glare verse2 glare2 outro end" });
-  })(),
-  umbra: (() => {
+  },
+  umbra: () => {
     const bpm = 74;
     const { melody, guitar, coda, record } = space(bpm, {
       Cm: ["E3", "G#3"], D: ["F#3", "A3"], A: ["C#3", "E3"], B: ["D#3", "F#3"], Fm: ["A3", "C#4"],
@@ -3569,8 +3569,8 @@ export const songs = {
       end: coda("Cm", "G#3", "toll", dark),
     };
     return record({ root: "C#2", echo: 1, buzz: 0.035, parts, form: "void shadow below shadow2 fade end" });
-  })(),
-  lagrange: (() => {
+  },
+  lagrange: () => {
     const bpm = 104;
     const { melody, guitar, play, breathe, coda, record } = space(bpm, {
       G: ["B3", "G4"], F: ["A3", "F4"], C: ["C4", "G4"], Am: ["C4", "A4"], Dm: ["D4", "A4"],
@@ -3617,8 +3617,8 @@ export const songs = {
     return record({
       root: "G2", echo: 1.5, parts, form: "intro call poise call2 still poise2 outro end", voices: { answer: "#TYPE sine\n#PAN -0.4" },
     });
-  })(),
-  redshift: (() => {
+  },
+  redshift: () => {
     const bpm = 88;
     const chords = {
       F: ["A3", "F4"], Ce: ["G3", "E4"], Dm: ["F3", "D4"], C: ["E3", "C4"], Bb: ["D3", "A#3"], Fa: ["C3", "A3"], Gm: ["A#2", "G3"], C7: ["E3", "A#3"],
@@ -3655,8 +3655,8 @@ export const songs = {
       end: { ...down.coda("F", "G4"), root: "D#2" },
     };
     return record({ root: "F2", echo: 1, parts, form: "intro theme drift theme2 shift fall end" });
-  })(),
-  nadir: (() => {
+  },
+  nadir: () => {
     const bpm = 60;
     const { melody, guitar, coda, record } = space(bpm, {
       Bbm: ["A#2", "F3"], Eb: ["D#3", "G3"], Ab: ["G#2", "D#3"], Gb: ["F#2", "C#3"], Db: ["C#3", "G#3"], Fm: ["F3", "C4"],
@@ -3684,8 +3684,8 @@ export const songs = {
       end: coda("Bbm", "F4", "toll", deep),
     };
     return record({ root: "A#1", echo: 1.5, drone: 0.12, buzz: 0.03, parts, form: "void sink abyss sink2 end" });
-  })(),
-  chinook: (() => {
+  },
+  chinook: () => {
     const bpm = 80;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
     const pedal = {
@@ -3730,8 +3730,8 @@ export const songs = {
       end: part(2, fingers("Dm Dm", pedal, ["02435342", "012345.........."], { contour: [0.9, 0.7], lanes: 6 })),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo outro end" });
-  })(),
-  bora: (() => {
+  },
+  bora: () => {
     const bpm = 84;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
     const voicing = {
@@ -3779,8 +3779,8 @@ export const songs = {
         drums(drummer(crash({ kick: "K..." }), {}))),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo outro end" });
-  })(),
-  meltemi: (() => {
+  },
+  meltemi: () => {
     const bpm = 88;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.045, slide: 0.025, echo: 0.75, tail: "A1" });
     const voicing = {
@@ -3822,8 +3822,8 @@ export const songs = {
         drums(drummer(crash({ kick: "K..." }), {}))),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo theme end" });
-  })(),
-  khamsin: (() => {
+  },
+  khamsin: () => {
     const bpm = 74;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.055, slide: 0.03, echo: 0.75, tail: "F#1" });
     const voicing = {
@@ -3866,8 +3866,8 @@ export const songs = {
         drums(drummer(crash({ kick: "K..." }), {}))),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme calm solo outro end" });
-  })(),
-  tramontane: (() => {
+  },
+  tramontane: () => {
     const bpm = 78;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
     const voicing = {
@@ -3910,8 +3910,8 @@ export const songs = {
       end: part(2, fingers("G G", voicing, ["034543134543", "054321......"], { contour: [0.9, 0.6], lanes: 6 })),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo home end" });
-  })(),
-  zonda: (() => {
+  },
+  zonda: () => {
     const bpm = 92;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.045, slide: 0.022, echo: 0.75, tail: "F#1" });
     const voicing = {
@@ -3958,8 +3958,8 @@ export const songs = {
         drums(drummer(crash({ kick: "K..." }), {}))),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro build theme verse brk solo theme end" });
-  })(),
-  halny: (() => {
+  },
+  halny: () => {
     const bpm = 72;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.06, slide: 0.03, echo: 0.75, tail: "G1" });
     const voicing = {
@@ -4002,8 +4002,8 @@ export const songs = {
       end: part(2, fingers("Am Am", voicing, ["05432143", "0.5.4.3.2.1....."], { contour: [0.9, 0.6], lanes: 6 })),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo outro end" });
-  })(),
-  sundowner: (() => {
+  },
+  sundowner: () => {
     const bpm = 76;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.055, slide: 0.03, echo: 0.75, tail: "G1" });
     const voicing = {
@@ -4048,8 +4048,8 @@ export const songs = {
       end: part(2, fingers("C C", voicing, ["03524135", "0.3.5.2........."], { contour: [0.9, 0.6], lanes: 6 })),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse build theme solo dusk end" });
-  })(),
-  shamal: (() => {
+  },
+  shamal: () => {
     const bpm = 82;
     const { lead, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.05, slide: 0.025, echo: 0.75, tail: "G1" });
     const voicing = {
@@ -4092,8 +4092,8 @@ export const songs = {
         drums(drummer(crash({ kick: "K..." }), {}))),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro storm theme storm2 solo storm end" });
-  })(),
-  williwaw: (() => {
+  },
+  williwaw: () => {
     const bpm = 86;
     const { lead, bassline, riff, fingers, drums, part, record } = stage(bpm, { bend: 0.045, slide: 0.022, echo: 0.75, tail: "G1" });
     const voicing = {
@@ -4139,5 +4139,14 @@ export const songs = {
         drums(drummer(crash({ kick: "K..." }), {}))),
     };
     return record({ voices: { ...band, ...strings }, parts, form: "intro verse blast solo blast end" });
-  })(),
+  },
 };
+
+const sheets = new Map();
+
+// Composing takes a while, so a song is composed on its first play and kept,
+// never the whole catalog when the module loads.
+export function compose(key) {
+  if (!sheets.has(key)) sheets.set(key, scores[key]());
+  return sheets.get(key);
+}
