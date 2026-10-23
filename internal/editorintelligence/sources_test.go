@@ -158,6 +158,14 @@ func TestDockerSourceRoots(t *testing.T) {
 	if tsRoots[1].Path != "/usr/local/lib/node_modules/@typescript" || !strings.HasPrefix(tsRoots[1].Image, "dev-cockpit-tsgo:") {
 		t.Fatalf("typescript library root %+v", tsRoots[1])
 	}
+	// The standard library of a Python project and the stubs the server
+	// falls back on are the typeshed inside the image.
+	py, _, _ := ProfileForPath("src/app/main.py")
+	pyRoots := dockerSourceRoots(cacheRoot, "my-app", py)
+	if len(pyRoots) != 1 || pyRoots[0].Path != "/usr/local/lib/node_modules/pyright/dist/typeshed-fallback" ||
+		!strings.HasPrefix(pyRoots[0].Image, "dev-cockpit-pyright:") {
+		t.Fatalf("python roots: %+v", pyRoots)
+	}
 	// Two projects never share a root.
 	other := dockerSourceRoots(cacheRoot, "other-app", goProfile)
 	if other[0].Path == roots[0].Path {

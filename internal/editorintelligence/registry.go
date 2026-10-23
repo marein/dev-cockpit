@@ -41,6 +41,18 @@ type Profile struct {
 	// silence until then has to be waited out, which is the zero value
 	// here: a profile that says nothing keeps the careful behaviour.
 	SilentStart bool
+	// ListsLate marks a server that lists the workspace's files after the
+	// handshake, from a timer and unannounced, and answers meanwhile out of
+	// what it has listed: a usages list in that stretch holds the
+	// declaration alone and reads like the whole. It analyzes an open
+	// document only once the listing is complete, so its first diagnostics
+	// are the sign the workspace stands, and a lookup, which opens its
+	// document first, waits for them.
+	ListsLate bool
+	// Settings answers the server's workspace/configuration requests, one
+	// value per section. A section it does not hold, and every section of a
+	// profile without settings, is answered null: the server's own default.
+	Settings map[string]any
 	// ClassName reads the fully qualified name of the class a hover answer
 	// describes, empty for any other symbol. Nil for a language without
 	// such names, whose editor surface then offers none.
@@ -156,6 +168,36 @@ var profiles = []*Profile{
 			// instead of the opened file and its imports. What that file is
 			// and when it is written stands in the build file.
 			DefaultConfig: true,
+		},
+	},
+	{
+		ID:          "python",
+		Label:       "Python",
+		Command:     []string{"pyright-langserver", "--stdio"},
+		Server:      "pyright",
+		Marker:      "pyproject.toml",
+		SilentStart: true,
+		ListsLate:   true,
+		// The image holds no interpreter, so the server finds no environment
+		// on its own, and a project's dependencies lie in its own virtual
+		// environment: the search paths name the site-packages of the two
+		// usual ones. An answered section without autoSearchPaths would take
+		// the src root away. A project with a configuration of its own is
+		// read from that alone, these settings never overrule it.
+		Settings: map[string]any{
+			"python": map[string]any{"analysis": map[string]any{
+				"autoSearchPaths": true,
+				"extraPaths":      []string{".venv/lib/python3*/site-packages", "venv/lib/python3*/site-packages"},
+			}},
+		},
+		languageIDs: map[string]string{"py": "python", "pyi": "python"},
+		container: container{
+			Image:      "dev-cockpit-pyright",
+			Dockerfile: pythonDockerfile + entrypointDockerfile,
+			// The standard library is the typeshed the server carries, and so
+			// are the stubs it falls back on for a package no environment it
+			// knows holds. Both live in the image.
+			ImageRoots: []string{"/usr/local/lib/node_modules/pyright/dist/typeshed-fallback"},
 		},
 	},
 }

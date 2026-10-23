@@ -104,6 +104,21 @@ func runFakeLSP(mode string) {
 			}
 			_ = json.Unmarshal(msg.Params, &params)
 			docs[params.TextDocument.URI] = params.TextDocument.Version
+			if mode == "lists-late" && !indexed.Load() {
+				// The listing ends a while after the first document opens,
+				// and the diagnostics of that document are the only sign.
+				uri := params.TextDocument.URI
+				go func() {
+					time.Sleep(700 * time.Millisecond)
+					indexed.Store(true)
+					note := rpcMessage{JSONRPC: "2.0", Method: "textDocument/publishDiagnostics",
+						Params: mustMarshal(map[string]any{"uri": uri, "diagnostics": []any{}})}
+					payload, _ := json.Marshal(note)
+					writeMu.Lock()
+					_ = writeFrame(os.Stdout, payload)
+					writeMu.Unlock()
+				}()
+			}
 		case "textDocument/didChange":
 			var params struct {
 				TextDocument struct {
@@ -228,6 +243,9 @@ func runFakeLSP(mode string) {
 					// A server that never announces its indexing; the
 					// warming grace is all that holds its requests back.
 					indexed.Store(true)
+				case "lists-late":
+					// Silent as well, and partial until the didOpen above
+					// publishes its diagnostics.
 				default:
 					indexed.Store(true)
 					progress("begin", -1)
@@ -252,6 +270,59 @@ func installFakeLSP(t *testing.T, mode string, commands ...string) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// installFakeDocker puts a fake docker client on PATH: it records every
+// call into argsFile, answers `image inspect` by whether markerFile
+// exists, creates it on `build`, lists psFile's lines on `ps`, volsFile's
+// on `volume ls` (none when empty) and the current profile refs on
+// `images` once markerFile exists, and on `run` execs the server command
+// that follows the image token, which resolves to the fake language server
+// wrapper on PATH, mode included. A run with an overridden entrypoint
+// execs that program with everything behind the image token instead, so
+// the cache removal fallback really empties its directory. The Docker way
+// runs end to end without a daemon.
+func installFakeDocker(t *testing.T, argsFile, markerFile, psFile, volsFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	var refs, images []string
+	for _, p := range profiles {
+		refs, images = append(refs, imageRef(p)), append(images, p.container.Image+":*")
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+case "$1" in
+  image) [ -f %q ] && exit 0 || exit 1 ;;
+  build) touch %q; exit 0 ;;
+  ps) [ -n %q ] && cat %q 2>/dev/null; exit 0 ;;
+  volume)
+    case "$2" in
+      ls) [ -n %q ] && cat %q 2>/dev/null; exit 0 ;;
+      *) exit 0 ;;
+    esac ;;
+  rm) exit 0 ;;
+  images) [ -f %q ] && printf '%%s\n' %s; exit 0 ;;
+  rmi) exit 0 ;;
+  run)
+    shift
+    ep=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --entrypoint) ep="$2"; shift ;;
+        %s)
+          shift
+          if [ -n "$ep" ]; then exec "$ep" "$@"; else exec "$1"; fi ;;
+      esac
+      shift
+    done
+    exit 1 ;;
+  *) exit 1 ;;
+esac
+`, argsFile, markerFile, markerFile, psFile, psFile, volsFile, volsFile, markerFile, strings.Join(refs, " "), strings.Join(images, "|"))
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

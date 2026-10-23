@@ -28,6 +28,9 @@ var intelephenseDockerfile string
 //go:embed dockerfiles/tsgo.Dockerfile
 var typescriptDockerfile string
 
+//go:embed dockerfiles/pyright.Dockerfile
+var pythonDockerfile string
+
 // entrypointDockerfile is the tail both build files share: the entrypoint
 // runs the server next to a recursive workspace watcher, .git excluded,
 // with a settle window so a checkout is one shove, and ends the container

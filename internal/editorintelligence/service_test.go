@@ -820,59 +820,6 @@ func TestServiceWarmingGraceForSilentServer(t *testing.T) {
 	}
 }
 
-// installFakeDocker puts a fake docker client on PATH: it records every
-// call into argsFile, answers `image inspect` by whether markerFile
-// exists, creates it on `build`, lists psFile's lines on `ps`, volsFile's
-// on `volume ls` (none when empty) and the current profile refs on
-// `images` once markerFile exists, and on `run` execs the server command
-// that follows the image token, which resolves to the fake language server
-// wrapper on PATH, mode included. A run with an overridden entrypoint
-// execs that program with everything behind the image token instead, so
-// the cache removal fallback really empties its directory. The Docker way
-// runs end to end without a daemon.
-func installFakeDocker(t *testing.T, argsFile, markerFile, psFile, volsFile string) {
-	t.Helper()
-	dir := t.TempDir()
-	var refs []string
-	for _, p := range profiles {
-		refs = append(refs, imageRef(p))
-	}
-	script := fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-case "$1" in
-  image) [ -f %q ] && exit 0 || exit 1 ;;
-  build) touch %q; exit 0 ;;
-  ps) [ -n %q ] && cat %q 2>/dev/null; exit 0 ;;
-  volume)
-    case "$2" in
-      ls) [ -n %q ] && cat %q 2>/dev/null; exit 0 ;;
-      *) exit 0 ;;
-    esac ;;
-  rm) exit 0 ;;
-  images) [ -f %q ] && printf '%%s\n' %s; exit 0 ;;
-  rmi) exit 0 ;;
-  run)
-    shift
-    ep=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --entrypoint) ep="$2"; shift ;;
-        dev-cockpit-gopls:*|dev-cockpit-intelephense:*|dev-cockpit-tsgo:*)
-          shift
-          if [ -n "$ep" ]; then exec "$ep" "$@"; else exec "$1"; fi ;;
-      esac
-      shift
-    done
-    exit 1 ;;
-  *) exit 1 ;;
-esac
-`, argsFile, markerFile, markerFile, psFile, psFile, volsFile, volsFile, markerFile, strings.Join(refs, " "))
-	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
 // The boot sweep takes exactly the containers wearing the cockpit's LSP
 // scheme, leaves every other name alone, coder containers included,
 // removes the cache directories whose project no longer exists on disk,

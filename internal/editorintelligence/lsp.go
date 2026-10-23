@@ -77,6 +77,11 @@ type lspConn struct {
 	progressSeen   bool
 	progressPct    int
 
+	// diagnosed closes with the first diagnostics the server publishes, the
+	// sign a Profile.ListsLate server has its workspace listed.
+	diagnosed     chan struct{}
+	diagnosedOnce sync.Once
+
 	// onChange fires on every announced progress move and on exit; the
 	// service turns it into the project's change event. Nil for none.
 	onChange func()
@@ -129,6 +134,7 @@ func startLSPConn(ctx context.Context, profile *Profile, argv, env []string, roo
 		docClients:     map[string]map[string]bool{},
 		progressActive: map[string]bool{},
 		progressPct:    -1,
+		diagnosed:      make(chan struct{}),
 		done:           make(chan struct{}),
 		exited:         make(chan struct{}),
 	}
@@ -330,9 +336,11 @@ func (c *lspConn) readLoop(r *bufio.Reader) {
 			c.answerServerRequest(msg)
 		case msg.Method == "$/progress":
 			c.trackProgress(msg.Params)
+		case msg.Method == "textDocument/publishDiagnostics":
+			// Never surfaced, only their arrival counts, see listed.
+			c.diagnosedOnce.Do(func() { close(c.diagnosed) })
 		default:
-			// Other server notifications (diagnostics, logs) are not
-			// surfaced.
+			// Other server notifications (logs) are not surfaced.
 		}
 	}
 }
@@ -356,20 +364,23 @@ func (c *lspConn) dispatchResponse(msg rpcMessage) {
 }
 
 // answerServerRequest keeps servers happy that call back into the client.
-// Every answer is the neutral default; unknown methods get MethodNotFound.
+// Every answer is the neutral default, the profile's settings aside; unknown
+// methods get MethodNotFound.
 func (c *lspConn) answerServerRequest(msg rpcMessage) {
 	resp := rpcMessage{JSONRPC: "2.0", ID: msg.ID}
 	switch msg.Method {
 	case "workspace/configuration":
 		var params struct {
-			Items []json.RawMessage `json:"items"`
+			Items []struct {
+				Section string `json:"section"`
+			} `json:"items"`
 		}
 		_ = json.Unmarshal(msg.Params, &params)
-		nulls := make([]json.RawMessage, len(params.Items))
-		for i := range nulls {
-			nulls[i] = json.RawMessage("null")
+		values := make([]any, len(params.Items))
+		for i, item := range params.Items {
+			values[i] = c.profile.Settings[item.Section]
 		}
-		resp.Result = mustMarshal(nulls)
+		resp.Result = mustMarshal(values)
 	case "client/registerCapability", "client/unregisterCapability",
 		"window/workDoneProgress/create", "window/showMessageRequest":
 		resp.Result = json.RawMessage("null")
@@ -443,6 +454,21 @@ func (c *lspConn) warming(grace time.Duration) bool {
 	return time.Since(c.startedAt) < grace
 }
 
+// listed reports whether the server has its workspace's files. Only a
+// Profile.ListsLate server can lack them after the handshake, until its
+// first diagnostics arrive.
+func (c *lspConn) listed() bool {
+	if !c.profile.ListsLate {
+		return true
+	}
+	select {
+	case <-c.diagnosed:
+		return true
+	default:
+		return false
+	}
+}
+
 // progress answers whether announced work is running, whether any begin was
 // ever seen, and the last percentage it reported, -1 while it reports none.
 func (c *lspConn) progress() (busy, seen bool, pct int) {
@@ -466,12 +492,14 @@ func (c *lspConn) progress() (busy, seen bool, pct int) {
 //
 // Announced work is waited out whoever announces it: a server that reports
 // none at startup can still announce a run of its own later, and a lookup
-// during it would be answered out of half a picture.
+// during it would be answered out of half a picture. A server that lists
+// its workspace unannounced is waited out the same way, until it shows the
+// listing ended (listed).
 func (c *lspConn) waitIndexed(ctx context.Context, grace, budget time.Duration) error {
 	deadline := c.startedAt.Add(budget)
 	for {
 		busy, seen, _ := c.progress()
-		if !busy && (seen || !c.warming(grace)) {
+		if !busy && (seen || !c.warming(grace)) && c.listed() {
 			return nil
 		}
 		if time.Now().After(deadline) {

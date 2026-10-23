@@ -59,7 +59,7 @@ Each area of the cockpit is described below.
     video and audio. Upload, download, move, copy, rename and extract archives.
   * **Saving**: Autosave. A save never overwrites what a coder or git wrote in the meantime, and open files
     follow changes on disk.
-  * **Code navigation**: Go to definition and find usages for Go, PHP, TypeScript and JavaScript, including
+  * **Code navigation**: Go to definition and find usages for Go, PHP, TypeScript, JavaScript and Python, including
     dependency and standard library sources, through language servers in Docker.
   * **Git**: Change marks, diff against HEAD or any revision, blame, file history, commit selected files with
     amend and push, switch and create branches, push, pull, fetch, tags, revert, clone, and compare two revisions.

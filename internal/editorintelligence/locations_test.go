@@ -123,6 +123,14 @@ func TestProfileForPath(t *testing.T) {
 			t.Errorf("%s: %v %v %v, want typescript/%s", path, p, lang, ok, want)
 		}
 	}
+	for _, path := range []string{"src/inventory/models.py", "stdlib/json/__init__.pyi", "SETUP.PY"} {
+		if p, lang, ok := ProfileForPath(path); !ok || p.ID != "python" || lang != "python" {
+			t.Errorf("%s: %v %v %v, want python/python", path, p, lang, ok)
+		}
+	}
+	if _, _, ok := ProfileForPath("__pycache__/models.cpython-312.pyc"); ok {
+		t.Fatal("compiled python must have no profile")
+	}
 	if _, _, ok := ProfileForPath("README.md"); ok {
 		t.Fatal("md must have no profile")
 	}

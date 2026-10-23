@@ -119,6 +119,7 @@ func TestValidLSPTargetTakesProjectPathsAndSourceRoots(t *testing.T) {
 		{"a stub", "/usr/local/lib/node_modules/intelephense/lib/stub/standard/standard_1.php", "c1", true},
 		{"a typescript library file", "/usr/local/lib/node_modules/@typescript/native-preview/node_modules/@typescript/native-preview-linux-x64/lib/lib.es5.d.ts", "c1", true},
 		{"downloaded typings", tsCache + "/cache/typescript/5.9/node_modules/@types/lodash/common/array.d.ts", "c1", true},
+		{"a python standard library stub", "/usr/local/lib/node_modules/pyright/dist/typeshed-fallback/stdlib/json/__init__.pyi", "c1", true},
 		{"a file of this machine", "/etc/passwd", "c1", false},
 		{"the server's own file cache beside the sources", cache + "/cache/gopls/x.go", "c1", false},
 		{"what npm wrote beside the typings", tsCache + "/cache/_npx/x.js", "c1", false},

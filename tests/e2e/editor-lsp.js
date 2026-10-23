@@ -75,18 +75,18 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     await page.waitForFunction(() => document.body.textContent.includes("Settings saved."), null, { timeout: 8000 });
   };
 
+  const servers = [["go", "gopls"], ["php", "intelephense"], ["typescript", "tsgo"], ["python", "pyright"]];
+
   // The pin comes before any editor page: the explicit Docker pick runs
   // deterministically over the fake docker, a fresh instance is asserted.
   await run("setup: a fresh instance defaults to Automatic, pinned to Docker for the run", async () => {
     await page.goto(`${BASE}/settings/editor/lsp`, { waitUntil: "domcontentloaded" });
     await L.dismissUpdate(page);
     const picked = await page.$$eval("#settings-editor-lsp select", (els) => els.map((sel) => `${sel.name}=${sel.value}`).join(","));
-    const fresh = picked === "server_go=auto,server_php=auto,server_typescript=auto";
-    const pinned = picked === "server_go=gopls-docker,server_php=intelephense-docker,server_typescript=tsgo-docker";
+    const fresh = picked === servers.map(([id]) => `server_${id}=auto`).join(",");
+    const pinned = picked === servers.map(([id, server]) => `server_${id}=${server}-docker`).join(",");
     assert(fresh || pinned, `Automatic on a fresh instance or the earlier engine's pin, got ${picked} (the runner needs a fresh throwaway)`);
-    await page.selectOption('select[name="server_go"]', "gopls-docker");
-    await page.selectOption('select[name="server_php"]', "intelephense-docker");
-    await page.selectOption('select[name="server_typescript"]', "tsgo-docker");
+    for (const [id, server] of servers) await page.selectOption(`select[name="server_${id}"]`, `${server}-docker`);
     await saveLSPSettings();
     return fresh ? "fresh instance, Automatic was the default" : "pin from the earlier engine pass held";
   });
@@ -589,9 +589,8 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
       options: [...sel.options].map((o) => o.value).join(","),
     })));
     const byName = Object.fromEntries(selects.map((sel) => [sel.name, sel.options]));
-    assert(byName.server_go === "auto,gopls-docker,off", `go select options, got ${byName.server_go}`);
-    assert(byName.server_php === "auto,intelephense-docker,off", `php select options, got ${byName.server_php}`);
-    assert(byName.server_typescript === "auto,tsgo-docker,off", `typescript select options, got ${byName.server_typescript}`);
+    assert(Object.keys(byName).join(",") === servers.map(([id]) => `server_${id}`).join(","), `one select per language, got ${Object.keys(byName)}`);
+    for (const [id, server] of servers) assert(byName[`server_${id}`] === `auto,${server}-docker,off`, `${id} select options, got ${byName[`server_${id}`]}`);
     await page.selectOption('select[name="server_go"]', "auto");
     await saveLSPSettings();
     await page.reload({ waitUntil: "domcontentloaded" });
