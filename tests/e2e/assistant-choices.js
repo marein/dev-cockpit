@@ -680,6 +680,8 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     return `served with both picks, followed live both ways, answered with ${JSON.stringify(text)}`;
   });
 
+  await require("./assistant-grow").growChecks({ page, run, mobilePage, helpers: { ...helpers, ask: (target) => ask(target, idle) } });
+
   await run("the choices runner's assistant is deleted", async () => {
     if (!id) return "nothing to delete";
     const gone = await postForm(page, id, { form: "delete" });

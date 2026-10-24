@@ -1,6 +1,6 @@
 import { postForm, ensureOk, getText, getJSON } from "@dc/http";
 import { notifyError } from "@dc/toast";
-import { growTextarea } from "@dc/dom";
+import { growTextarea, keepGrown } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 
 // The composer's draft waits the same 200ms for the same reason: a word being
@@ -50,7 +50,10 @@ class AssistantChoices extends HTMLElement {
       void this.send();
     }, { signal });
     onServerEvent("draft", (event) => this.onDraftEvent(event.detail), { signal });
-    this.form.querySelectorAll("textarea").forEach((note) => this.grow(note));
+    this.form.querySelectorAll("textarea").forEach((note) => {
+      this.grow(note);
+      keepGrown(note, () => this.grow(note), signal);
+    });
     this.watchThread();
     this.sync();
     if (missedServerEvent("draft")) void this.pull();

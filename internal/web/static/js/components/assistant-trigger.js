@@ -1,4 +1,4 @@
-import { growTextarea } from "@dc/dom";
+import { growTextarea, keepGrown } from "@dc/dom";
 
 // The one form that makes a trigger and the one that changes it, in the create
 // dialog and on the page behind it. Every field arrives on the stand the server
@@ -26,8 +26,8 @@ class AssistantTrigger extends HTMLElement {
     this.event?.addEventListener("change", () => this.syncFields(), { signal });
     this.unit?.addEventListener("change", () => this.syncExpiry(), { signal });
     this.task?.addEventListener("input", () => this.grow(), { signal });
+    keepGrown(this.task, () => this.grow(), signal);
     this.fillZones();
-    this.closest(".modal")?.addEventListener("shown.bs.modal", () => this.grow(), { signal });
     this.syncFields();
     this.syncExpiry();
   }

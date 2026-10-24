@@ -1,7 +1,7 @@
 import { postForm, ensureOk, getText, getJSON, csrfHeaders } from "@dc/http";
 import { notifyError, showToast } from "@dc/toast";
 import { missedServerEvent, onServerEvent } from "@dc/events";
-import { growTextarea, jumpTextEdge, markWorking } from "@dc/dom";
+import { growTextarea, jumpTextEdge, keepGrown, markWorking } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { watchFileDrop } from "@dc/filedrop";
 import { resolveHostlessLinks } from "@dc/docker";
@@ -218,6 +218,7 @@ class Assistant extends HTMLElement {
       if (this.footer) this.sizer.observe(this.footer);
       this.sizer.observe(this.log);
     }
+    keepGrown(this.input, () => this.autoGrow(), signal);
 
     // Another device may have moved the thread on, or a message arrived
     // while the event stream was down (the connect snapshot repeats the
@@ -253,7 +254,6 @@ class Assistant extends HTMLElement {
     this.stream.open();
     this.stickToEnd();
     this.onInput();
-    this.autoGrow();
     this.takeFocus();
     // The earlier messages load as the whole transcript, a page of its own;
     // the message the reader was looking at keeps its place in the viewport

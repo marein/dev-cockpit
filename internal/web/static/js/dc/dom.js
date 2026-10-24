@@ -71,12 +71,38 @@ export function jumpTextEdge(event, input) {
 
 const GROW_SHARE = 0.35;
 
+// A box that is not laid out measures a scrollHeight of 0, and growing it then
+// would leave it one line high once it shows.
 export function growTextarea(input, surface) {
-  if (!input) return;
+  if (!input?.getClientRects().length) return;
   input.style.height = "auto";
   const max = Math.round(surface() * GROW_SHARE);
   input.style.height = `${Math.min(input.scrollHeight, max)}px`;
   input.style.overflowY = input.scrollHeight > max ? "auto" : "hidden";
+}
+
+// How a text wraps follows the box's width, which changes after a grow on
+// connect: the layout settles, a hidden box shows, the viewport turns. The
+// height alone does not count, the grow itself sets it, and it runs as the
+// next task because a box resized inside its own observer is a loop error in
+// WebKit, whose animation frames a headless run delays by most of a second.
+// The window's resize covers the surface the cap is a share of.
+export function keepGrown(input, grow, signal) {
+  if (!input) return;
+  let width = 0;
+  let timer = 0;
+  const observer = new ResizeObserver(() => {
+    if (input.offsetWidth === width) return;
+    width = input.offsetWidth;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(grow);
+  });
+  observer.observe(input);
+  window.addEventListener("resize", grow, { signal });
+  signal.addEventListener("abort", () => {
+    observer.disconnect();
+    window.clearTimeout(timer);
+  }, { once: true });
 }
 
 const ESCAPE = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
