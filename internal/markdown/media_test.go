@@ -42,6 +42,26 @@ func TestMediaLinkToAnImageCarriesItsSize(t *testing.T) {
 	}
 }
 
+// A clip an answer points at holds its box the same way.
+func TestMediaVideoCarriesItsSize(t *testing.T) {
+	html, _, err := RenderGFMWithMediaAround("![the run](shot.mp4)\n", sizedResolver(Media{URL: "/media/shot.mp4", Kind: "video", Width: 360, Height: 640}), -1)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{`<video src="/media/shot.mp4"`, `width="360"`, `height="640"`, `style="--dc-media-ratio:360/640"`, `preload="metadata"`} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("want %s in %q", want, html)
+		}
+	}
+	bare, _, err := RenderGFMWithMediaAround("![the run](shot.mp4)\n", sizedResolver(Media{URL: "/media/shot.mp4", Kind: "video"}), -1)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(bare, "width=") || strings.Contains(bare, "--dc-media-ratio") {
+		t.Fatalf("want no size in %q", bare)
+	}
+}
+
 // A size the resolver could not read says nothing at all: no empty attributes,
 // no zeros, because a zero box is a picture the browser would never show.
 func TestMediaWithoutASizeSaysNothing(t *testing.T) {

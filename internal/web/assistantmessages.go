@@ -80,7 +80,7 @@ func (s *Server) messageView(instanceID string, m assistant.Message, retryable, 
 	}
 	for _, a := range m.Attachments {
 		path := s.attachmentPath(instanceID, a)
-		width, height := assistantImageSize(a.Media, path)
+		width, height := assistantMediaSize(a.Media, path)
 		url := ""
 		if rel, ok := s.workspaceRel(instanceID, path); ok {
 			url = media.url(rel)
@@ -129,14 +129,17 @@ func (s *Server) attachmentPath(instanceID string, a assistant.Attachment) strin
 	return filepath.Join(dir, a.Name)
 }
 
-// assistantImageSize is the pixel size of a picture on disk, and nothing at
-// all for every other kind of file: only an image reserves a box in the
+// assistantMediaSize is the size a picture or a clip on disk is shown at, and
+// nothing at all for every other kind of file: only those reserve a box in the
 // transcript, and a size nobody could read is left unsaid.
-func assistantImageSize(media, file string) (int, int) {
-	if media != "image" {
-		return 0, 0
+func assistantMediaSize(media, file string) (int, int) {
+	switch media {
+	case "image":
+		return filesystem.ImageSize(file)
+	case "video":
+		return filesystem.VideoSize(file)
 	}
-	return filesystem.ImageSize(file)
+	return 0, 0
 }
 
 // assistantMediaURL turns an absolute path inside one assistant's workspace
@@ -181,7 +184,7 @@ func (s *Server) markdownWithMedia(instanceID, src string, media chatMedia, cut 
 			return markdown.Media{}, false
 		}
 		kind := assistant.MediaKind(rel)
-		width, height := assistantImageSize(kind, absolute)
+		width, height := assistantMediaSize(kind, absolute)
 		return markdown.Media{
 			URL:    media.url(path.Clean(filepath.ToSlash(rel))),
 			Kind:   kind,

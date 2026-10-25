@@ -44,10 +44,11 @@ type AssistantAttachmentView struct {
 	URL      string
 	Media    string
 	SizeText string
-	// Width and Height are the pixel size of a picture, zero when it could not
-	// be read. They render as the image's attributes, so its space stands
-	// before the browser has the file: without them a transcript full of
-	// screenshots rearranges itself under the reader while they arrive.
+	// Width and Height are the size a picture or a clip is shown at, zero when
+	// it could not be read. They render as the element's attributes, so its
+	// space stands before the browser has the file: without them a transcript
+	// full of screenshots and clips rearranges itself under the reader while
+	// they arrive.
 	Width  int
 	Height int
 }

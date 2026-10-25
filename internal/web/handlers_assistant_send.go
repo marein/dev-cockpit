@@ -251,7 +251,7 @@ func (s *Server) handleAssistantUpload(c *gin.Context) {
 			"size":  attachment.Size,
 			"url":   s.assistantMediaURL(id, attachment.Path),
 		}
-		if width, height := assistantImageSize(attachment.Media, attachment.Path); width > 0 {
+		if width, height := assistantMediaSize(attachment.Media, attachment.Path); width > 0 {
 			file["width"], file["height"] = width, height
 		}
 		saved = append(saved, file)

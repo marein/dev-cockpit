@@ -115,7 +115,7 @@
     {{if eq .Media "image"}}
     <a href="{{.URL}}" target="_blank" rel="noopener" data-assistant-file="{{.Name}}"><img src="{{.URL}}" alt="{{.Name}}" class="dc-assistant-media"{{if .Width}} width="{{.Width}}" height="{{.Height}}" style="--dc-media-ratio:{{.Width}}/{{.Height}}"{{end}}></a>
     {{else if eq .Media "video"}}
-    <video src="{{.URL}}" class="dc-assistant-media" controls playsinline preload="metadata" data-assistant-file="{{.Name}}"></video>
+    <video src="{{.URL}}" class="dc-assistant-media"{{if .Width}} width="{{.Width}}" height="{{.Height}}" style="--dc-media-ratio:{{.Width}}/{{.Height}}"{{end}} controls playsinline preload="metadata" data-assistant-file="{{.Name}}"></video>
     {{else if eq .Media "audio"}}
     <audio src="{{.URL}}" class="dc-assistant-audio" controls preload="metadata" data-assistant-file="{{.Name}}"></audio>
     {{else}}

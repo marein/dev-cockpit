@@ -52,6 +52,13 @@ function mediaKind(name) {
   return "file";
 }
 
+function sizeMedia(node, file) {
+  if (!file.width || !file.height) return;
+  node.setAttribute("width", file.width);
+  node.setAttribute("height", file.height);
+  node.style.setProperty("--dc-media-ratio", `${file.width}/${file.height}`);
+}
+
 function renderAttachment(file) {
   if (file.media === "image") {
     const link = document.createElement("a");
@@ -63,11 +70,7 @@ function renderAttachment(file) {
     image.src = file.url;
     image.alt = file.name;
     image.className = "dc-assistant-media";
-    if (file.width && file.height) {
-      image.setAttribute("width", file.width);
-      image.setAttribute("height", file.height);
-      image.style.setProperty("--dc-media-ratio", `${file.width}/${file.height}`);
-    }
+    sizeMedia(image, file);
     link.append(image);
     return link;
   }
@@ -78,6 +81,7 @@ function renderAttachment(file) {
     player.preload = "metadata";
     player.className = file.media === "video" ? "dc-assistant-media" : "dc-assistant-audio";
     if (file.media === "video") player.playsInline = true;
+    sizeMedia(player, file);
     return player;
   }
   const link = document.createElement("a");

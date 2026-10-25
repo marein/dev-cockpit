@@ -20,11 +20,11 @@ type Media struct {
 	URL string
 	// Kind is image, video, audio or file.
 	Kind string
-	// Width and Height are the pixel size of a still image, zero when the
-	// resolver could not read it. They are rendered as the image's attributes,
-	// which is what reserves its space before it has arrived: without them
-	// every picture in a long answer pushes the text under it down the moment
-	// it decodes.
+	// Width and Height are the size a picture or a clip is shown at, zero when
+	// the resolver could not read it. They are rendered as the element's
+	// attributes, which is what reserves its space before it has arrived:
+	// without them every picture and clip in a long answer pushes the text
+	// under it down the moment it decodes.
 	Width  int
 	Height int
 }
@@ -169,8 +169,8 @@ func setSize(image *ast.Image, media Media) {
 	image.SetAttributeString("style", mediaRatioStyle(media))
 }
 
-// sizeAttributes is the same box for the image this package renders itself, a
-// link that points at a picture.
+// sizeAttributes is the same box for the media this package renders itself: a
+// link that points at a picture, and every clip.
 func sizeAttributes(media Media) string {
 	if media.Width <= 0 || media.Height <= 0 {
 		return ""
@@ -208,7 +208,7 @@ func (r *mediaRenderer) render(w util.BufWriter, _ []byte, node ast.Node, enteri
 	case "image":
 		fmt.Fprintf(w, `<a href="%s" target="_blank" rel="noopener"><img src="%s" alt="%s" class="%s"%s></a>`, url, url, label, mediaClass, sizeAttributes(n.media))
 	case "video":
-		fmt.Fprintf(w, `<video src="%s" class="%s" controls playsinline preload="metadata"></video>`, url, mediaClass)
+		fmt.Fprintf(w, `<video src="%s" class="%s"%s controls playsinline preload="metadata"></video>`, url, mediaClass, sizeAttributes(n.media))
 	case "audio":
 		fmt.Fprintf(w, `<audio src="%s" class="dc-assistant-audio" controls preload="metadata"></audio>`, url)
 	default:

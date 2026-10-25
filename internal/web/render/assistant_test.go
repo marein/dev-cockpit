@@ -116,6 +116,20 @@ func TestAssistantImageCarriesItsSizeAndItsRatio(t *testing.T) {
 	}
 }
 
+// A clip holds its box the same way: without it the player stands at the
+// browser's default size until the file's header arrives, and then grows.
+func TestAssistantVideoCarriesItsSizeAndItsRatio(t *testing.T) {
+	out := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m1", User: true, Author: "You",
+		Attachments: []AssistantAttachmentView{{Name: "clip.mov", URL: "/media/clip.mov", Media: "video", Width: 1080, Height: 1920}},
+	})
+	for _, want := range []string{`<video src="/media/clip.mov"`, `width="1080"`, `height="1920"`, `style="--dc-media-ratio:1080/1920"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("want %s in %q", want, out)
+		}
+	}
+}
+
 // A picture nobody could measure says nothing: no attributes, no ratio, no
 // invented box. Width and height stay auto, and a browser keeps the ratio of
 // such an image by itself.

@@ -267,7 +267,7 @@ func (s *Server) assistantDraftViews(instanceID string, draft assistant.Draft) [
 			continue
 		}
 		file := gin.H{"name": a.Name, "media": a.Media, "size": a.Size, "url": url}
-		if width, height := assistantImageSize(a.Media, path); width > 0 {
+		if width, height := assistantMediaSize(a.Media, path); width > 0 {
 			file["width"], file["height"] = width, height
 		}
 		files = append(files, file)
