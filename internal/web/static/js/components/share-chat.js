@@ -1,8 +1,7 @@
 import { ChatStream, appendLive, showTool, writeLive } from "@dc/chat-stream";
+import { ChatFollow } from "@dc/chat-follow";
 import { resolveHostlessLinks } from "@dc/docker";
 import { markWorking } from "@dc/dom";
-
-const END_SLACK = 48;
 
 // A bubble that stands keeps what the guest unfolded in it until it moves:
 // its state, or the questions it asks, which end while its state holds.
@@ -20,12 +19,9 @@ class ShareChat extends HTMLElement {
     this.ac = new AbortController();
     const { signal } = this.ac;
     this.live = null;
-    this.atEnd = true;
-    this.scroller.addEventListener("scroll", () => {
-      this.atEnd = this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight < END_SLACK;
-    }, { signal, passive: true });
+    this.follow = new ChatFollow(this.scroller, { button: this.querySelector("[data-chat-end]"), signal });
     resolveHostlessLinks(this.thread);
-    this.toEnd();
+    this.follow.toEnd();
     this.stream = new ChatStream(this.getAttribute("stream-url"), {
       onFrame: (frame) => this.onFrame(frame),
       onOpen: () => {
@@ -63,7 +59,7 @@ class ShareChat extends HTMLElement {
         const text = frame.text || "";
         this.live.text += text;
         const body = this.liveBody();
-        if (body) this.follow(() => appendLive(body, text));
+        if (body) appendLive(body, text);
         break;
       }
       case "tool":
@@ -89,10 +85,8 @@ class ShareChat extends HTMLElement {
     if (!this.live) return;
     const body = this.liveBody();
     if (body) {
-      this.follow(() => {
-        writeLive(body, this.live.html, this.live.text);
-        resolveHostlessLinks(body);
-      });
+      writeLive(body, this.live.html, this.live.text);
+      resolveHostlessLinks(body);
     } else if (pullMissing) {
       void this.pull();
     }
@@ -112,7 +106,7 @@ class ShareChat extends HTMLElement {
       }
       const html = await response.text();
       if (!this.ac) return;
-      this.follow(() => this.apply(html));
+      this.apply(html);
       this.paint(false);
     } catch (error) {
       void error;
@@ -140,16 +134,6 @@ class ShareChat extends HTMLElement {
     this.thread.querySelector("[data-share-empty]")?.toggleAttribute("hidden", nodes.length > 0);
     const head = doc.querySelector("[data-share-head-icon]");
     if (this.headIcon && head) markWorking(this.headIcon, head.classList.contains("working") ? Number(head.dataset.workingSince) || 0 : 0);
-  }
-
-  follow(change) {
-    const follow = this.atEnd;
-    change();
-    if (follow) this.toEnd();
-  }
-
-  toEnd() {
-    this.scroller.scrollTop = this.scroller.scrollHeight;
   }
 
   end() {

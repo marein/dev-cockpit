@@ -7,6 +7,7 @@ import { watchFileDrop } from "@dc/filedrop";
 import { resolveHostlessLinks } from "@dc/docker";
 import { SwipeNav, isCurrentPage, swipeBlockedAt, watchSwipe } from "@dc/swipe";
 import { ChatStream, appendLive, showTool as showToolLine, writeLive } from "@dc/chat-stream";
+import { ChatFollow } from "@dc/chat-follow";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -149,9 +150,7 @@ class Assistant extends HTMLElement {
 
     this.running = this.hasAttribute("running");
     this.pending = null;
-    this.pinned = true;
-    this.ownTops = [];
-    this.scrollQueued = false;
+    this.follow = this.scroller ? new ChatFollow(this.scroller, { button: this.querySelector("[data-chat-end]"), signal }) : null;
 
     this.form?.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -191,7 +190,6 @@ class Assistant extends HTMLElement {
     // start the moment it begins, and the toast is what keeps that one wait
     // from reading as a hang.
     onServerEvent("voice-warming", (event) => this.onVoiceWarming(event.detail), { signal });
-    this.scroller?.addEventListener("scroll", () => this.trackPin(), { signal, passive: true });
 
     if (this.uploadUrl) {
       this.attachButton?.addEventListener("click", () => this.fileInput?.click(), { signal });
@@ -213,14 +211,6 @@ class Assistant extends HTMLElement {
         this.renderAttachments();
         this.queueDraft();
       }, { signal });
-    }
-    // The log grows after this element is done: a picture in the transcript
-    // decodes, a web font swaps, the composer wraps to a second line. Each of
-    // those moves the bottom, so the pin is re-applied from an observer.
-    if (window.ResizeObserver) {
-      this.sizer = new ResizeObserver(() => this.stickToEnd());
-      if (this.footer) this.sizer.observe(this.footer);
-      this.sizer.observe(this.log);
     }
     keepGrown(this.input, () => this.autoGrow(), signal);
 
@@ -254,9 +244,14 @@ class Assistant extends HTMLElement {
     }
 
     this.setRunning(this.running);
-    this.stream = new ChatStream(this.streamUrl, { onFrame: (frame) => this.onFrame(frame), onOpen: () => void this.catchUp() });
+    this.stream = new ChatStream(this.streamUrl, {
+      onFrame: (frame) => this.onFrame(frame),
+      onOpen: () => {
+        void this.catchUp();
+        void this.confirmRunning();
+      },
+    });
     this.stream.open();
-    this.stickToEnd();
     this.onInput();
     this.takeFocus();
     // The earlier messages load as the whole transcript, a page of its own;
@@ -281,14 +276,29 @@ class Assistant extends HTMLElement {
 
     this.setAttribute("ready", "");
     document.dispatchEvent(new CustomEvent("dc:assistant-shown"));
-    // A tick later: under a boosted navigation the element connects before
-    // pe.js pushes the new address and scrolls its hash target, and the
-    // landing has to read that address and come after that scroll.
+    // A microtask later: under a boosted navigation the element connects
+    // before pe.js pushes the new address and scrolls its hash target, and
+    // the landing has to read that address and come after that scroll. A
+    // task later would be a frame too late, the page paints in between.
+    queueMicrotask(() => {
+      if (this.isConnected) this.land();
+    });
     window.setTimeout(() => {
-      if (!this.isConnected) return;
-      this.landOnHash();
-      if (missedServerEvent("assistant")) void this.syncFromServer();
+      if (this.isConnected && missedServerEvent("assistant")) void this.syncFromServer();
     }, 0);
+  }
+
+  // land puts the transcript where it is read: where the surface this one
+  // replaced had the reader, on the message the address names, at the end.
+  land() {
+    if (!this.follow) return;
+    const carried = this.carried;
+    this.carried = null;
+    if (carried) {
+      this.follow.adopt(carried, (place) => this.anchorTo(place.id, place.offset));
+      return;
+    }
+    if (!this.landOnHash()) this.follow.toEnd();
   }
 
   readingPlace() {
@@ -307,7 +317,7 @@ class Assistant extends HTMLElement {
   // link puts the message back where the reader had it instead.
   landOnHash() {
     const hash = window.location.hash;
-    if (!hash.startsWith("#message-")) return;
+    if (!hash.startsWith("#message-")) return false;
     const id = decodeURIComponent(hash.slice("#message-".length));
     let place = null;
     try {
@@ -316,16 +326,32 @@ class Assistant extends HTMLElement {
     } catch (error) {
       void error;
     }
-    if (place && place.id === id && this.querySelector(`[data-message-id="${CSS.escape(id)}"]`)) {
-      this.anchorTo(id, place.offset);
-      return;
-    }
-    if (this.focusMessage(id)) return;
+    if (place && place.id === id && this.anchorTo(id, place.offset)) return true;
+    if (this.focusMessage(id)) return true;
     const all = this.querySelector("[data-assistant-all]");
-    if (!all || new URLSearchParams(window.location.search).has("all")) return;
+    if (!all || new URLSearchParams(window.location.search).has("all")) return false;
     const target = all.getAttribute("href").split("#")[0] + hash;
     if (window.app?.navigate) window.app.navigate(target);
     else window.location.href = target;
+    return false;
+  }
+
+  // A page rendered while a turn ran hears its end over the stream alone, and
+  // a stream that subscribed after the end hears nothing: the connect snapshot
+  // repeats a turn that still runs and stays silent otherwise. The page asks
+  // the server once whether the turn it was rendered with still runs.
+  async confirmRunning() {
+    if (!this.running || this.pending || this.pendingMessageId) return;
+    try {
+      const html = await getText(window.location.pathname + window.location.search, { headers: { "X-DC-Pull": "1" } });
+      if (!this.running || this.pending || this.pendingMessageId || !this.isConnected) return;
+      const fresh = new DOMParser().parseFromString(html, "text/html").querySelector("dc-assistant");
+      if (!fresh || fresh.getAttribute("assistant-id") !== this.getAttribute("assistant-id") || fresh.hasAttribute("running")) return;
+      this.setRunning(false);
+      void this.syncFromServer();
+    } catch (error) {
+      void error;
+    }
   }
 
   async syncFromServer() {
@@ -346,6 +372,9 @@ class Assistant extends HTMLElement {
       if (!moved || composerHoldsUnsavedWords(this, fresh) || this.running) return;
       const app = this.closest(".dc-app");
       next = document.adoptNode(fresh);
+      // Read before the aside moves: the thread beside it widens once it is
+      // gone, and the place would be read off a reflowed thread.
+      next.carried = this.follow?.carry(this.readingPlace());
       // The aside holds what the reader put where: the open tab, an unfolded
       // row, where it is scrolled. Its two lists refresh themselves on this
       // same event, so the one that stands comes along instead of being
@@ -445,56 +474,23 @@ class Assistant extends HTMLElement {
     return this.scroller ? this.scroller.clientHeight : window.innerHeight;
   }
 
-  scrollPosition() {
-    return this.scroller ? this.scroller.scrollTop : 0;
-  }
-
-  scrollLength() {
-    return this.scroller ? this.scroller.scrollHeight : 0;
-  }
-
-  scrollToPosition(top) {
-    this.scroller?.scrollTo({ top, behavior: "instant" });
-  }
-
-  // A machine move must not read as the reader scrolling away, and its
-  // scroll event cannot be told apart by counting: the browser fires at most
-  // one event per frame for all movement in it, and it also moves scrollTop
-  // on its own, clamping to the bottom of a layout the streaming answer has
-  // meanwhile changed again, so a counter drifts and then either swallows
-  // the reader's real scroll or lets a stale event unpin a follower. What is
-  // reliable is the place a machine move can land on: where a jump ended, or
-  // the bottom the layout had when the machinery last looked. trackPin
-  // ignores an event that reads back one of those places, because no reader
-  // intent lies in it, and judges everything else.
-  notePlace(top) {
-    const now = Date.now();
-    this.ownTops = this.ownTops.filter((entry) => now - entry.at < 500);
-    this.ownTops.push({ top, at: now });
-  }
-
-  maskedJump(jump) {
-    jump();
-    this.notePlace(this.scrollPosition());
-  }
-
   // focusMessage brings one message to the top of the transcript, the way a
-  // notification's link lands on the answer it announced, and releases the
-  // end pin so the settling page does not drag the reader away from it.
+  // notification's link lands on the answer it announced, and lets go of the
+  // end so the settling page does not drag the reader away from it.
   focusMessage(messageId) {
     const node = this.bubble(messageId);
-    if (!node || !this.scroller) return false;
-    this.pinned = false;
-    this.maskedJump(() => node.scrollIntoView({ block: "start", behavior: "instant" }));
+    if (!node || !this.follow) return false;
+    this.follow.release();
+    this.follow.place(() => node.scrollIntoView({ block: "start", behavior: "instant" }));
     return true;
   }
 
   anchorTo(messageId, offset) {
     const node = this.bubble(messageId);
-    if (!node || !this.scroller) return false;
-    this.pinned = false;
+    if (!node || !this.follow) return false;
+    this.follow.release();
     const shift = node.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top - offset;
-    this.maskedJump(() => this.scrollToPosition(this.scrollPosition() + shift));
+    this.follow.place(() => { this.scroller.scrollTop += shift; });
     return true;
   }
 
@@ -510,8 +506,6 @@ class Assistant extends HTMLElement {
     this.swipeNav?.destroy();
     this.swipeNav = null;
     this.removeAttribute("ready");
-    this.sizer?.disconnect();
-    this.sizer = null;
     this.stopWatchdog();
     this.stopTalk(true);
     this.disarmTalkEscape();
@@ -533,9 +527,9 @@ class Assistant extends HTMLElement {
 
   autoGrow() {
     if (!this.input) return;
-    const wasPinned = this.pinned;
-    growTextarea(this.input, () => this.viewportHeight());
-    if (wasPinned) this.stickToEnd();
+    const grow = () => growTextarea(this.input, () => this.viewportHeight());
+    if (this.follow) this.follow.keep(grow);
+    else grow();
   }
 
   // The unsent message belongs to the assistant, so the browser only holds
@@ -705,9 +699,9 @@ class Assistant extends HTMLElement {
         this.pending = { runId: frame.runId, messageId: frame.messageId };
         this.setRunning(true, frame.since);
         // A new answer is followed when the reader stands at the end, or a
-        // note's height above it: notes that landed unpinned them, and the
-        // app's own rule for "at the end" pins them again.
-        this.repinIfNear();
+        // note's height above it after notes landed under the last answer
+        // and let go of the end for them. A reader who scrolled away stays.
+        this.follow?.pinIfNear(120);
         this.setText(frame.messageId, frame.html, frame.text);
         this.setModel(frame.messageId, frame.model);
         break;
@@ -810,14 +804,12 @@ class Assistant extends HTMLElement {
     if (!body) return;
     writeLive(body, html, text);
     resolveHostlessLinks(body);
-    this.stickToEnd();
   }
 
   appendText(messageId, text) {
     const body = this.body(messageId);
     if (!body) return;
     appendLive(body, text);
-    this.stickToEnd();
   }
 
   showTool(messageId, name) {
@@ -1006,7 +998,6 @@ class Assistant extends HTMLElement {
       // The fresh fragment's speaker renders in the resting state; while
       // this very answer is being spoken it has to show that instead.
       this.syncSpeakButtons();
-      this.stickToEnd();
     } catch {
       const node = this.bubble(messageId);
       if (node?.hasAttribute("data-assistant-slot")) {
@@ -1126,17 +1117,14 @@ class Assistant extends HTMLElement {
     }
     this.heldBar.replaceChildren(...fresh.childNodes);
     window.app?.loadElements?.(this.heldBar);
-    this.stickToEnd();
   }
 
   // landHeld puts the held notes into the thread, under the answer they
   // waited for, in arrival order. The page does not follow them: the answer
-  // stays where the reader is, the notes stand under it. The resize the
-  // landing causes is what the pin would answer, so it is masked until the
-  // frame after the one that lays the notes out, and the reader is unpinned:
-  // the finished answer's own fragment lands a moment later and would pull
-  // the page to the new end otherwise, which is the notes. The next answer
-  // pins again when they still stand near the end, see repinIfNear.
+  // stays where the reader is, the notes stand under it, and the end is let
+  // go before they land, or the finished answer's own fragment a moment
+  // later would pull the page to the new end, which is the notes. The next
+  // answer pins again when they still stand near the end, see pinIfNear.
   landHeld() {
     const held = this.held || [];
     this.held = [];
@@ -1144,8 +1132,7 @@ class Assistant extends HTMLElement {
       this.renderHeld();
       return;
     }
-    this.landing = true;
-    this.pinned = false;
+    this.follow?.release();
     for (const entry of held) {
       const node = this.bubble(entry.id);
       if (node) node.replaceWith(entry.node);
@@ -1153,18 +1140,6 @@ class Assistant extends HTMLElement {
       window.app?.loadElements?.(entry.node);
     }
     this.renderHeld();
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => { this.landing = false; });
-    });
-  }
-
-  // repinIfNear pins the reader again when they stand within the distance
-  // trackPin reads as the end. It only ever pins: a reader who scrolled away
-  // stays away.
-  repinIfNear() {
-    if (this.pinned) return;
-    const remaining = this.scrollLength() - this.scrollPosition() - this.viewportHeight();
-    if (remaining < 120) this.pinned = true;
   }
 
   appendUserMessage(text, attachments = []) {
@@ -1197,8 +1172,7 @@ class Assistant extends HTMLElement {
     this.log.append(node);
     window.app?.loadElements?.(node);
     // Asking something is asking to follow the answer, wherever the reader was.
-    this.pinned = true;
-    this.stickToEnd();
+    this.follow?.pin();
     return node;
   }
 
@@ -1251,7 +1225,6 @@ class Assistant extends HTMLElement {
       this.pendingMessageId = null;
       this.stopWatchdog();
       this.setRunning(false);
-      this.stickToEnd();
     } catch {
       void 0;
     } finally {
@@ -2118,19 +2091,6 @@ class Assistant extends HTMLElement {
     }
   }
 
-  // A short page (the pictures in it have not decoded yet) reads as "already at
-  // the end" from every scroll event, so an anchored page must not re-pin: the
-  // pin would win the next time the transcript grows and take the page to the
-  // bottom the reader never asked for.
-  trackPin() {
-    const now = Date.now();
-    this.ownTops = this.ownTops.filter((entry) => now - entry.at < 500);
-    const top = this.scrollPosition();
-    if (this.ownTops.some((entry) => Math.abs(top - entry.top) <= 1)) return;
-    const remaining = this.scrollLength() - top - this.viewportHeight();
-    this.pinned = remaining < 120;
-  }
-
   // Opening an assistant puts the cursor in the box, so a thought can be typed
   // without clicking first. Only where a keyboard is already there: COARSE is
   // the same pointer test the send uses to decide whether to keep the focus
@@ -2157,26 +2117,6 @@ class Assistant extends HTMLElement {
     const active = document.activeElement;
     if (active && active !== document.body && active.isConnected && !this.contains(active)) return;
     this.input.focus({ preventScroll: true });
-  }
-
-  // stickToEnd holds the transcript at its end while the reader is following
-  // it, and nowhere at all once they scrolled away. The bottom is written
-  // down before anything else, on every call: this is the moment the layout
-  // may clamp the scroller there on its own, and that clamp must never read
-  // as the reader.
-  stickToEnd() {
-    this.notePlace(this.scrollLength() - this.viewportHeight());
-    if (!this.pinned || this.landing) return;
-    if (this.scrollQueued) return;
-    this.scrollQueued = true;
-    window.requestAnimationFrame(() => {
-      this.scrollQueued = false;
-      if (!this.pinned) return;
-      // Scrolling smoothly never catches up with a growing answer: every
-      // delta would start a new animation from where the last one got to.
-      // Following the end of a transcript is a jump.
-      this.maskedJump(() => this.scrollToPosition(this.scrollLength()));
-    });
   }
 }
 

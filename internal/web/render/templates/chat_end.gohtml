@@ -1,0 +1,14 @@
+{{/* Stands right after a conversation's scroller, on the owner's page and a
+     guest's. The script lands a full load before its first paint and keeps
+     it there through every change of size until the element that follows the
+     end has loaded, or the reader touches the thread: on the message a
+     #message address names, which the browser scrolls to only frames later,
+     or at the end. It hides nothing: should it fail, the thread stands at its
+     top until the element lands it. The button at the scroller's bottom
+     right jumps back to the end. */}}
+{{define "chat_end.gohtml"}}
+<script>{const s=document.currentScript.previousElementSibling,h=s.closest("dc-assistant,dc-share-chat"),o=new ResizeObserver(()=>{if(!h||h.matches(":defined"))return o.disconnect();const m=location.hash.startsWith("#message-")&&document.getElementById(location.hash.slice(1));if(m&&s.contains(m))m.scrollIntoView({block:"start"});else s.scrollTop=s.scrollHeight});o.observe(s);for(const c of s.children)o.observe(c);for(const t of["wheel","touchstart","pointerdown"])s.addEventListener(t,()=>o.disconnect(),{once:true,passive:true})}</script>
+<div class="position-relative">
+  <button type="button" class="btn btn-icon rounded-circle shadow position-absolute bottom-100 end-0 mb-3 me-4 z-3" aria-label="Jump to the end" title="Jump to the end" data-chat-end hidden><i class="ti ti-arrow-down" aria-hidden="true"></i></button>
+</div>
+{{end}}

@@ -47,6 +47,7 @@
           <div data-share-thread>{{template "share_thread.gohtml" .}}</div>
           <div class="mt-3" data-share-ended hidden>{{template "notice.gohtml" (dict "Level" "info" "Message" "This conversation is no longer shared." "Class" "m-0")}}</div>
         </div>
+        {{template "chat_end.gohtml"}}
       </div>
       {{template "assistant_aside.gohtml" .}}
     </div>

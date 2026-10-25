@@ -1215,6 +1215,7 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
    height, on a desktop they stay a line. */
 @media (pointer: coarse) {
   [data-assistant-note-fold], [data-assistant-held-note], [data-assistant-held-more] { min-height: 2.75rem; }
+  [data-chat-end] { min-width: 2.75rem; min-height: 2.75rem; }
 }
 @media (min-width: 1200px) {
   .dc-assistant-body > .dc-assistant-aside {
