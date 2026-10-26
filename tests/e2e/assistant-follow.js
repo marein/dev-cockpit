@@ -42,7 +42,11 @@ const zlib = require("zlib");
 //   them, WebKit's are overlays without events),
 // - a swap of the owner's surface (syncFromServer) keeps the reader's place,
 //   or the follow,
-// - the guest's conversation (dc-share-chat) does the same.
+// - the guest's conversation (dc-share-chat) does the same,
+// - a question's note: lines typed into the last one keep a follower at the
+//   end with Send in view on every frame, and leave a reader away from the end
+//   where they stand. The note is measured at one line on its way, which
+//   clamps the scroller, and WebKit keeps that clamp once it is tall again.
 //
 // Instance: like assistant.js's (tests/e2e/fakes first on PATH for the fake
 // claude, a scratch HOME). The run makes one assistant and a link of it, and
@@ -60,6 +64,9 @@ const BUTTON = "[data-chat-end]";
 const ANSWER = Array.from({ length: 60 }, (_, i) => `- line ${i + 1} of an answer that keeps coming`).join("\n");
 // Its own words, so a later wait for a line of ANSWER does not find it.
 const SHORT = Array.from({ length: 14 }, (_, i) => `- step ${i + 1} of a shorter answer`).join("\n");
+// An answer that ends in its questions, so the last note's Send row stands
+// right above the end.
+const ASK = ["Two things to decide first.", "", "```ask", "Which database should the app use?", "- PostgreSQL", "- SQLite", "Deploy right away?", "- Yes", "- No, after the review", "```", ""].join("\n");
 
 function png(width, height) {
   const table = Array.from({ length: 256 }, (_, n) => {
@@ -93,7 +100,8 @@ function png(width, height) {
 
 // The sampler: one entry per painted frame while window.__follow.on, the
 // scroller's rest to its end, the message named in probe measured against the
-// scroller's top, and whether the surface's element has upgraded yet.
+// scroller's top, whether the surface's element has upgraded yet and whether
+// an open question block's Send stands inside the scroller.
 function sampler() {
   const hash = window.location.hash;
   const state = { on: true, frames: [], probe: hash.startsWith("#message-") ? hash.slice("#message-".length) : "", mark: "" };
@@ -104,9 +112,11 @@ function sampler() {
     if (!state.on || !scroller.isConnected) return;
     const host = scroller.closest("dc-assistant, dc-share-chat");
     if (!ids.has(scroller)) ids.set(scroller, next++);
-    const top = scroller.getBoundingClientRect().top;
+    const view = scroller.getBoundingClientRect();
+    const top = view.top;
     const probe = state.probe ? document.getElementById(`message-${state.probe}`) : null;
     const button = document.querySelector("[data-chat-end]");
+    const send = document.querySelector("dc-assistant-choices[post-url] [data-choices-send]")?.getBoundingClientRect();
     state.frames.push({
       mark: state.mark,
       surface: ids.get(scroller),
@@ -117,6 +127,7 @@ function sampler() {
       probe: probe ? Math.round(probe.getBoundingClientRect().top - top) : null,
       screen: probe ? Math.round(probe.getBoundingClientRect().top) : null,
       button: !!button && getComputedStyle(button).display !== "none",
+      send: send ? send.top >= view.top && send.bottom <= view.bottom : null,
     });
   };
   const arm = () => {
@@ -915,6 +926,64 @@ L.runFeature("assistant-follow", async ({ engine, browser, page, run, bag }) => 
     } finally {
       await guest?.ctx.close();
     }
+  }
+
+  for (const [form, options] of [["desktop", DESKTOP], ["phone", PHONE]]) {
+    await run(`${form}: lines typed into a question's note keep a follower at the end with Send in view on every frame, and a reader away from the end where they stand`, async () => {
+      await say(page, fx.id, `ECHO_ANSWER ${TAG}\n${ASK}`);
+      const live = await opened(browser, engine, bag, options);
+      const p = live.page;
+      try {
+        await landed(p, ownerURL, READY.owner);
+        await p.waitForSelector("dc-assistant-choices[post-url]:defined", { timeout: 15000 });
+        const note = p.locator("dc-assistant-choices[post-url] [data-choices-question]").last().locator("textarea");
+        const start = await place(p);
+        assert(start.rest <= 2, `the page opened ${start.rest}px off the end, the check says nothing`);
+        const low = await note.evaluate((el) => el.offsetHeight);
+        await note.evaluate((el) => el.focus({ preventScroll: true }));
+        await sampling(p, true);
+        await frames(p);
+        for (let i = 0; i < 12; i += 1) {
+          if (i) await p.keyboard.press("Enter");
+          await p.keyboard.type(`line ${i + 1} of a note`);
+          await sleep(150);
+        }
+        await sleep(600);
+        const list = await frames(p);
+        const high = await note.evaluate((el) => el.offsetHeight);
+        assert(high - low > 150, `the note grew from ${low}px to ${high}px only, the check says nothing`);
+        assert(list.length > 3, `only ${list.length} frames were sampled`);
+        off(list, (f) => f.rest <= 2, "stood off the end");
+        off(list, (f) => f.send === true, "lost Send out of view");
+        off(list, (f) => !f.button, "showed the button while following");
+        // Away from the end the lines go in at the note's start, so the caret
+        // stays in view and the browser has no reason to scroll to it.
+        const by = await move(live, form, -150);
+        await still(p);
+        const away = await place(p);
+        const room = await note.evaluate((el) => Math.round(el.closest("[data-assistant-scroll]").getBoundingClientRect().bottom - el.getBoundingClientRect().top));
+        assert(away.rest > 100 && away.rest + 20 < high - low && room > 120, `the reader stands ${away.rest}px above the end with ${room}px of the note in view, its measure takes ${high - low}px away, the check says nothing`);
+        await note.evaluate((el) => {
+          el.focus({ preventScroll: true });
+          el.setSelectionRange(0, 0);
+        });
+        await frames(p);
+        for (let i = 0; i < 3; i += 1) {
+          await p.keyboard.type(`line ${i + 1} put first`);
+          await p.keyboard.press("Enter");
+          await sleep(150);
+        }
+        await sleep(600);
+        const kept = await frames(p);
+        assert(kept.length > 3, `only ${kept.length} frames were sampled away from the end`);
+        off(kept, (f) => Math.abs(f.top - away.top) <= 1, `moved the reader off ${away.top}`);
+        off(kept, (f) => f.button, "hid the button away from the end");
+        return `${list.length} frames at the end while the note grew from ${low}px to ${high}px, ${by} took the reader ${away.rest}px up and ${kept.length} frames kept them there`;
+      } finally {
+        await live.ctx.close();
+        await say(page, fx.id, `MAGIC ${TAG} past the questions`);
+      }
+    });
   }
 
   if (engine === L.engineList().slice(-1)[0]) {

@@ -159,6 +159,18 @@ class Assistant extends HTMLElement {
     this.input?.addEventListener("keydown", (event) => this.onKeydown(event), { signal });
     this.input?.addEventListener("input", () => this.onInput(), { signal });
     this.cancelButton?.addEventListener("click", () => void this.cancel(), { signal });
+    // Answers sent from a question block ask for the answer like a typed
+    // message does, see appendUserMessage.
+    this.addEventListener("dc-choices-send", () => this.follow?.pin(), { signal });
+    // A question block that swaps itself is a swap above the end, see
+    // replaceMessage.
+    this.addEventListener("dc-choices-swap", () => this.follow?.settle(), { signal });
+    // A note under a question grows the way the composer does, see autoGrow.
+    this.addEventListener("dc-choices-grow", (event) => {
+      if (!this.follow) return;
+      event.preventDefault();
+      this.follow.keep(event.detail);
+    }, { signal });
     this.setupModels(signal);
     this.addEventListener("click", (event) => {
       const retry = event.target.closest("[data-assistant-retry]");
@@ -992,8 +1004,17 @@ class Assistant extends HTMLElement {
         return;
       }
       const node = this.bubble(messageId);
-      if (node) node.replaceWith(fresh);
-      else this.log.append(fresh);
+      if (node) {
+        node.replaceWith(fresh);
+        // A swap that shrinks the thread above the end moves the page up, by
+        // the clamp or the scroll anchoring, in the task that lays it out.
+        // The follow answers it in that task: the observer answers a frame
+        // later, after the scroll event, which reads the move as the reader
+        // leaving.
+        this.follow?.settle();
+      } else {
+        this.log.append(fresh);
+      }
       window.app?.loadElements?.(fresh);
       // The fresh fragment's speaker renders in the resting state; while
       // this very answer is being spoken it has to show that instead.

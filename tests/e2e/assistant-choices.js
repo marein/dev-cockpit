@@ -15,7 +15,9 @@ const { assert, BASE, sleep } = L;
 // words: a second browser of the owner shows it live and after a reload, a
 // send there answers the block in the first and leaves the words typed there.
 // A question whose options stand behind "- [ ] " takes several picks, its
-// checkboxes drawn like the radios, and one block mixes both kinds.
+// checkboxes drawn like the radios, and one block mixes both kinds. Answers
+// sent from above the end jump the thread to its end and follow the reply,
+// as a typed message does.
 // SHOTS_DIR with a mount takes the phone screenshots of an open block, of an
 // answered one with its row, of an answered one above an open one and of an
 // open mixed block with two picks on its question that takes several.
@@ -46,6 +48,11 @@ const PATHS = ["/root/projects/shop/internal/checkout/payment_provider_adapter_t
 const LONG_PROMPT = ["ECHO_ANSWER", "One file first.", "", "```ask", "Which file should change first?", ...PATHS.map((p) => `- ${p}`), "```", ""].join("\n");
 const MIXED = ["Which checks should run before the deploy?", "- [ ] Unit tests", "- [ ] Lint", "- [ ] End to end", "Deploy right away?", "- Yes", "- No"];
 const MIXED_PROMPT = ["ECHO_ANSWER", "Pick what ships.", "", "```ask", ...MIXED, "```", ""].join("\n");
+// The text under the block stands taller than the thread, so a reader who
+// comes up to the questions stands further above the end than the block
+// shrinks once answered, and the shrink alone never clamps them to the end.
+const TAIL = "the rest of the plan waits for these answers, ".repeat(24).trim();
+const TAIL_PROMPT = ["ECHO_ANSWER", "Two things to decide first.", "", "```ask", ...QUESTIONS, "```", "", ...Array(4).fill([TAIL, ""]).flat()].join("\n");
 const MIN_TARGET = 24;
 
 const state = (page) => page.locator(BLOCK).last().getAttribute("data-choices-state");
@@ -678,6 +685,76 @@ async function choicesChecks({ page, run, mobilePage, helpers }) {
     assert(row?.answered && row.text === `You · ${row.time} · answered`, `the answered row reads ${JSON.stringify(row)}`);
     await closePanel(mp);
     return `served with both picks, followed live both ways, answered with ${JSON.stringify(text)}`;
+  });
+
+  // sentFromAbove asks a block with a tall text under it, picks on p, scrolls
+  // up from the end until Send stands just above the thread's bottom edge,
+  // sends there and reads where the thread stands once the reply is in.
+  const sentFromAbove = async (p, act) => {
+    await openAssistant(page, id);
+    await ask(page, idle, TAIL_PROMPT);
+    const blockID = await page.locator(BLOCK).last().getAttribute("message-id");
+    if (p !== page) {
+      await openAssistant(p, id);
+      await waitState(p, "open");
+    }
+    const block = p.locator(`${BLOCK}[message-id="${blockID}"]`);
+    const question = (q) => block.locator("[data-choices-question]").nth(q);
+    for (const q of [0, 1]) {
+      const label = question(q).locator("[data-choices-option]").first();
+      await (p === page ? label.click() : label.tap());
+    }
+    await sleep(300);
+    const away = await p.evaluate(async (sel) => {
+      const scroller = document.querySelector("[data-assistant-scroll]");
+      const send = () => document.querySelector(`${sel} [data-choices-send]`).getBoundingClientRect();
+      scroller.scrollTop += send().bottom - (scroller.getBoundingClientRect().bottom - 40);
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const view = scroller.getBoundingClientRect();
+      return {
+        rest: Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight),
+        sendInView: send().top >= view.top && send().bottom <= view.bottom,
+      };
+    }, `${BLOCK}[message-id="${blockID}"]`);
+    const endButton = p.locator("dc-assistant [data-chat-end]");
+    assert(away.rest > 300 && away.sendInView && await visible(endButton), `the reader does not stand above the end with Send in view: ${JSON.stringify(away)}`);
+    const before = await p.locator('[data-role="assistant"]').count();
+    await act(p, block, question);
+    await waitState(p, "answered");
+    await p.waitForFunction((n) => {
+      const nodes = document.querySelectorAll('[data-role="assistant"]');
+      return nodes.length > n && nodes[nodes.length - 1].getAttribute("data-state") === "complete";
+    }, before, { timeout: 30000 });
+    await idle(p);
+    const end = await p.evaluate(async () => {
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const scroller = document.querySelector("[data-assistant-scroll]");
+      const nodes = document.querySelectorAll('[data-role="assistant"]');
+      return {
+        rest: Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight),
+        reply: nodes[nodes.length - 1].textContent.includes("Fake claude answer."),
+      };
+    });
+    const shown = await visible(endButton);
+    assert(end.reply, "the assistant did not answer the answers");
+    assert(end.rest <= 2 && !shown, `the thread stands ${end.rest}px above its end after the send from ${away.rest}px, the jump to end button ${shown ? "shown" : "hidden"}`);
+    return `sent from ${away.rest}px above the end, the reply in at the end`;
+  };
+
+  await run("answers sent by Send from above the end jump the thread to its end and follow the reply", () =>
+    sentFromAbove(page, (p, block) => block.locator("[data-choices-send]").click()));
+
+  await run("answers sent by Ctrl+Enter in a note from above the end jump the thread to its end and follow the reply", () =>
+    sentFromAbove(page, async (p, block, question) => {
+      await question(1).locator("textarea").evaluate((el) => el.focus({ preventScroll: true }));
+      await p.keyboard.press("Control+Enter");
+    }));
+
+  await run("on a phone answers sent by Send from above the end jump the thread to its end and follow the reply", async () => {
+    const mp = await mobilePage();
+    const read = await sentFromAbove(mp, (p, block) => block.locator("[data-choices-send]").tap());
+    await closePanel(mp);
+    return read;
   });
 
   await require("./assistant-grow").growChecks({ page, run, mobilePage, helpers: { ...helpers, ask: (target) => ask(target, idle) } });

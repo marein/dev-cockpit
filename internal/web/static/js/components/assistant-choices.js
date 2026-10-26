@@ -84,8 +84,11 @@ class AssistantChoices extends HTMLElement {
     return new Map([...this.form.querySelectorAll('input[type="radio"]:checked')].map((radio) => [radio.name, radio.value]));
   }
 
+  // A note is measured at one line on its way, like the composer, so the
+  // surface that follows the thread runs the grow where there is one.
   grow(note) {
-    growTextarea(note, () => window.innerHeight);
+    const grow = () => growTextarea(note, () => window.innerHeight);
+    if (this.dispatchEvent(new CustomEvent("dc-choices-grow", { bubbles: true, cancelable: true, detail: grow }))) grow();
   }
 
   questions() {
@@ -210,6 +213,7 @@ class AssistantChoices extends HTMLElement {
     this.sending = true;
     this.fieldset.disabled = true;
     this.sync();
+    this.dispatchEvent(new CustomEvent("dc-choices-send", { bubbles: true }));
     try {
       const response = await postForm(this.postUrl, body);
       await ensureOk(response, "The answers could not be sent.");
@@ -235,6 +239,7 @@ class AssistantChoices extends HTMLElement {
       const fresh = holder.querySelector(`dc-assistant-choices[message-id="${CSS.escape(id)}"]`);
       if (!fresh || !this.isConnected || fresh.hasAttribute("post-url")) return;
       this.replaceWith(fresh);
+      fresh.dispatchEvent(new CustomEvent("dc-choices-swap", { bubbles: true }));
     } catch (error) {
       void error;
     }
