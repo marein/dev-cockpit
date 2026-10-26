@@ -21,6 +21,9 @@ const zlib = require("zlib");
 //   messages keep the message where it belongs on every frame,
 // - growth: a streamed answer and a picture without a size that decodes late
 //   are followed on every frame, and the composer growing under a follower,
+// - a send: a message sent through the composer stands at the end on every
+//   frame until its answer, also when the pull of the sent message lands
+//   between the same two frames as the send's answer (handed),
 // - intent: a small wheel, a finger drag, an arrow key and a scroll the page
 //   cannot attribute let go at once and the page stays put while the answer
 //   streams, a stop short of the end stays, the real end follows again, also
@@ -455,6 +458,61 @@ async function follows(page, ms, what) {
   off(list, (f) => f.rest <= 2, `${what} stood off the end`);
 }
 
+// handed holds back the pull of a sent message, the one the stream's
+// announcement starts, and hands it over right after the page handled the
+// send's answer, between the same two frames: the held pull answers in
+// microtasks, a Response's body would take a task in some engines. The send's
+// answer waits for the announcement's pull and the answer's bubble, the order
+// of a fast stream, and for a frame painted with them.
+function handed() {
+  const surface = document.querySelector("dc-assistant");
+  const log = surface.querySelector("[data-assistant-log]");
+  const pulls = new URL(surface.getAttribute("message-url"), location.href).href;
+  const real = window.fetch;
+  const seam = { handed: null, landed: null };
+  window.__seam = seam;
+  let frame = 0;
+  const tick = () => {
+    frame += 1;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  let held = false;
+  let hand = null;
+  const ready = () => hand && log.querySelector('[data-role="assistant"][data-state="streaming"]');
+  window.fetch = async (input, init = {}) => {
+    if (init.method === "POST" && String(init.body).includes("form=message")) {
+      const response = await real(input, init);
+      const body = await response.text();
+      while (!ready()) await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const watch = new MutationObserver(() => {
+        watch.disconnect();
+        seam.handed = frame;
+        hand();
+      });
+      watch.observe(log, { childList: true });
+      return new Response(body, { status: response.status, headers: response.headers });
+    }
+    if (!held && new URL(String(input), location.href).href.startsWith(pulls)) {
+      held = true;
+      const response = await real(input, init);
+      const body = await response.text();
+      await new Promise((r) => { hand = r; });
+      return {
+        ok: response.ok,
+        status: response.status,
+        headers: response.headers,
+        text: async () => {
+          seam.landed = frame;
+          return body;
+        },
+      };
+    }
+    return real(input, init);
+  };
+}
+
 async function streaming(page, id) {
   await postJSON(page, `/assistants/${id}`, { form: "message", message: `ECHO_ANSWER ${TAG}\n${ANSWER}` });
 }
@@ -557,6 +615,35 @@ L.runFeature("assistant-follow", async ({ engine, browser, page, run, bag }) => 
         return `${list.length} frames, the message stood at ${anchor.screen}px`;
       } finally {
         await ctx.close();
+      }
+    });
+
+    await run(`${form}: a sent message stands at the end on every frame until its answer, also when its pull lands with the send's answer`, async () => {
+      await waitIdle(page, fx.id);
+      const { ctx, page: p } = await opened(browser, engine, bag, options);
+      const words = `LATER ${TAG} ${engine} ${form}`;
+      try {
+        await landed(p, ownerURL, READY.owner);
+        await p.evaluate(handed);
+        await p.fill("[data-assistant-input]", words);
+        await sleep(400);
+        await sampling(p, true);
+        await frames(p);
+        if (form === "desktop") await p.press("[data-assistant-input]", "Enter");
+        else await p.tap("[data-assistant-send]");
+        await p.waitForFunction(() => /AIRPORT/.test(document.querySelector("[data-assistant-log] > :last-child")?.textContent || ""), null, { timeout: 20000 });
+        await sleep(600);
+        const list = await frames(p);
+        const seam = await p.evaluate(() => window.__seam);
+        assert(seam.handed !== null && seam.landed === seam.handed, `the pull of the sent message did not land with the send's answer (${JSON.stringify(seam)}), the check says nothing`);
+        assert(list.length > 30, `only ${list.length} frames were sampled`);
+        off(list, (f) => f.rest <= 2, "stood off the end");
+        const sent = await p.$$eval("[data-assistant-log] [data-role=user]", (nodes, w) => nodes.filter((n) => n.textContent.includes(w)).length, words);
+        assert(sent === 1, `the sent message stands ${sent} times in the thread`);
+        return `${list.length} frames at the end`;
+      } finally {
+        await ctx.close();
+        await waitIdle(page, fx.id);
       }
     });
 

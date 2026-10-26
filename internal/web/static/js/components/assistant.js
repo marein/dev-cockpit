@@ -2034,15 +2034,21 @@ class Assistant extends HTMLElement {
   // The sent message goes out on the stream too, for the other devices, so this
   // page can be about to hold it twice: the bubble it wrote when the words left
   // the box, and the one the announcement pulls. Whichever was there first
-  // stays, the other one goes. Returns whether the written bubble is the one
-  // that stayed, and it then carries the id, so the announcement replaces it
-  // instead of appending next to it.
+  // stays, the other one goes. A slot the pull reserved holds nothing yet, so
+  // the written bubble takes its place: removed, it would leave a hole the
+  // pull fills a task later, and a follower laid out in between stays short
+  // of the end, a shrink and a regrow within one frame resize nothing.
+  // Returns whether the written bubble is the one that stayed, and it then
+  // carries the id, so the announcement replaces it instead of appending next
+  // to it.
   adoptSent(bubble, messageId, state) {
     if (!messageId || !bubble) return false;
-    if (this.bubble(messageId)) {
+    const there = this.bubble(messageId);
+    if (there && !there.hasAttribute("data-assistant-slot")) {
       bubble.remove();
       return false;
     }
+    there?.replaceWith(bubble);
     bubble.setAttribute("data-message-id", messageId);
     bubble.setAttribute("data-state", state);
     return true;
