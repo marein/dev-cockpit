@@ -66,10 +66,18 @@
       {{/* The actions stand where a steered coder's stand, under the row and
            outside its fold: the coder it waits for, the form that changes it,
            and the one that ends it. A spent trigger cannot be changed any
-           more, so only its removal is offered. A guest only looks. */}}
+           more, so only its removal is offered. A stopped coder is resumed
+           instead of opened, as on a steered coder's row. A guest only looks. */}}
       {{if or .TargetURL .EditURL (not $.Access.Guest)}}
       <div class="d-flex flex-wrap gap-2 mt-2">
-        {{if .TargetURL}}
+        {{if and .Stopped (not $.Access.Guest)}}
+        <form method="post" action="{{.TargetURL}}/resume" class="flex-fill d-flex">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button type="submit" class="btn btn-sm flex-fill" data-assistant-trigger-resume>
+            <i class="ti ti-terminal-2 me-1"></i>Resume coder
+          </button>
+        </form>
+        {{else if .TargetURL}}
         <a href="{{.TargetURL}}" class="btn btn-sm flex-fill" data-assistant-trigger-open>
           <i class="ti ti-terminal-2 me-1"></i>Open coder
         </a>

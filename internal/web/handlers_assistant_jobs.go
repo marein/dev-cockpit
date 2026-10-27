@@ -75,6 +75,18 @@ func listsAll(c *gin.Context) bool {
 	return all
 }
 
+// stoppedCoders are the coders with no session running that can be resumed,
+// by id, which is what a job's and a trigger's row resume instead of opening.
+func (s *Server) stoppedCoders() map[string]bool {
+	stopped := map[string]bool{}
+	for _, co := range s.coders {
+		for _, session := range co.Snapshot().Inactive {
+			stopped[session.SessionID] = true
+		}
+	}
+	return stopped
+}
+
 // assistantJobViews are the coders an assistant steers, open jobs first, the
 // closed tail capped unless all lifts it. An empty owner is every assistant's
 // jobs, which is what a surface that is not one assistant's page shows.
@@ -84,6 +96,7 @@ func (s *Server) assistantJobViews(owner string, all bool) ([]render.AssistantJo
 	if owner != "" {
 		jobs = s.watcher.ListOf(owner)
 	}
+	stopped := s.stoppedCoders()
 	out := make([]render.AssistantJobView, 0, len(jobs))
 	closed, older := 0, 0
 	for _, w := range jobs {
@@ -111,6 +124,7 @@ func (s *Server) assistantJobViews(owner string, all bool) ([]render.AssistantJo
 			MaxWakes: w.MaxWakes,
 			Expires:  machineTime(w.ExpiresAt),
 			URL:      "/coders/" + w.Terminal,
+			Stopped:  stopped[w.Terminal],
 		}
 		if w.Project != "" {
 			view.EditorURL = "/projects/" + url.PathEscape(w.Project) + "/editor"

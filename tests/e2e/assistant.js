@@ -3761,6 +3761,61 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     return "purple with the job, gone with the release";
   });
 
+  // A stopped coder has no screen to open, so its row resumes it, the press
+  // lands on the running coder, and from then on the row opens it again.
+  await run("a stopped coder's row resumes it", async () => {
+    await openAssistant(page, chatID);
+    const dir = await L.projectPath(page, jobsProject);
+    const created = await startCoder(page, dir, "resume-task", "Write the notes.");
+    assert(created.status === 200, `create answered ${created.status}`);
+    const id = created.body.id;
+    const steered = await postJobs(page, { form: "steer", assistant: chatID, terminal: id, task: "Write the notes", done_when: "" });
+    assert(steered.status === 200, `steer answered ${steered.status}: ${JSON.stringify(steered.body)}`);
+    // Only a coder that wrote its session can be resumed, and the fake writes
+    // it a moment after the start.
+    const written = async () => page.evaluate(async (session) => {
+      const res = await fetch(`/coders/${session}/conversation`);
+      return res.ok && (await res.text()).includes("fake claude worked on it");
+    }, id);
+    for (let waited = 0; !(await written()); waited += 250) {
+      assert(waited < 15000, "the coder never wrote its session");
+      await sleep(250);
+    }
+    const stopped = await page.evaluate(async (session) => {
+      const token = document.querySelector('meta[name="csrf-token"]').content;
+      const res = await fetch(`/coders/${session}/stop`, { method: "POST", headers: { "X-CSRF-Token": token, Accept: "application/json" } });
+      return res.status;
+    }, id);
+    assert(stopped === 200, `stop answered ${stopped}`);
+
+    await openConversation(page, chatID);
+    await openView(page, "jobs", `[data-assistant-job="${id}"] [data-assistant-job-resume]`);
+    const row = page.locator(`[data-assistant-job="${id}"]`);
+    const resume = row.locator("[data-assistant-job-resume]");
+    assert(await resume.isVisible(), "the stopped coder's resume button is not on screen");
+    assert((await resume.innerText()).includes("Resume coder"), `the button reads ${await resume.innerText()}`);
+    assert(await row.locator("[data-assistant-job-open]").count() === 0, "a stopped coder's row still opens it");
+    assert(await row.locator("[data-assistant-job-editor]").isVisible(), "the editor left the stopped coder's row");
+    assert(await row.locator("[data-assistant-job-again]").isVisible(), "steer again left the stopped coder's row");
+
+    await resume.click();
+    await page.waitForURL((url) => url.pathname === `/coders/${id}`, { timeout: 20000 });
+    const after = await page.evaluate(async (session) => {
+      const res = await fetch(`/assistants/jobs?assistant=${encodeURIComponent(session)}`, { headers: { Accept: "text/html" } });
+      return res.text();
+    }, chatID);
+    const html = after.slice(after.indexOf(`data-assistant-job="${id}"`));
+    assert(html.includes(`href="/coders/${id}" class="btn btn-sm flex-fill" data-assistant-job-open`),
+      "the resumed coder's row does not open it");
+    assert(!html.includes(`/coders/${id}/resume`), "the resumed coder's row still resumes it");
+
+    await page.evaluate(async (session) => {
+      const token = document.querySelector('meta[name="csrf-token"]').content;
+      await fetch(`/coders/${session}/delete`, { method: "POST", headers: { "X-CSRF-Token": token } });
+    }, id);
+    return "stopped resumes, running opens";
+  });
+
   await run("the steered coder and its project are cleaned up", async () => {
     await page.evaluate(async (session) => {
       const token = document.querySelector('meta[name="csrf-token"]').content;

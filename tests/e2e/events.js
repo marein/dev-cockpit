@@ -33,7 +33,8 @@ const { assert, BASE, sleep } = L;
 // target added to a barrier that then waits for it, a spent trigger
 // refused, the coder umbrella firing on a signal that was read as another
 // kind, a deleted coder closing its job and taking the triggers that
-// only it could fire, the task field growing with what is typed up to the
+// only it could fire, a trigger row whose coder is stopped resuming it
+// instead of opening it, the task field growing with what is typed up to the
 // room the dialog has left, on the desktop and on the phone, and the row's
 // own button removing a trigger.
 //
@@ -1875,6 +1876,58 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     assert(!small.length, `buttons under 44px on the phone: ${JSON.stringify(small)}`);
     await shot(mp, "events-phone-form.png");
     return `${targets.length} controls, none under the finger`;
+  });
+
+  // A stopped coder has no screen to open, so the row of a trigger waiting for
+  // it resumes it, the press lands on the running coder, and from then on the
+  // row opens it again. The trigger answers NOTHING and goes before the coder,
+  // so neither the stop nor the delete pushes anything into the thread.
+  await run("a stopped coder's trigger row resumes it", async () => {
+    const created = await startCoder(page, projectDir, "resume-event", "Write the file.");
+    assert(created.status === 200, `create answered ${created.status}: ${JSON.stringify(created.body)}`);
+    const id = created.body.id;
+    const made = await postTo(page, "/assistants/triggers", {
+      form: "new", assistant, event: "coder-news", terminal: id, batch: "0", task: "EVENT_NOTHING the resumed coder",
+    });
+    assert(made.status === 200, `the trigger answered ${made.status}: ${JSON.stringify(made.body)}`);
+    // Only a coder that wrote its session can be resumed, and the fake writes
+    // it a moment after the start.
+    const written = await waitFor(() => page.evaluate(async (session) => {
+      const res = await fetch(`/coders/${session}/conversation`);
+      return res.ok && (await res.text()).includes("fake claude worked on it");
+    }, id));
+    assert(written, "the coder never wrote its session");
+    const stopped = await postTo(page, `/coders/${id}/stop`, {});
+    assert(stopped.status === 200, `stop answered ${stopped.status}: ${JSON.stringify(stopped.body)}`);
+
+    await openAssistant(page, assistant);
+    await page.click("[data-assistant-triggers-tab]");
+    const row = page.locator(`[data-assistant-trigger="${made.body.id}"]`);
+    const resume = row.locator("[data-assistant-trigger-resume]");
+    await resume.waitFor({ state: "visible", timeout: 8000 });
+    assert((await resume.innerText()).includes("Resume coder"), `the button reads ${await resume.innerText()}`);
+    assert(await row.locator("[data-assistant-trigger-open]").count() === 0, "a stopped coder's trigger row still opens it");
+    assert(await row.locator("[data-assistant-trigger-edit]").isVisible(), "Change left the stopped coder's trigger row");
+    assert(await row.locator("[data-assistant-trigger-remove]").isVisible(), "Remove left the stopped coder's trigger row");
+
+    await resume.click();
+    await page.waitForURL((url) => url.pathname === `/coders/${id}`, { timeout: 20000 });
+    const after = await page.evaluate(async ([owner, sub]) => {
+      const res = await fetch(`/assistants/triggers?assistant=${owner}`, { headers: { Accept: "text/html" } });
+      const holder = document.createElement("div");
+      holder.innerHTML = await res.text();
+      const found = holder.querySelector(`[data-assistant-trigger="${sub}"]`);
+      return {
+        open: found?.querySelector("[data-assistant-trigger-open]")?.getAttribute("href") || "",
+        resume: !!found?.querySelector("[data-assistant-trigger-resume]"),
+      };
+    }, [assistant, made.body.id]);
+    assert(after.open === `/coders/${id}` && !after.resume, `the resumed coder's trigger row does not open it: ${JSON.stringify(after)}`);
+
+    const removed = await postTo(page, "/assistants/triggers", { form: "remove", id: made.body.id });
+    assert(removed.status === 200, `remove answered ${removed.status}: ${JSON.stringify(removed.body)}`);
+    await postTo(page, `/coders/${id}/delete`, {});
+    return "stopped resumes, running opens";
   });
 
   await run("the row's own button removes a trigger", async () => {

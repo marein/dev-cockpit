@@ -87,6 +87,9 @@ type AssistantJobView struct {
 	// project, which is what a coder outside one is.
 	URL       string
 	EditorURL string
+	// Stopped is a coder with no session running that can be resumed. Its
+	// page would only say that it is not running, so the row resumes it.
+	Stopped bool
 }
 
 // AssistantData is the model for one assistant's surface. An empty ID is the
@@ -281,7 +284,10 @@ type AssistantTriggerView struct {
 	// reading, so the row, the confirm and the flash cannot say three things.
 	Heading string
 	// TargetURL opens the coder a terminal target names, empty without one.
+	// Stopped is that coder with no session running, the row resumes it the
+	// way a steered coder's row does.
 	TargetURL string
+	Stopped   bool
 	Spec      string
 	// Timezone is the IANA name a schedule is read in, empty on every other
 	// event. It stands on the same line as the cron fields, in Where.

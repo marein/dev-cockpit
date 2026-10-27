@@ -64,14 +64,22 @@
       </div>
       {{/* Two ways to look at a steered coder, the screen it types on and the
            files it writes; the editor is offered where the coder works in a
-           project, and then the coder is handed back or taken on again. The
+           project, and then the coder is handed back or taken on again. A
+           stopped coder has no screen to look at, so its row resumes it. The
            row wraps, so the actions stand side by side in the inline aside and
            under each other in the phone's sheet. They sit outside the fold
            above them, so they stand whether it is open or shut. A guest
            only looks, where the link opens the coder or its project. */}}
       {{if or .URL .EditorURL (not $.Access.Guest)}}
       <div class="d-flex flex-wrap gap-2 mt-2">
-        {{if .URL}}
+        {{if and .Stopped (not $.Access.Guest)}}
+        <form method="post" action="/coders/{{.Terminal}}/resume" class="flex-fill d-flex">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button type="submit" class="btn btn-sm flex-fill" data-assistant-job-resume>
+            <i class="ti ti-terminal-2 me-1"></i>Resume coder
+          </button>
+        </form>
+        {{else if .URL}}
         <a href="{{.URL}}" class="btn btn-sm flex-fill" data-assistant-job-open>
           <i class="ti ti-terminal-2 me-1"></i>Open coder
         </a>
