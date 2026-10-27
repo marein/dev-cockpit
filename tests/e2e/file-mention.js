@@ -10,12 +10,19 @@ const { assert, BASE, sleep } = L;
 // projects, worktrees included (GET /mention/projects, the editor palette's own
 // rows as options, ranked by @dc/filter through @dc/project-palette, pulled
 // again on every @ so a project made behind the page's back shows), and a
-// picked project's files (GET /mention/files?project=&q=, the quick open index
-// with its ranking and exclusions, every hit placed under the project again
-// and named by its absolute path, at most 50). Arrows move, Enter and Tab
-// pick, Escape closes, Backspace right after `@<project>/` or the back arrow
-// returns to the projects with the filter that was typed. A file lands as its
-// absolute path plus a blank, quoted when it holds a blank. The box's own keys
+// picked project's folders and files (GET /mention/files?project=&q=, the quick
+// open index with its ranking and exclusions, a folder ranked among the files
+// and shown with its trailing slash, every hit placed under the project again
+// and named by its absolute path, at most 50). The typed part walks into the
+// deepest folder it names: with nothing after its slash the popup lists what
+// stands in it, folders first, the folder itself on top, and what is typed
+// after the slash is matched below it. Picking a folder walks into it. Arrows
+// move, Enter and Tab pick, Escape closes, Backspace right after the slash of
+// `@<project>/` or of a folder, or the back arrow, goes up one level with the
+// filter that was typed before the pick, or with the slash taken off when
+// nothing was picked, so a folder jumped to by a search hit goes up one folder
+// at a time and the search comes back where it was typed. A file lands as its absolute path plus a blank, a folder
+// with a trailing slash, quoted when it holds a blank. The box's own keys
 // (Enter sends on a desktop) never fire while the popup takes them.
 //
 // The absolute paths of the projects' files link in the chat, the user's
@@ -28,7 +35,8 @@ const { assert, BASE, sleep } = L;
 // /tmp/dcfm): the runner builds its projects there with the container's git,
 // a repository with a linked worktree, a plain folder and a tree of 24,000
 // files, and deletes them at the end. SHOTS_DIR, when set and mounted,
-// receives the phone screenshots of both steps in both themes.
+// receives the phone screenshots of the projects, a project's folders and
+// files and the inside of a folder, in both themes.
 //
 // Gotchas:
 // - the composer is JS owned, wait for dc-assistant[ready] and the element,
@@ -58,7 +66,7 @@ const SHOP_FILES = [
   "src/components/CartItem.tsx", "src/components/CartSummary.tsx", "src/components/CheckoutForm.tsx",
   "src/components/ProductCard.tsx", "src/components/UserMenu.tsx", "src/pages/cart.tsx", "src/pages/checkout.tsx",
   "src/api/orders.go", "src/api/payments.go", "src/api/cart_test.go", "src/styles/cart.css",
-  "docs/architecture.md", "docs/user guide.md",
+  "docs/architecture.md", "docs/user guide.md", "design notes/palette.md",
 ];
 
 function writeFiles(root, files) {
@@ -136,10 +144,12 @@ function state(page) {
     return {
       shown: getComputedStyle(panel).display !== "none" && rect.height > 0,
       title: panel.querySelector("[data-mention-title]").textContent,
+      trail: (() => { const el = panel.querySelector("[data-mention-trail]"); return getComputedStyle(el).display !== "none" ? el.textContent : ""; })(),
       back: getComputedStyle(panel.querySelector("[data-mention-back]")).display !== "none",
       count: panel.querySelector("[data-mention-count]").textContent,
       rows: rows.map((row) => row.dataset.projectName ? `@${row.dataset.projectName}` : row.title),
       refs: rows.map((row) => row.dataset.mentionRef || ""),
+      walks: rows.map((row) => row.dataset.mentionWalk || ""),
       active: rows.findIndex((row) => row.classList.contains("active")),
       described: input.getAttribute("aria-activedescendant") || "",
       activeID: rows.find((row) => row.classList.contains("active"))?.id || "",
@@ -235,10 +245,15 @@ async function shoot(browser, id, theme) {
     await page.screenshot({ path: path.join(SHOTS, `mention-projects-${theme}.png`) });
     await page.keyboard.type(S);
     await page.tap(`[data-mention-list] [role="option"][data-project-name="${SHOP}"]`);
-    await page.keyboard.type("cart");
-    await waitState(page, (s) => s.title === SHOP && !s.busy && s.rows.includes("src/components/CartItem.tsx"), "the files never came for the picture");
+    await waitState(page, (s) => s.title === SHOP && !s.busy && s.rows.includes("src/"), "the folders and files never came for the picture");
     await sleep(400);
     await page.screenshot({ path: path.join(SHOTS, `mention-files-${theme}.png`) });
+    await page.tap('[data-mention-list] [role="option"][data-mention-walk="src"]');
+    await waitState(page, (s) => s.title === "src/" && !s.busy && s.rows.includes("src/components/"), "src was not walked into for the picture");
+    await page.tap('[data-mention-list] [role="option"][data-mention-walk="src/components"]');
+    await waitState(page, (s) => s.title === "components/" && !s.busy && s.rows.includes("src/components/CartItem.tsx"), "components was not walked into for the picture");
+    await sleep(400);
+    await page.screenshot({ path: path.join(SHOTS, `mention-walk-${theme}.png`) });
   } finally {
     await ctx.close();
   }
@@ -277,7 +292,7 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       const started = Date.now();
       const first = await mentionFiles(page, MONO, "targetwid");
       const firstMs = Date.now() - started;
-      assert(first.status === 200 && first.body.indexed === BIG_FILES && first.body.files[0].path === NEEDLE, `the first query answered ${JSON.stringify(first.body).slice(0, 300)}`);
+      assert(first.status === 200 && first.body.under === BIG_FILES && first.body.files[0].path === NEEDLE, `the first query answered ${JSON.stringify(first.body).slice(0, 300)}`);
       const warm = await page.evaluate(async (url) => {
         const out = [];
         for (let i = 0; i < 10; i += 1) {
@@ -288,6 +303,17 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
         return out;
       }, `${BASE}/mention/files?project=${MONO}`);
       assert(Math.max(...warm) < 250, `a warm query took ${warm}ms`);
+      const walked = await page.evaluate(async (url) => {
+        const out = [];
+        for (const q of ["pkg/", "pkg/m7/", "pkg/m7/sub1", "pkg/m7/sub1/", "zz/deep/", "pkg/m11/file3"]) {
+          const t = performance.now();
+          const body = await (await fetch(`${url}&q=${encodeURIComponent(q)}`)).json();
+          out.push({ q, ms: Math.round(performance.now() - t), folder: body.folder, files: body.files.length, under: body.under, outside: body.files.filter((f) => body.folder && !f.path.startsWith(`${body.folder}/`)).length });
+        }
+        return out;
+      }, `${BASE}/mention/files?project=${MONO}`);
+      assert(walked.every((w) => w.ms < 250 && w.outside === 0), `a walk was slow or left its folder: ${JSON.stringify(walked)}`);
+      assert(walked[0].folder === "pkg" && walked[0].files === 50 && walked[0].under === BIG_FILES - 1 && walked[1].folder === "pkg/m7" && walked[1].files === 20 && walked[2].folder === "pkg/m7" && walked[3].folder === "pkg/m7/sub1" && walked[3].files === 10 && walked[5].files === 20, `the walks answered ${JSON.stringify(walked)}`);
       await reset(page);
       await page.keyboard.type(`@${MONO}/`);
       await waitState(page, (x) => x.title === MONO && !x.busy, "the big project never answered");
@@ -295,8 +321,14 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       await page.keyboard.type("targetwid");
       const s = await waitState(page, (x) => x.rows[0] === NEEDLE && !x.busy, "the needle never came", 3000);
       const uiMs = Date.now() - typed;
-      assert(s.count.startsWith("1 file"), `the count reads ${s.count}`);
-      return `first query ${firstMs}ms, warm max ${Math.max(...warm)}ms, typed to row ${uiMs}ms`;
+      assert(s.count === "1 match", `the count reads ${s.count}`);
+      await page.keyboard.press("Escape");
+      await page.keyboard.type(` @${MONO}/pkg/m7/`);
+      const walkTyped = Date.now();
+      const w = await waitState(page, (x) => x.title === "m7/" && !x.busy && x.rows.length === 21, "the walk into m7 never came", 3000);
+      const walkMs = Date.now() - walkTyped;
+      assert(w.trail === `${MONO}/pkg/` && w.count === "200 files" && w.rows[1] === "pkg/m7/sub0/", `the walk into m7 reads ${JSON.stringify(w)}`);
+      return `first query ${firstMs}ms, warm max ${Math.max(...warm)}ms, walks max ${Math.max(...walked.map((x) => x.ms))}ms, typed to row ${uiMs}ms, walk to rows ${walkMs}ms`;
     });
 
     await run("the project step lists every project, the worktree included, filtered live by @dc/filter's token match", async () => {
@@ -351,23 +383,173 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       await page.keyboard.press("Enter");
       s = await waitState(page, (x) => x.title === target && !x.busy && x.rows.length > 0, "Enter did not open the files");
       assert(s.value === `@${target}/` && s.caret === s.value.length && s.back, `the project part is not in the box: ${JSON.stringify(s)}`);
-      assert(s.refs[0] === path.join(PROJECTS, target) && s.active === 0, `the folder is not the first row: ${JSON.stringify(s)}`);
+      assert(s.refs[0] === `${path.join(PROJECTS, target)}/` && s.active === 0, `the folder is not the first row: ${JSON.stringify(s)}`);
       assert(/ files?$/.test(s.count), `the head does not count the files: ${s.count}`);
       assert(await messages(page) === before, "Enter sent the message");
       return `${target}: ${s.count}`;
     });
 
     await run("the file step ranks like the editor's quick open, with the same exclusions, and marks the hits", async () => {
-      for (const query of ["cart", "comp cart", "api go", "ReadMe", "HEAD", "user"]) {
+      for (const query of ["cart", "comp cart", "api go", "ReadMe", "HEAD", "user", "comp", "hooks", "refs"]) {
         await reset(page);
         await page.keyboard.type(`@${SHOP}/${query}`);
         const want = (await editorFiles(page, SHOP, query)).slice(0, 50);
-        const s = await waitState(page, (x) => x.title === SHOP && !x.busy && (want.length ? JSON.stringify(x.rows) === JSON.stringify(want) : x.note.includes("No file matches")), `"${query}" does not answer what the quick open answers (${want})`);
-        assert(s.rows.every((row, i) => s.refs[i] === path.join(shopDir, row) || s.refs[i] === JSON.stringify(path.join(shopDir, row))), `a ref is not the absolute path: ${s.refs}`);
-        assert(!s.rows.some((row) => row.startsWith(".git/")), `.git leaked into "${query}": ${s.rows}`);
-        if (want.length) assert(s.marks.length > 0 && s.active === 0, `"${query}" marks no hit: ${JSON.stringify(s)}`);
+        const files = (x) => x.rows.filter((row) => !row.endsWith("/"));
+        const s = await waitState(page, (x) => x.title === SHOP && !x.busy && (x.rows.length ? JSON.stringify(files(x)) === JSON.stringify(want) : !want.length && x.note.includes("No folder or file matches")), `"${query}" does not answer what the quick open answers (${want})`);
+        assert(s.rows.every((row, i) => row.endsWith("/") ? s.walks[i] === row.slice(0, -1) && !s.refs[i] : s.refs[i] === path.join(shopDir, row) || s.refs[i] === JSON.stringify(path.join(shopDir, row))), `a ref is not the absolute path: ${s.rows} ${s.refs}`);
+        assert(!s.rows.some((row) => row.startsWith(".git")), `.git leaked into "${query}": ${s.rows}`);
+        if (s.rows.length) assert(s.marks.length > 0 && s.active === 0, `"${query}" marks no hit: ${JSON.stringify(s)}`);
       }
-      return "cart, tokens, case, exclusions";
+      return "cart, tokens, case, folders, exclusions";
+    });
+
+    await run("folders stand among the files, ranked by the same rule, with a folder icon, a trailing slash and a chevron", async () => {
+      await reset(page);
+      await page.keyboard.type(`@${SHOP}/comp`);
+      let s = await waitState(page, (x) => x.title === SHOP && !x.busy && x.rows[0] === "src/components/", "the components folder is not the first hit");
+      const api = await mentionFiles(page, SHOP, "comp");
+      assert(JSON.stringify(s.rows) === JSON.stringify(api.body.files.map((f) => f.folder ? `${f.path}/` : f.path)), `the rows are not the answer's order: ${s.rows}`);
+      assert(api.body.files[0].ref === `${path.join(shopDir, "src/components")}/` && api.body.files[0].folder === true, `the folder's ref is ${JSON.stringify(api.body.files[0])}`);
+      const look = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('[data-mention-list] [role="option"]')];
+        const shown = (el) => getComputedStyle(el).display !== "none" && el.getBoundingClientRect().width > 0;
+        return rows.map((row) => ({ icon: row.querySelector("[data-mention-icon]").className, name: row.querySelector("[data-mention-name]").textContent, chevron: shown(row.querySelector("[data-mention-walk]")) }));
+      });
+      assert(look[0].icon.includes("ti-folder") && look[0].name === "components/" && look[0].chevron, `the folder row does not read as one: ${JSON.stringify(look[0])}`);
+      assert(look.slice(1).every((row) => !row.chevron && !row.icon.includes("ti-folder") && !row.name.endsWith("/")), `a file row reads as a folder: ${JSON.stringify(look)}`);
+      assert(s.count === `${s.rows.length} matches`, `the head counts ${s.count}`);
+      await reset(page);
+      await page.keyboard.type(`@${SHOP}/`);
+      s = await waitState(page, (x) => x.title === SHOP && !x.busy && x.rows.length === 8, "the project's own entries never came");
+      assert(JSON.stringify(s.rows.slice(1)) === JSON.stringify(["design notes/", "docs/", "src/", "docker-compose.yml", "Dockerfile", "package.json", "README.md"]), `the project does not list folders first by name: ${s.rows}`);
+      assert(s.refs[0] === `${shopDir}/` && s.count === `${SHOP_FILES.length} files` && s.trail === "", `the head or the folder row is off: ${JSON.stringify(s)}`);
+      return `${look.length} rows for comp`;
+    });
+
+    await run("picking a folder walks into it: the head names it, its own entries show, filtering goes on inside it", async () => {
+      await reset(page);
+      const before = await messages(page);
+      await page.keyboard.type(`@${SHOP}/`);
+      await waitState(page, (x) => x.title === SHOP && !x.busy && x.rows[3] === "src/", "src never came");
+      for (let i = 0; i < 3; i += 1) await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      let s = await waitState(page, (x) => x.title === "src/" && !x.busy, "Enter did not walk into src");
+      assert(s.value === `@${SHOP}/src/` && s.caret === s.value.length && s.back && s.trail === `${SHOP}/`, `the walk did not complete the folder: ${JSON.stringify(s)}`);
+      assert(JSON.stringify(s.rows) === JSON.stringify([s.rows[0], "src/api/", "src/components/", "src/pages/", "src/styles/"]) && s.refs[0] === `${path.join(shopDir, "src")}/` && s.active === 0, `src does not list its own folders under itself: ${JSON.stringify(s)}`);
+      assert(s.count === "11 files" && await messages(page) === before, `the head counts ${s.count} or Enter sent`);
+      await page.keyboard.type("cart");
+      s = await waitState(page, (x) => x.title === "src/" && !x.busy && x.rows.includes("src/pages/cart.tsx"), "cart inside src never came");
+      const below = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('[data-mention-list] [role="option"]')].map((row) => [row.title, row.querySelector("[data-mention-dir]").textContent])));
+      assert(below["src/pages/cart.tsx"] === "pages" && below["src/components/CartItem.tsx"] === "components", `the rows do not name their place below src: ${JSON.stringify(below)}`);
+      for (let i = 0; i < 4; i += 1) await page.keyboard.press("Backspace");
+      await waitState(page, (x) => x.value === `@${SHOP}/src/` && !x.busy && x.rows.length === 5, "the filter inside src did not empty");
+      await page.keyboard.type("comp");
+      s = await waitState(page, (x) => x.rows[0] === "src/components/" && !x.busy, "the filter inside src found no components");
+      await page.keyboard.press("Tab");
+      s = await waitState(page, (x) => x.title === "components/" && !x.busy, "Tab did not walk into components");
+      assert(s.value === `@${SHOP}/src/components/` && s.trail === `${SHOP}/src/`, `Tab did not complete the folder: ${JSON.stringify(s)}`);
+      await page.keyboard.type("cart");
+      s = await waitState(page, (x) => !x.busy && x.title === "components/" && x.rows.length === 2, "the filter did not stay inside components");
+      assert(JSON.stringify(s.rows) === JSON.stringify(["src/components/CartItem.tsx", "src/components/CartSummary.tsx"]), `cart left the folder: ${s.rows}`);
+      const subs = await page.evaluate(() => [...document.querySelectorAll('[data-mention-list] [role="option"] [data-mention-dir]')].map((el) => getComputedStyle(el).display === "none" ? "" : el.textContent));
+      assert(subs.every((sub) => sub === ""), `a row inside the folder repeats its path: ${subs}`);
+      await page.keyboard.press("Enter");
+      s = await waitState(page, (x) => !x.shown, "Enter did not pick the file inside the folder");
+      assert(s.value === `${path.join(shopDir, "src/components/CartItem.tsx")} ` && await messages(page) === before, `the box holds ${JSON.stringify(s)}`);
+      return "src, components, cart";
+    });
+
+    await run("a folder lands as its absolute path with a trailing slash plus a blank, quoted when it holds a blank", async () => {
+      await reset(page);
+      await page.keyboard.type(`see @${SHOP}/src/components/`);
+      let s = await waitState(page, (x) => x.title === "components/" && !x.busy, "the typed folder was not walked into");
+      assert(s.rows[0] === `${path.join(shopDir, "src/components")}/` && s.active === 0, `the folder is not the first row: ${JSON.stringify(s)}`);
+      await page.keyboard.press("Enter");
+      s = await waitState(page, (x) => !x.shown, "Enter did not take the folder");
+      const folder = `${path.join(shopDir, "src/components")}/`;
+      assert(s.value === `see ${folder} ` && s.caret === s.value.length && s.focused, `the box holds ${JSON.stringify(s)}`);
+      await page.keyboard.type("and @");
+      await page.keyboard.type(`${SHOP}/design`);
+      await waitState(page, (x) => x.rows[0] === "design notes/" && !x.busy, "the spaced folder never came");
+      await page.keyboard.press("Enter");
+      await waitState(page, (x) => x.title === "design notes/" && !x.busy, "Enter did not walk into the spaced folder");
+      await page.keyboard.press("Tab");
+      s = await waitState(page, (x) => !x.shown, "Tab did not take the spaced folder");
+      const quoted = JSON.stringify(`${path.join(shopDir, "design notes")}/`);
+      assert(s.value === `see ${folder} and ${quoted} `, `a folder with a blank is not quoted: ${s.value}`);
+      await page.keyboard.type("or @");
+      await page.keyboard.type(`${NOTES}/`);
+      await waitState(page, (x) => x.title === NOTES && !x.busy, "the plain project never answered");
+      await page.keyboard.press("Enter");
+      s = await waitState(page, (x) => !x.shown, "Enter did not take the project's folder");
+      assert(s.value === `see ${folder} and ${quoted} or ${path.join(PROJECTS, NOTES)}/ `, `the project's folder lands as ${s.value}`);
+      return await waitDraft(page, id, s.value);
+    });
+
+    await run("Backspace after a folder's slash and the back arrow go up one level, with the filter typed before the pick or the slash taken off", async () => {
+      await reset(page);
+      await page.keyboard.type(`@${SHOP}/src`);
+      await waitState(page, (x) => x.rows[0] === "src/" && !x.busy, "src never came first");
+      await page.keyboard.press("Enter");
+      await waitState(page, (x) => x.title === "src/" && !x.busy, "src was not walked into");
+      await page.keyboard.type("comp");
+      await waitState(page, (x) => x.rows[0] === "src/components/" && !x.busy, "components never came first");
+      await page.keyboard.press("Enter");
+      await waitState(page, (x) => x.title === "components/" && !x.busy, "components was not walked into");
+      await page.keyboard.press("Backspace");
+      let s = await waitState(page, (x) => x.title === "src/" && !x.busy && x.value === `@${SHOP}/src/comp`, "Backspace did not go up to src with the filter");
+      assert(s.rows[s.active] === "src/components/", `the folder left is not marked: ${JSON.stringify(s)}`);
+      await page.keyboard.press("Backspace");
+      s = await state(page);
+      assert(s.value === `@${SHOP}/src/com` && s.shown, `a second Backspace is not plain editing: ${JSON.stringify(s)}`);
+      for (let i = 0; i < 3; i += 1) await page.keyboard.press("Backspace");
+      s = await waitState(page, (x) => x.value === `@${SHOP}/src/` && x.title === "src/" && !x.busy, "the filter did not empty");
+      await page.keyboard.press("Backspace");
+      s = await waitState(page, (x) => x.title === SHOP && !x.busy && x.value === `@${SHOP}/src`, "Backspace did not go up to the project with its filter");
+      assert(s.rows[s.active] === "src/" && s.trail === "", `src is not marked after going up: ${JSON.stringify(s)}`);
+      await reset(page);
+      await page.keyboard.type(`@${SHOP}/src/api/`);
+      await waitState(page, (x) => x.title === "api/" && !x.busy, "the typed path was not walked into");
+      await page.keyboard.press("Backspace");
+      s = await waitState(page, (x) => x.title === "src/" && !x.busy && x.value === `@${SHOP}/src/api`, "Backspace after a typed folder did not take its slash off");
+      assert(s.rows[s.active] === "src/api/", `the typed folder is not marked: ${JSON.stringify(s)}`);
+      await page.keyboard.type("/");
+      await waitState(page, (x) => x.title === "api/" && !x.busy, "the slash did not walk back in");
+      await page.keyboard.type("pay");
+      await waitState(page, (x) => x.rows[0] === "src/api/payments.go" && !x.busy, "payments never came");
+      await page.click("[data-mention-back]");
+      s = await waitState(page, (x) => x.title === "src/" && !x.busy, "the back arrow did not go up");
+      assert(s.value === `@${SHOP}/src/api` && s.focused && s.rows[s.active] === "src/api/", `the back arrow lost the place, the focus or the mark: ${JSON.stringify(s)}`);
+      const label = await page.getAttribute("[data-mention-back]", "aria-label");
+      assert(label === `Back to ${SHOP}`, `the back arrow says ${label}`);
+      return "picked, typed and the arrow";
+    });
+
+    await run("a folder jumped to by a search hit goes up one folder at a time, the search back once it stands where it was typed", async () => {
+      await reset(page);
+      await page.keyboard.type(`@${SHOP}/api`);
+      let s = await waitState(page, (x) => x.title === SHOP && !x.busy && x.rows.includes("src/api/"), "src/api never came for api");
+      for (let i = s.active; i < s.rows.indexOf("src/api/"); i += 1) await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      s = await waitState(page, (x) => x.title === "api/" && !x.busy, "the hit did not walk into src/api");
+      assert(s.value === `@${SHOP}/src/api/` && s.trail === `${SHOP}/src/`, `the hit did not complete the folder: ${JSON.stringify(s)}`);
+      const label = await page.getAttribute("[data-mention-back]", "aria-label");
+      assert(label === "Back to src/", `the back arrow says ${label}`);
+      await page.keyboard.press("Backspace");
+      s = await waitState(page, (x) => x.title !== "api/" && !x.busy, "Backspace did not leave the hit");
+      assert(s.title === "src/" && s.value === `@${SHOP}/src/api` && s.rows[s.active] === "src/api/", `Backspace did not go up one folder from the hit: ${JSON.stringify(s)}`);
+      await page.keyboard.type("/");
+      await waitState(page, (x) => x.title === "api/" && !x.busy, "the slash did not walk back in");
+      await page.click("[data-mention-back]");
+      s = await waitState(page, (x) => x.title !== "api/" && !x.busy, "the back arrow did not leave the hit");
+      assert(s.title === "src/" && s.value === `@${SHOP}/src/api` && s.focused && s.rows[s.active] === "src/api/", `the back arrow did not go up one folder from the hit: ${JSON.stringify(s)}`);
+      await page.click("[data-mention-back]");
+      s = await waitState(page, (x) => x.title !== "src/" && !x.busy, "the back arrow did not leave src");
+      assert(s.title === SHOP && s.value === `@${SHOP}/api` && s.trail === "" && s.rows.includes("src/api/"), `the search did not come back in the project: ${JSON.stringify(s)}`);
+      await page.click("[data-mention-back]");
+      s = await waitState(page, (x) => x.title === "Projects", "the back arrow did not go back to the projects");
+      assert(s.value === `@${SHOP}` && s.rows[s.active] === `@${SHOP}`, `the projects lost the typed name or the mark: ${JSON.stringify(s)}`);
+      return "hit, Backspace, arrow, search, projects";
     });
 
     await run("Tab picks a file: its absolute path lands with a blank, the caret after it, the draft carries it", async () => {
@@ -397,7 +579,7 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       await waitState(page, (x) => x.rows.length === 1 && x.rows[0] === `@${CHECKOUT}`, "the worktree was not the one hit");
       await page.keyboard.press("Enter");
       let s = await waitState(page, (x) => x.title === CHECKOUT && !x.busy, "the worktree's files never came");
-      assert(s.refs[0] === path.join(PROJECTS, CHECKOUT), `the worktree's folder is ${s.refs[0]}`);
+      assert(s.refs[0] === `${path.join(PROJECTS, CHECKOUT)}/`, `the worktree's folder is ${s.refs[0]}`);
       await page.keyboard.press("Backspace");
       s = await waitState(page, (x) => x.title === "Projects", "Backspace did not go back");
       assert(s.value === `@${S} check` && s.rows[s.active] === `@${CHECKOUT}`, `the typed filter or the mark is lost: ${JSON.stringify(s)}`);
@@ -472,7 +654,7 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
     await run("a file query nobody matches says so, a blank after it closes, the caret leaving the token or the box closes", async () => {
       await reset(page);
       await page.keyboard.type(`@${SHOP}/qqqzzz`);
-      await waitState(page, (x) => x.note.includes("No file matches") && !x.busy, "no note for a query nobody matches");
+      await waitState(page, (x) => x.note.includes("No folder or file matches") && !x.busy, "no note for a query nobody matches");
       await page.keyboard.type(" ");
       await waitState(page, (x) => !x.shown, "a blank after a dead query did not close");
       await reset(page);
@@ -497,7 +679,14 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       assert(long.status === 400 && long.body.error === "The search is too long.", `a long query answered ${long.status}`);
       const many = await mentionFiles(page, MONO, "file");
       assert(many.status === 200 && many.body.files.length === 50 && many.body.truncated && many.body.total > 50, `the answer is not bounded: ${many.body.files.length} of ${many.body.total}`);
-      assert(many.body.files.every((f) => f.ref === path.join(PROJECTS, MONO, f.path)), "a ref does not name its file under the project");
+      assert(many.body.files.every((f) => f.ref === path.join(PROJECTS, MONO, f.path) + (f.folder ? "/" : "")), "a ref does not name its file under the project");
+      const folders = await mentionFiles(page, MONO, "sub1");
+      assert(folders.body.files.some((f) => f.folder) && folders.body.files.every((f) => f.ref === path.join(PROJECTS, MONO, f.path) + (f.folder ? "/" : "")), `a folder's ref does not name it under the project: ${JSON.stringify(folders.body.files.slice(0, 3))}`);
+      const mono = `${path.join(PROJECTS, MONO)}/`;
+      for (const q of ["../", `../${SHOP}/`, "/etc/", ".git/", "pkg/../../"]) {
+        const r = await mentionFiles(page, MONO, q);
+        assert(r.status === 200 && !r.body.folder.includes("..") && r.body.ref.startsWith(mono) && r.body.files.every((f) => f.ref.startsWith(mono)), `${q} walked out: ${JSON.stringify(r.body).slice(0, 300)}`);
+      }
       return `${many.body.files.length} of ${many.body.total}`;
     });
 
@@ -554,8 +743,8 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       await mp.setViewportSize({ width: 390, height: 460 });
       try {
         await reset(mp);
-        await mp.keyboard.type(`@${MONO}/`);
-        await waitState(mp, (x) => x.title === MONO && !x.busy && x.rows.length > 10, "the short phone did not open the big project");
+        await mp.keyboard.type(`@${MONO}/pkg/`);
+        await waitState(mp, (x) => x.title === "pkg/" && !x.busy && x.rows.length > 10, "the short phone did not open the big project's folder");
         await sleep(200);
         const g = await geometry(mp);
         assert(g.panel.top >= Math.max(g.bound.top, g.view.top) - 1 && g.panel.bottom <= g.input.top, `the popup runs out of the room: ${JSON.stringify(g)}`);
@@ -576,10 +765,33 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       }
     });
 
+    await run("phone: a tap on a folder walks into it, the back arrow goes up, a tap on the folder itself puts it in", async () => {
+      const mp = await mobilePage();
+      await reset(mp);
+      await mp.keyboard.type(`@${SHOP}/`);
+      await waitState(mp, (x) => x.title === SHOP && !x.busy && x.rows.includes("src/"), "the phone did not list the project");
+      await mp.tap('[data-mention-list] [role="option"][data-mention-walk="src"]');
+      let s = await waitState(mp, (x) => x.title === "src/" && !x.busy, "a tap did not walk into src");
+      assert(s.focused && s.value === `@${SHOP}/src/` && s.trail === `${SHOP}/`, `the tap took the focus or did not complete the folder: ${JSON.stringify(s)}`);
+      const g = await geometry(mp);
+      assert(Math.min(...g.rowHeights) >= 43.5 && g.panel.left >= 0 && g.panel.right <= g.view.width && g.overflow <= 0 && g.panel.bottom <= g.input.top, `the folder's rows do not fit the phone: ${JSON.stringify(g)}`);
+      await mp.tap('[data-mention-list] [role="option"][data-mention-walk="src/api"]');
+      await waitState(mp, (x) => x.title === "api/" && !x.busy, "a tap did not walk into api");
+      await mp.tap("[data-mention-back]");
+      s = await waitState(mp, (x) => x.title === "src/" && !x.busy && x.value === `@${SHOP}/src/`, "the back tap did not go up");
+      assert(s.focused && s.rows[s.active] === "src/api/", `the back tap lost the focus or the mark: ${JSON.stringify(s)}`);
+      await mp.tap('[data-mention-list] [role="option"][data-mention-walk="src/api"]');
+      await waitState(mp, (x) => x.title === "api/" && !x.busy && x.value === `@${SHOP}/src/api/`, "a second tap did not walk into api");
+      await mp.tap('[data-mention-list] [role="option"]');
+      s = await waitState(mp, (x) => !x.shown, "a tap on the folder did not put it in");
+      assert(s.focused && s.value === `${path.join(shopDir, "src/api")}/ `, `the phone box holds ${JSON.stringify(s)}`);
+      return `rows ${Math.min(...g.rowHeights)}px`;
+    });
+
     await fileMentionLinks({ page, run, id, AUX, PROJECTS, SHOP, CHECKOUT, NOTES, BOX, openAssistant, reset, waitState });
 
     if (SHOTS && engine === "chromium") {
-      await run("screenshots of both steps in both themes on a phone", async () => {
+      await run("screenshots of the projects, a project's folders and files and the inside of a folder in both themes on a phone", async () => {
         fs.mkdirSync(SHOTS, { recursive: true });
         for (const theme of ["light", "dark"]) await shoot(browser, id, theme);
         return SHOTS;

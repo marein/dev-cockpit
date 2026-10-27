@@ -44,7 +44,12 @@ type QuickOpenMatches struct {
 type quickOpenIndex struct {
 	paths []string
 	lower []string
-	built time.Time
+	// folders is every folder that holds an indexed file, sorted, each with its
+	// trailing slash, and folderLower its lowercased copy. They fall out of the
+	// paths, so the exclusions that keep a file out keep its folder out too.
+	folders     []string
+	folderLower []string
+	built       time.Time
 	// ex is what this index was built with. A query under different exclusions
 	// cannot be answered from it, so the setting changing is enough to rebuild.
 	ex Exclusions
@@ -58,11 +63,16 @@ func buildQuickOpenIndex(root string, ex Exclusions, now time.Time) (*quickOpenI
 	if err != nil {
 		return nil, err
 	}
-	ix := &quickOpenIndex{paths: paths, lower: make([]string, len(paths)), built: now, ex: ex}
+	folders := foldersOf(paths)
+	ix := &quickOpenIndex{paths: paths, lower: make([]string, len(paths)), folders: folders, folderLower: make([]string, len(folders)), built: now, ex: ex}
 	buf := make([]byte, 0, 256)
 	for i, p := range paths {
 		buf = appendLowerASCII(buf[:0], p)
 		ix.lower[i] = string(buf)
+	}
+	for i, f := range folders {
+		buf = appendLowerASCII(buf[:0], f)
+		ix.folderLower[i] = string(buf)
 	}
 	return ix, nil
 }
@@ -227,16 +237,17 @@ const (
 // scoreQuickOpen grades a path against the query tokens, given the path as
 // it is and lowercased by appendLowerASCII, which keeps the byte offsets of
 // both equal. Every token has to appear somewhere in the path. The first token
-// alone decides the rank, by where it hits the file name: a word start beats
-// the inside of a word, each earlier position first, and a hit only outside
-// the file name comes last. rankTokens in the browser applies the same rule.
+// alone decides the rank, by where it hits the name: a word start beats the
+// inside of a word, each earlier position first, and a hit only outside the
+// name comes last. A folder's path ends in its slash, its name is the last
+// part before it. rankTokens in the browser applies the same rule.
 func scoreQuickOpen(path, lower string, tokens []string) (tier, pos int, ok bool) {
 	for _, t := range tokens {
 		if !strings.Contains(lower, t) {
 			return 0, 0, false
 		}
 	}
-	start := strings.LastIndexByte(lower, '/') + 1
+	start := strings.LastIndexByte(strings.TrimSuffix(lower, "/"), '/') + 1
 	tier, pos = rankName(path[start:], lower[start:], tokens[0])
 	return tier, pos, true
 }

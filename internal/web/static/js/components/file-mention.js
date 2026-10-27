@@ -52,6 +52,7 @@ class FileMention extends HTMLElement {
     this.noteTemplate = this.querySelector("[data-mention-note-template]");
     this.backButton = this.querySelector("[data-mention-back]");
     this.heading = this.querySelector("[data-mention-title]");
+    this.crumbTrail = this.querySelector("[data-mention-trail]");
     this.crumbIcon = this.querySelector("[data-mention-crumb-icon]");
     this.count = this.querySelector("[data-mention-count]");
     this.busy = this.querySelector("[data-mention-busy]");
@@ -108,7 +109,8 @@ class FileMention extends HTMLElement {
     this.step = "";
     this.project = "";
     this.query = null;
-    this.picked = null;
+    this.folder = "";
+    this.picks = new Map();
     this.backTo = "";
     this.pendingPick = false;
     this.requests = new AbortController();
@@ -173,7 +175,10 @@ class FileMention extends HTMLElement {
     this.step = step;
     this.project = project;
     this.query = query;
-    if (moved) this.paintHead(direction);
+    if (moved) {
+      this.folder = "";
+      this.paintHead(direction);
+    }
     if (files) {
       this.askFiles(moved);
       return;
@@ -188,11 +193,24 @@ class FileMention extends HTMLElement {
     return source?.querySelector(".editor-palette-line > .ti")?.className || "ti ti-folder";
   }
 
+  location() {
+    return `${this.project}/${this.folder ? `${this.folder}/` : ""}`;
+  }
+
   paintHead(direction) {
     const files = this.step === "files";
+    const folder = files ? this.folder : "";
+    const parent = parentDir(folder);
     this.backButton.hidden = !files;
-    this.crumbIcon.className = files ? `${this.stepIcon()} text-primary` : "ti ti-at text-primary";
-    this.heading.textContent = files ? this.project : "Projects";
+    if (files) {
+      const back = folder ? `Back to ${parent ? `${baseName(parent)}/` : this.project}` : "Back to the projects";
+      this.backButton.setAttribute("aria-label", back);
+      this.backButton.title = back;
+    }
+    this.crumbIcon.className = `${files ? (folder ? "ti ti-folder" : this.stepIcon()) : "ti ti-at"} text-primary`;
+    this.heading.textContent = !files ? "Projects" : folder ? `${baseName(folder)}/` : this.project;
+    this.crumbTrail.textContent = folder ? `${this.project}/${parent ? `${parent}/` : ""}` : "";
+    this.crumbTrail.hidden = !folder;
     this.count.textContent = "";
     this.list.classList.remove("dc-mention-forth", "dc-mention-back");
     if (!direction) return;
@@ -270,7 +288,7 @@ class FileMention extends HTMLElement {
     if (this.anchor < 0 || this.step !== "files" || this.project !== project || seq <= this.shownSeq) return;
     this.shownSeq = seq;
     if (seq === this.filesSeq) this.settle();
-    this.showFiles(data, query, seq === this.filesSeq);
+    this.showFiles(data, seq === this.filesSeq);
   }
 
   settle() {
@@ -279,27 +297,37 @@ class FileMention extends HTMLElement {
     this.list.removeAttribute("aria-busy");
   }
 
-  showFiles(data, query, current) {
+  showFiles(data, current) {
+    const folder = data.folder || "";
+    if (folder !== this.folder) {
+      const deeper = folder.startsWith(this.folder ? `${this.folder}/` : "");
+      this.folder = folder;
+      this.paintHead(deeper ? "forth" : "back");
+    }
+    const query = data.query || "";
+    const files = data.files || [];
     const rows = [];
-    if (!query.trim() && data.root) rows.push(this.fileRow({ folder: true, icon: this.stepIcon(), name: data.project || this.project, dir: data.root, ref: data.root }, query));
-    for (const file of data.files || []) rows.push(this.fileRow(file, query));
+    if (!query.trim() && data.ref) rows.push(this.fileRow({ here: true, path: folder, ref: data.ref }, query));
+    for (const file of files) rows.push(this.fileRow(file, query));
     if (!rows.length) {
       if (current && /\s$/.test(query)) {
         this.close();
         return;
       }
-      this.note(`No file matches “${query.trim()}”.`);
-      this.count.textContent = plural(0, "file", "files");
+      this.note(`No folder or file matches “${query.trim()}”.`);
+      this.count.textContent = plural(0, "match", "matches");
       return;
     }
     this.list.replaceChildren(...rows);
     rows.forEach((row, i) => {
       row.id = `dc-mention-option-${i}`;
     });
-    this.mark(0, true);
-    if (!query.trim()) this.count.textContent = plural(data.indexed || 0, "file", "files");
-    else if (data.truncated) this.count.textContent = `${(data.files || []).length} of ${plural(data.total || 0, "file", "files")}`;
-    else this.count.textContent = plural(data.total || 0, "file", "files");
+    const left = current ? this.backTo : "";
+    if (current) this.backTo = "";
+    this.mark(Math.max(left ? rows.findIndex((row) => row.dataset.mentionWalk === left) : 0, 0), true);
+    if (!query.trim()) this.count.textContent = plural(data.under || 0, "file", "files");
+    else if (data.truncated) this.count.textContent = `${files.length} of ${plural(data.total || 0, "match", "matches")}`;
+    else this.count.textContent = plural(data.total || 0, "match", "matches");
     if (current && this.pendingPick) {
       this.pendingPick = false;
       this.pick(this.rows()[0]);
@@ -308,20 +336,24 @@ class FileMention extends HTMLElement {
 
   fileRow(file, query) {
     const row = this.fileTemplate.content.firstElementChild.cloneNode(true);
-    const name = file.folder ? file.name : baseName(file.path);
-    const dir = file.folder ? file.dir : parentDir(file.path);
-    row.querySelector("[data-mention-icon]").className = file.folder ? file.icon : `ti ${fileIcon(name)}`;
+    const root = file.here && !file.path;
+    const name = root ? this.project : baseName(file.path);
+    const parent = parentDir(file.path);
+    const dir = file.here ? file.ref : parent === this.folder ? "" : parent.slice(this.folder ? this.folder.length + 1 : 0);
+    row.querySelector("[data-mention-icon]").className = root ? this.stepIcon() : file.here || file.folder ? "ti ti-folder" : `ti ${fileIcon(name)}`;
     const nameEl = row.querySelector("[data-mention-name]");
     const dirEl = row.querySelector("[data-mention-dir]");
-    nameEl.textContent = name;
+    nameEl.textContent = file.here || file.folder ? `${name}/` : name;
     dirEl.textContent = dir;
     dirEl.hidden = !dir;
-    if (!file.folder) {
+    if (!file.here) {
       markText(nameEl, query);
       markText(dirEl, query);
     }
-    row.dataset.mentionRef = file.ref;
-    row.title = file.folder ? file.ref : file.path;
+    row.querySelector("[data-mention-walk]").hidden = !file.folder;
+    if (file.folder) row.dataset.mentionWalk = file.path;
+    else row.dataset.mentionRef = file.ref;
+    row.title = file.here ? file.ref : file.folder ? `${file.path}/` : file.path;
     return row;
   }
 
@@ -386,10 +418,9 @@ class FileMention extends HTMLElement {
         this.pick(this.rows()[this.index] || this.rows()[0]);
         return;
       case "Backspace":
-        if (event.shiftKey || this.step !== "files" || this.input.selectionEnd !== this.anchor + this.project.length + 2) return;
-        if (this.input.selectionStart !== this.input.selectionEnd) return;
+        if (event.shiftKey || this.step !== "files" || this.input.selectionStart !== this.input.selectionEnd || this.token() !== this.location()) return;
         consume();
-        this.leaveProject();
+        this.goBack();
         return;
       default:
     }
@@ -402,7 +433,7 @@ class FileMention extends HTMLElement {
 
   onClick(event) {
     if (event.target.closest("[data-mention-back]")) {
-      if (this.step === "files") this.leaveProject();
+      if (this.step === "files") this.goBack();
       return;
     }
     const row = event.target.closest('[role="option"]');
@@ -421,8 +452,16 @@ class FileMention extends HTMLElement {
     const caret = this.input.selectionStart;
     const name = row.dataset.projectName;
     if (name) {
-      this.picked = { project: name, filter: this.query };
+      this.picks.set(`${name}/`, this.query);
       this.replace(this.anchor, caret, `@${name}/`);
+      return;
+    }
+    const walk = row.dataset.mentionWalk;
+    if (walk) {
+      const here = this.folder ? `${this.folder}/` : "";
+      const child = walk.slice(here.length).split("/")[0];
+      this.picks.set(`${this.project}/${here}${child}/`, `${this.project}/${this.query}`);
+      this.replace(this.anchor, caret, `@${this.project}/${walk}/`);
       return;
     }
     const ref = row.dataset.mentionRef;
@@ -433,10 +472,12 @@ class FileMention extends HTMLElement {
     this.replace(anchor, caret, next && /\s/.test(next) ? ref : `${ref} `);
   }
 
-  leaveProject() {
-    const filter = this.picked?.project === this.project ? this.picked.filter : this.project;
-    this.backTo = this.project;
-    this.replace(this.anchor, this.input.selectionStart, `@${filter}`);
+  goBack() {
+    const location = this.location();
+    const before = this.picks.get(location) ?? location.slice(0, -1);
+    for (const key of [...this.picks.keys()]) if (key.startsWith(location)) this.picks.delete(key);
+    this.backTo = this.folder || this.project;
+    this.replace(this.anchor, this.input.selectionStart, `@${before}`);
   }
 
   replace(start, end, text) {

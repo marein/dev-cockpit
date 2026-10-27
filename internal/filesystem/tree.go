@@ -128,12 +128,19 @@ func ListDir(root, rel string) ([]Entry, error) {
 		out = append(out, entryFromInfo(fi, relTo(root, full)))
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].IsDir != out[j].IsDir {
-			return out[i].IsDir
-		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		return inTreeOrder(out[i].IsDir, out[i].Name, out[j].IsDir, out[j].Name)
 	})
 	return out, nil
+}
+
+// inTreeOrder reports whether the entry named a stands before the one named b
+// in a folder's listing: folders first, then files, each by name regardless of
+// case.
+func inTreeOrder(aDir bool, a string, bDir bool, b string) bool {
+	if aDir != bDir {
+		return aDir
+	}
+	return strings.ToLower(a) < strings.ToLower(b)
 }
 
 // ErrTooLarge and ErrBinary mark files the browser editor cannot edit; callers

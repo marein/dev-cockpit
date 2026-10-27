@@ -31,14 +31,16 @@ func (s *Server) handleMentionProjects(c *gin.Context) {
 }
 
 type mentionFile struct {
-	Path string `json:"path"`
-	Ref  string `json:"ref"`
+	Path   string `json:"path"`
+	Ref    string `json:"ref"`
+	Folder bool   `json:"folder,omitempty"`
 }
 
 // handleMentionFiles answers the file step from the quick open index, the one
 // the editor's palette stands on: the same ranking, the same exclusions and a
-// warm cache for both. Every hit is placed on the disk again, so what the
-// browser inserts is a file that stands under the project right now.
+// warm cache for both. The typed part walks into the deepest folder it names
+// and is matched below it, folders among the files. Every hit is placed on the
+// disk again, so what the browser inserts stands under the project right now.
 func (s *Server) handleMentionFiles(c *gin.Context) {
 	query := c.Query("q")
 	if len(query) > maxMentionQuery {
@@ -55,24 +57,43 @@ func (s *Server) handleMentionFiles(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Project not found."})
 		return
 	}
-	res, err := s.quickOpen.Query(p.Path, query, "", s.exclusions(), mentionFileLimit)
+	res, err := s.quickOpen.Browse(p.Path, query, s.exclusions(), mentionFileLimit)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": userFacingError(c, err)})
 		return
 	}
-	placed := filesystem.FilesUnder(p.Path, res.Paths)
+	here := filesystem.PlacedEntry{Abs: p.Path, Folder: true}
+	if res.Folder != "" {
+		placed := filesystem.EntriesUnder(p.Path, []filesystem.QuickOpenEntry{{Path: res.Folder, Folder: true}})
+		if len(placed) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "The folder is gone."})
+			return
+		}
+		here = placed[0]
+	}
+	placed := filesystem.EntriesUnder(p.Path, res.Entries)
 	files := make([]mentionFile, 0, len(placed))
 	for _, f := range placed {
-		files = append(files, mentionFile{Path: f.Rel, Ref: mentionRef(f.Abs)})
+		files = append(files, mentionFile{Path: f.Rel, Ref: mentionEntryRef(f), Folder: f.Folder})
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"project":   p.Name,
-		"root":      mentionRef(p.Path),
+		"folder":    res.Folder,
+		"query":     res.Query,
+		"ref":       mentionEntryRef(here),
 		"files":     files,
 		"total":     res.Total,
-		"indexed":   res.Indexed,
-		"truncated": res.Total > len(res.Paths),
+		"under":     res.Files,
+		"truncated": res.Total > len(res.Entries),
 	})
+}
+
+// mentionEntryRef is how a placed file or folder reads in a message, a folder
+// with its trailing slash so the reader sees it is one.
+func mentionEntryRef(e filesystem.PlacedEntry) string {
+	if e.Folder {
+		return mentionRef(strings.TrimSuffix(e.Abs, "/") + "/")
+	}
+	return mentionRef(e.Abs)
 }
 
 // mentionRef is how a path reads in a message. The absolute path is what
