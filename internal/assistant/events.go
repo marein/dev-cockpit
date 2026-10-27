@@ -762,6 +762,12 @@ func inProject(project string) string {
 // sharper reason: a check that runs into the deadline has a next check to
 // carry on, a reaction has nothing and lands in the thread as one that broke
 // off.
+//
+// It has a question asked in plain words and never with an ask block, which
+// the instruction file teaches every turn: the page draws no buttons on a
+// pushed answer (Message.Choices), because a click lands in the chat
+// session, which knows only the headline of this answer. The block would
+// stand as raw text.
 func reactionPrompt(origin Note, body string) string {
 	var b strings.Builder
 	b.WriteString("This turn was started by the cockpit, not by the user: an event you set a trigger on fired. You run in a session of your own and see nothing of the conversation; your answer is pushed into your thread, where the user reads it as one started without them.\n\n")
@@ -778,7 +784,7 @@ func reactionPrompt(origin Note, body string) string {
 	}
 	b.WriteString("This turn has two hours and is killed when that runs out, and nothing carries on after it: if you cannot finish inside that, answer with what you have and what is still open.\n\n")
 	b.WriteString("Your whole answer starts with the result. Do not announce what you are about to do: the user reads its first line on their phone, where a sentence or two is all that fits. You have no verdict here: DONE, BLOCKED and WORKING belong to a check, not to a reaction. Write in the language the task is written in.\n\n")
-	b.WriteString("If there is nothing to do or say, answer NOTHING on the first line and nothing else: then nothing is pushed and nobody is notified. Otherwise answer as you would answer the user, they read it.")
+	b.WriteString("If there is nothing to do or say, answer NOTHING on the first line and nothing else: then nothing is pushed and nobody is notified. Otherwise answer as you would answer the user, they read it. When the user has to decide something, ask in plain words and never with an `ask` block: the page shows no buttons on an answer pushed into your thread, and the user answers in the chat.")
 	return b.String()
 }
 

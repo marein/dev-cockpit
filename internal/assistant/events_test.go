@@ -285,7 +285,10 @@ func TestAReactionRunsInASessionOfItsOwnAndPushesItsAnswer(t *testing.T) {
 		// A reaction has the two hours a check has and no next turn behind
 		// it, so a reaction that works up to the deadline is killed and
 		// reaches the thread as one that broke off.
-		"This turn has two hours", "nothing carries on after it"} {
+		"This turn has two hours", "nothing carries on after it",
+		// The page draws no buttons on a pushed answer, so an ask block
+		// would stand there as raw text.
+		"ask in plain words and never with an `ask` block"} {
 		if !strings.Contains(req.Prompt, want) {
 			t.Fatalf("the prompt does not say %q:\n%s", want, req.Prompt)
 		}
