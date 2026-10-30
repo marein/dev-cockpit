@@ -4144,7 +4144,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     });
 
     await require("./editor-git-compare-worktree").worktreeChecks({ page, run, tag, author, editorBase, project, runInShell, shellText, openEditor, diffReady, openCommitView, setEditorSwitch, toggleDiff, diffPressed, h: compareKit });
-    await compareChecks.resetChecks({ page, run, runInShell, openEditor, diffReady, h: compareKit });
+    for (const checks of [compareChecks.resetChecks, compareChecks.remoteChecks]) await checks({ page, run, runInShell, openEditor, diffReady, h: compareKit });
+    await require("./editor-git-switch").switchChecks({ page, run, editorBase, runInShell, openEditor, diffReady, openGitSheet, waitBranch, h: compareKit });
 
     await run("compare: the phone reaches the panel, both pickers and the diff inside the drawer at 390", async () => {
       const mp = await mobile();

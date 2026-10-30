@@ -4595,11 +4595,13 @@ async function init(root) {
     // One row model for both halves of the answer, so the list renders one
     // thing. A name is a place the repository keeps: picking a remote branch
     // means checking out its local name, which git creates as the tracking
-    // branch when it is not there yet.
+    // branch when it is not there yet. A revision is the remote's own name,
+    // the local one may be missing or stand somewhere else.
+    const checksOut = (ref) => !raw && ref.kind === "remote" && !!ref.branch;
     const refEntry = (ref) => ({
-      value: ref.kind === "remote" && ref.branch ? ref.branch : ref.name,
+      value: checksOut(ref) ? ref.branch : ref.name,
       name: ref.name,
-      sub: ref.head ? "current branch" : ref.kind === "remote" ? `remote, checks out ${ref.branch || ref.name}` : ref.kind,
+      sub: ref.head ? "current branch" : checksOut(ref) ? `remote, checks out ${ref.branch}` : ref.kind,
       icon: kindIcon[ref.kind] || "ti-git-branch",
       // Switching to where you already stand does nothing, so the row says so
       // instead of doing it; for a diff the current branch is as good a
@@ -4773,7 +4775,10 @@ async function init(root) {
       }
       if (signal.aborted || !listEl.isConnected) return;
     }
-    await runSearch("");
+    // The fetch can take long enough for somebody to type, and the round after
+    // it answers what stands in the field by then, not the list it opened with.
+    clearTimeout(searchTimer);
+    await runSearch(input.value.trim());
   }
 
   function openBranchPicker() {

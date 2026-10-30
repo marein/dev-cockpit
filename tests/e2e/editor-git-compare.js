@@ -13,7 +13,11 @@ const { assert, sleep } = L;
 // button beside the select stands only off the suggested pair, its click
 // brings the suggestion back with the working copy and the split question,
 // and an unpicked left side asks for the suggestion on every load instead of
-// storing the name it resolved to, so a new tag moves it. Gotchas:
+// storing the name it resolved to, so a new tag moves it. remoteChecks picks a
+// remote only branch as the left side: the comparison asks for origin/<branch>,
+// never the local name a checkout would create, and the row says remote with
+// no checkout. remoteOnly is that fixture, an origin holding one branch the
+// working copy does not, which editor-git-switch.js borrows. Gotchas:
 //   - it runs after the blame checks and leaves their state as it found it:
 //     the blamed file the active tab with its gutter on and the panel closed,
 //     on the phone too, whose later checks expect the tree in the drawer.
@@ -276,4 +280,59 @@ async function resetChecks({ page, run, runInShell, openEditor, diffReady, h }) 
   });
 }
 
-module.exports = { compareHelpers, commitChecks, resetChecks };
+async function remoteOnly({ runInShell, h }, branch) {
+  const upstream = `${h.cmpClone}-upstream.git`;
+  const name = `origin/${branch}`;
+  assert(await runInShell(
+    `git init -q --bare ${upstream} && git push -q ${upstream} HEAD:refs/heads/${branch} && git remote add origin ${upstream} && git fetch -q origin\r`,
+  ) === 200, "the shell refused the remote");
+  const deadline = Date.now() + 20000;
+  let remote = await h.compareJSON(name, "HEAD", "direct");
+  while (remote.status !== 200 && Date.now() < deadline) {
+    await sleep(300);
+    remote = await h.compareJSON(name, "HEAD", "direct");
+  }
+  assert(remote.status === 200, `${name} never resolved: ${JSON.stringify(remote.data)}`);
+  const local = await h.compareJSON(branch, "HEAD", "direct");
+  assert(local.status === 400 && local.data.side === "from", `the local name ${branch} answers ${local.status}, so it is not remote only`);
+  return { name, drop: async () => assert(await runInShell(`git remote remove origin && rm -rf ${upstream}\r`) === 200, "the shell refused the cleanup") };
+}
+
+async function remoteChecks({ page, run, runInShell, openEditor, diffReady, h }) {
+  await run("compare: a remote only branch picked as the left side reaches the comparison under its full name, its row naming no checkout", async () => {
+    const { name, drop } = await remoteOnly({ runInShell, h }, "revcmp-remote-only");
+    await openEditor(page);
+    await diffReady(page);
+    await h.openRevdiff(page);
+    await h.revdiffSettled(page);
+    await h.openSidePicker(page, "from");
+    await page.fill("[data-editor-sheet-body] input", name);
+    await page.waitForSelector("[data-picker-loading]", { state: "hidden", timeout: 20000 });
+    const row = page.locator(`[data-editor-sheet] .editor-sheet-row:has(.editor-sheet-name:text-is("${name}"))`);
+    const sub = (await row.locator(".editor-sheet-dir").textContent()).trim();
+    assert(sub === "remote", `the row reads "${sub}", a comparison checks nothing out`);
+    const asked = page.waitForRequest((r) => r.url().includes("/git/compare?") && new URL(r.url()).searchParams.get("from") === name, { timeout: 10000 });
+    await row.locator(".editor-sheet-open").click();
+    await asked;
+    await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+    await h.revdiffSettled(page);
+    const error = await page.evaluate(() => {
+      const el = document.querySelector("[data-editor-revdiff-error]");
+      return el.hidden ? "" : el.textContent.trim();
+    });
+    assert(error === "", `the comparison refused ${name}: ${error}`);
+    const names = await h.revdiffNames(page);
+    const stored = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || "null"), h.revdiffKey);
+    assert(names.from === name && stored && stored.from === name, `the side reads ${JSON.stringify(names)} and the device keeps ${JSON.stringify(stored)}`);
+    const summary = await h.revdiffSummary(page);
+
+    await page.click("[data-editor-revdiff-reset]");
+    await h.revdiffSettled(page);
+    await page.click("[data-editor-revdiff-close]");
+    await page.waitForSelector("[data-editor-revdiff]", { state: "hidden", timeout: 8000 });
+    await drop();
+    return `${name} picked from the list compares as ${name}, "${summary}", the row reading remote`;
+  });
+}
+
+module.exports = { compareHelpers, commitChecks, resetChecks, remoteOnly, remoteChecks };
