@@ -191,11 +191,50 @@ func (s *Server) handleEditorLSPReindex(c *gin.Context) {
 // warmLSPServers starts the language servers of the languages the project
 // holds files for, so the indexing runs while the editor page is in front
 // of the reader instead of under the first lookup. A profile's marker file
-// at the root answers immediately; the bounded tree walk, staying out of
-// the excluded folders, remains the fallback for the rest, its outcome
-// cached per project so a page open does not pay the walk again. A
-// language found nowhere starts nothing.
+// at the root answers immediately, so those servers start before the walk;
+// the bounded walk covers the rest, see lspProjectLanguages. A language
+// found nowhere starts nothing.
 func (s *Server) warmLSPServers(p project.Project) {
+	wanted, wantedProfiles := s.lspWanted()
+	if len(wanted) == 0 {
+		return
+	}
+	found := lspMarked(p, wantedProfiles)
+	if len(found) > 0 {
+		s.intel.Warm(p.Name, p.Path, s.lspWarmModes(found))
+	}
+	if len(found) == len(wantedProfiles) {
+		return
+	}
+	walked := s.lspWalkLanguages(p, wanted, wantedProfiles)
+	if len(walked) > 0 {
+		s.intel.Warm(p.Name, p.Path, s.lspWarmModes(walked))
+	}
+}
+
+// lspProjectLanguages answers which of the enabled languages the project
+// holds files for: the profiles whose marker file stands at the root, and
+// whatever the bounded tree walk, staying out of the excluded folders,
+// finds beside them, its outcome cached per project so a page open does not
+// pay the walk again.
+func (s *Server) lspProjectLanguages(p project.Project) map[string]bool {
+	wanted, wantedProfiles := s.lspWanted()
+	if len(wanted) == 0 {
+		return map[string]bool{}
+	}
+	found := lspMarked(p, wantedProfiles)
+	if len(found) == len(wantedProfiles) {
+		return found
+	}
+	for id := range s.lspWalkLanguages(p, wanted, wantedProfiles) {
+		found[id] = true
+	}
+	return found
+}
+
+// lspWanted answers the extensions of the profiles the settings leave on,
+// each with its profile id, and the ids of those profiles.
+func (s *Server) lspWanted() (map[string]string, map[string]bool) {
 	wanted := map[string]string{}
 	wantedProfiles := map[string]bool{}
 	for _, profile := range editorintelligence.Profiles() {
@@ -207,9 +246,12 @@ func (s *Server) warmLSPServers(p project.Project) {
 			wanted["."+ext] = profile.ID
 		}
 	}
-	if len(wanted) == 0 {
-		return
-	}
+	return wanted, wantedProfiles
+}
+
+// lspMarked answers which of the wanted profiles have their marker file at
+// the project's root.
+func lspMarked(p project.Project, wantedProfiles map[string]bool) map[string]bool {
 	found := map[string]bool{}
 	for _, profile := range editorintelligence.Profiles() {
 		if !wantedProfiles[profile.ID] || profile.Marker == "" {
@@ -219,16 +261,7 @@ func (s *Server) warmLSPServers(p project.Project) {
 			found[profile.ID] = true
 		}
 	}
-	if len(found) > 0 {
-		s.intel.Warm(p.Name, p.Path, s.lspWarmModes(found))
-	}
-	if len(found) == len(wantedProfiles) {
-		return
-	}
-	walked := s.lspWalkLanguages(p, wanted, wantedProfiles)
-	if len(walked) > 0 {
-		s.intel.Warm(p.Name, p.Path, s.lspWarmModes(walked))
-	}
+	return found
 }
 
 // lspWalkEntry is one cached walk outcome; wantedKey records which
@@ -370,69 +403,64 @@ func (s *Server) handleEditorLSPNavigate(c *gin.Context, run func(context.Contex
 }
 
 func (s *Server) answerLSP(c *gin.Context, p project.Project, req editorintelligence.Request, res editorintelligence.Result) {
+	previews := lspPreviews(p.Path, req.Path, req.Content)
 	c.JSON(http.StatusOK, gin.H{
-		"available":   res.Available,
-		"status":      res.Status,
-		"locations":   lspPreviews(p.Path, req.Path, req.Content, res.Locations),
-		"outside":     res.Outside,
-		"truncated":   res.Truncated,
-		"declaration": res.Declaration,
+		"available":                res.Available,
+		"status":                   res.Status,
+		"locations":                previews(res.Locations),
+		"implementations":          previews(res.Implementations),
+		"implementationsTruncated": res.ImplementationsTruncated,
+		"subclasses":               previews(res.Subclasses),
+		"subclassesTruncated":      res.SubclassesTruncated,
+		"indirect":                 previews(res.Indirect),
+		"indirectTruncated":        res.IndirectTruncated,
+		"below":                    res.Below,
+		"outside":                  res.Outside,
+		"truncated":                res.Truncated,
+		"declaration":              res.Declaration,
 	})
 }
 
-// lspPreviews fills each location with its target line, files read once.
-// The asked document's text comes from the request, it may be unsaved;
-// every other file is read from disk, and one that cannot be read (binary,
-// too large, gone) leaves the preview empty rather than failing the answer.
-// A location outside the project is read at its own absolute path, which
-// the service only ever hands out for a file under an allowed source root;
-// a tree that lives in an image and not on this host answers nothing here
-// and shows its path alone, no container is started for a preview line.
-func lspPreviews(root, activePath, activeContent string, locs []editorintelligence.Location) []editorLSPLocation {
+// lspPreviews answers what fills each location with its target line, files
+// read once over every list it fills. The asked document's text comes from
+// the request, it may be unsaved; every other file is read from disk, and one
+// that cannot be read (binary, too large, gone) leaves the preview empty
+// rather than failing the answer. A location outside the project is read at
+// its own absolute path, which the service only ever hands out for a file
+// under an allowed source root; a tree that lives in an image and not on this
+// host answers nothing here and shows its path alone, no container is
+// started for a preview line.
+func lspPreviews(root, activePath, activeContent string) func([]editorintelligence.Location) []editorLSPLocation {
 	lines := map[string][]string{activePath: strings.Split(activeContent, "\n")}
-	out := make([]editorLSPLocation, 0, len(locs))
-	for _, loc := range locs {
-		content, ok := lines[loc.Path]
-		if !ok {
-			readRoot, rel := root, loc.Path
-			if loc.External {
-				readRoot, rel = filepath.Dir(loc.Path), filepath.Base(loc.Path)
+	return func(locs []editorintelligence.Location) []editorLSPLocation {
+		out := make([]editorLSPLocation, 0, len(locs))
+		for _, loc := range locs {
+			content, ok := lines[loc.Path]
+			if !ok {
+				readRoot, rel := root, loc.Path
+				if loc.External {
+					readRoot, rel = filepath.Dir(loc.Path), filepath.Base(loc.Path)
+				}
+				text, _, err := filesystem.ReadFileText(readRoot, rel)
+				if err != nil {
+					content = nil
+				} else {
+					content = strings.Split(text, "\n")
+				}
+				lines[loc.Path] = content
 			}
-			text, _, err := filesystem.ReadFileText(readRoot, rel)
-			if err != nil {
-				content = nil
-			} else {
-				content = strings.Split(text, "\n")
+			preview := ""
+			if loc.Line >= 1 && loc.Line <= len(content) {
+				// The window sits around the usage's own column, the same rule
+				// the search snippets cut by, so a usage past the cap on a long
+				// line still shows its symbol.
+				line := content[loc.Line-1]
+				preview = filesystem.SnippetAround(line, editorintelligence.UTF16Offset(line, loc.Character))
 			}
-			lines[loc.Path] = content
+			out = append(out, editorLSPLocation{Location: loc, Preview: preview})
 		}
-		preview := ""
-		if loc.Line >= 1 && loc.Line <= len(content) {
-			// The window sits around the usage's own column, the same rule
-			// the search snippets cut by, so a usage past the cap on a long
-			// line still shows its symbol.
-			line := content[loc.Line-1]
-			preview = filesystem.SnippetAround(line, utf16ByteIndex(line, loc.Character))
-		}
-		out = append(out, editorLSPLocation{Location: loc, Preview: preview})
+		return out
 	}
-	return out
-}
-
-// utf16ByteIndex maps a 0-based UTF-16 column, the coordinate the LSP
-// answers carry, onto its byte offset in the line.
-func utf16ByteIndex(s string, col int) int {
-	units := 0
-	for i, r := range s {
-		if units >= col {
-			return i
-		}
-		units++
-		if r > 0xFFFF {
-			units++
-		}
-	}
-	return len(s)
 }
 
 // handleEditorLSPClose releases the document when a tab closes; the idle

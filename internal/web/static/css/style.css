@@ -2727,7 +2727,7 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
   display: inline-block;
   animation: coder-files-upload-icon-pulse 1s ease-in-out infinite;
 }
-[data-shell-ctrl].active, [data-terminal-copy].active, [data-editor-quickopen-regex].active, [data-editor-quickopen-case].active {
+[data-shell-ctrl].active, [data-terminal-copy].active, [data-editor-quickopen-regex].active, [data-editor-quickopen-case].active, [data-editor-quickopen-kind].active {
   --tblr-btn-active-bg: var(--tblr-success);
   --tblr-btn-active-border-color: var(--tblr-success);
   --tblr-btn-active-color: #fff;

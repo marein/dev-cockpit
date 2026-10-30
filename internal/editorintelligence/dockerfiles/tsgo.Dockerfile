@@ -3,13 +3,15 @@
 # whoever builds holds the licenses. The shared entrypoint, the workspace
 # watcher with the exit code 64 restart contract, is appended in Go
 # (registry.go), one copy for every language.
-FROM node:lts-alpine
+FROM node:24-alpine
 # tsgo, the native TypeScript server, speaks LSP itself: it has the workspace
 # ready before it answers the first request and announces no startup work,
 # which is why this profile needs none of the waiting the servers that index
-# at the handshake do. The install resolves at build time and the image tag
-# hashes this file, so the server only ever updates when this file changes.
-RUN npm install -g @typescript/native-preview \
+# at the handshake do. That holds for the pinned preview, which the type
+# search and the implementation lists were tested against too, and the base
+# keeps the Node.js major it runs on. The image tag hashes this file, so a
+# bump builds a new image on every host and wants them tested again.
+RUN npm install -g @typescript/native-preview@7.0.0-dev.20260707.2 \
  && apk add --no-cache inotify-tools
 # A project without a configuration of its own gets one from here, or the
 # server builds a project out of the opened file and whatever it imports and

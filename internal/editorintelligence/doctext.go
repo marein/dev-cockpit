@@ -33,3 +33,19 @@ func (d *docText) validPosition(line, char int) bool {
 	}
 	return char <= utf16Len(d.lines[line])
 }
+
+// UTF16Offset maps a 0-based UTF-16 column, the coordinate LSP answers carry,
+// onto its byte offset in the line.
+func UTF16Offset(line string, column int) int {
+	units := 0
+	for i, r := range line {
+		if units >= column {
+			return i
+		}
+		units++
+		if r > 0xFFFF {
+			units++
+		}
+	}
+	return len(line)
+}

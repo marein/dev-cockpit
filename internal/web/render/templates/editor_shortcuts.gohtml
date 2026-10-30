@@ -10,18 +10,18 @@
         <div class="dc-shortcuts">
           <div class="dc-shortcuts-row">
             <span>Go to file</span>
-            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>O</kbd></span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></span>
           </div>
           <div class="dc-shortcuts-note">Tapping bare Shift twice opens it too.</div>
+          <div class="dc-shortcuts-row">
+            <span>Go to type</span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>O</kbd></span>
+          </div>
+          <div class="dc-shortcuts-note">In the palette bare Shift twice switches between files and types.</div>
           <div class="dc-shortcuts-row">
             <span>Find in files</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></span>
           </div>
-          <div class="dc-shortcuts-row">
-            <span>Go to file</span>
-            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>O</kbd></span>
-          </div>
-          <div class="dc-shortcuts-note">Tapping bare Shift twice opens it too.</div>
           {{if .Access.Can "files"}}<div class="dc-shortcuts-row">
             <span>Replace in files</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></span>
@@ -64,8 +64,9 @@
           </div>
           <div class="dc-shortcuts-row">
             <span>Find usages</span>
-            <span class="dc-shortcuts-keys"><kbd>Shift</kbd>+<kbd>F12</kbd></span>
+            <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>U</kbd></span>
           </div>
+          <div class="dc-shortcuts-note">On a declaration, implementations and subclasses stand in their own groups above the usages.</div>
           <div class="dc-shortcuts-row">
             <span>Git diff</span>
             <span class="dc-shortcuts-keys"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd></span>

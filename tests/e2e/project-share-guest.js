@@ -11,7 +11,11 @@ const { assert, BASE, sleep } = L;
 // read only buffers, search, git history and diff, the line comments, Copy
 // path with its chip absolute copying the path on the host, a definition
 // into the standard library as a read only tab while a hand built source
-// read outside the language server's source roots is refused, the
+// read outside the language server's source roots is refused, the type
+// search of the palette landing on a declaration while another project's
+// types answer the plain 404, the usages of an interface's declaration
+// listing its implementations apart while another project's usages answer
+// the plain 404, the
 // terminal panel and the attach pages with every coder and shell of the
 // project live, one started after the link was made included, and one of
 // another project nowhere, the copy view of a shell and of a coder, the
@@ -300,6 +304,45 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
         assert(res.status === 400 && !res.body.includes("root:"), `${path} answered ${res.status}`);
       }
       const other = await ask(fx.other, std);
+      assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
+    });
+
+    await run("the guest's type search lands on the declaration, another project's types answer the plain 404", async () => {
+      await gp.keyboard.press("Control+o");
+      await gp.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 5000 });
+      await gp.keyboard.type("ShareProbe");
+      await gp.waitForFunction(() => [...document.querySelectorAll("[data-editor-quickopen-list] .editor-quickopen-item")]
+        .some((row) => row.querySelector(".editor-quickopen-name")?.textContent === "ShareProbe" && row.querySelector(".badge")?.textContent === "struct"), null, { timeout: 90000 });
+      await gp.keyboard.press("Enter");
+      await gp.waitForFunction(() => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === "main.go"
+        && document.querySelector("[data-editor-pos]")?.textContent === "9:6", null, { timeout: 10000 });
+      const nothing = await fetchRaw(`${BASE}/no/such/page`, { headers: { Accept: "application/json" } });
+      const ask = (project) => fetchRaw(at(`/projects/${project}/editor/lsp/types?client=guest&q=ShareProbe`), { headers: { Accept: "application/json" } });
+      const own = await ask(fx.project);
+      assert(own.status === 200 && JSON.parse(own.body).types.some((t) => t.name === "ShareProbe"), `the link's project answered ${own.status}`);
+      const other = await ask(fx.other);
+      assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
+    });
+
+    await run("the guest's Ctrl+Alt+U on an interface's declaration lists its implementations above the usages, another project's usages answer the plain 404", async () => {
+      await gp.waitForFunction(() => [...document.querySelectorAll(".cm-line")].some((l) => l.textContent.includes("type Prober interface")), null, { timeout: 8000 });
+      const pt = await L.wordPoint(gp, "type Prober interface", "Prober");
+      assert(pt, "Prober is not on the surface");
+      await gp.mouse.click(pt.x, pt.y);
+      await gp.keyboard.press("Control+Alt+u");
+      await gp.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
+        && document.querySelector("[data-editor-quickopen-input]").placeholder === '1 implementation and 2 usages of "Prober"', null, { timeout: 90000 });
+      const rows = await gp.$$eval("[data-editor-quickopen-list] [data-editor-usage-group], [data-editor-quickopen-list] .editor-quickopen-item",
+        (els) => els.map((el) => (el.matches("[data-editor-usage-group]") ? `# ${el.textContent}` : el.title)).join(","));
+      assert(rows === "# Implementations,main.go:9,# Usages,main.go:11,main.go:15", `ShareProbe implements it apart from the usages, got ${rows}`);
+      await gp.keyboard.press("Escape");
+      await gp.waitForFunction(() => document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 5000 });
+      const csrf = await gp.evaluate(() => document.querySelector('meta[name="csrf-token"]').content);
+      const nothing = await fetchRaw(`${BASE}/no/such/page`, { headers: { Accept: "application/json" } });
+      const body = JSON.stringify({ client: "guest", path: "main.go", content: "package main\n\nvar _ Prober\n", position: { line: 2, character: 7 } });
+      const other = await fetchRaw(at(`/projects/${fx.other}/editor/lsp/references`), {
+        method: "POST", body, headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, Accept: "application/json" },
+      });
       assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
     });
 

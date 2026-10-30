@@ -1,6 +1,7 @@
 package editorintelligence
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
@@ -119,6 +120,58 @@ func readImageSource(ctx context.Context, dockerPath string, env []string, image
 		return "", err
 	}
 	return string(data), nil
+}
+
+// imageArchiveBytes bounds what one read of several files out of an image
+// takes in, the archive as a whole.
+const imageArchiveBytes = 64 << 20
+
+// readImageSources reads several files out of the image at once, the way
+// readImageSource reads one, in a single throwaway container: one start for
+// all the files a type search needs, which archives them with tar, a
+// program every image of the cockpit carries. Each path was checked against
+// the allowlist before. A file the image does not hold, one past the size of
+// an editor buffer and one that is no text are left out; tar archives the
+// others and only then fails, so its exit status says nothing about them.
+func readImageSources(ctx context.Context, dockerPath string, env []string, image string, paths []string) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, imageReadTimeout)
+	defer cancel()
+	args := append([]string{"run", "--rm", "--pull=never", "--network", "none", "--entrypoint", "tar", image, "-cf", "-", "--"}, paths...)
+	cmd := dockerCmd(ctx, dockerPath, env, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	wanted := map[string]bool{}
+	for _, p := range paths {
+		wanted[p] = true
+	}
+	texts := map[string]string{}
+	archive := tar.NewReader(io.LimitReader(stdout, imageArchiveBytes))
+	for {
+		header, err := archive.Next()
+		if err != nil {
+			break
+		}
+		// tar names a member without the leading slash.
+		p := "/" + strings.TrimPrefix(header.Name, "/")
+		if header.Typeflag != tar.TypeReg || !wanted[p] || header.Size > filesystem.MaxEditableBytes {
+			continue
+		}
+		data, err := io.ReadAll(archive)
+		if err != nil {
+			break
+		}
+		if filesystem.CheckEditableText(data) == nil {
+			texts[p] = string(data)
+		}
+	}
+	_, _ = io.Copy(io.Discard, stdout)
+	_ = cmd.Wait()
+	return texts, ctx.Err()
 }
 
 // lastLine keeps an error message to the line that says what went wrong.

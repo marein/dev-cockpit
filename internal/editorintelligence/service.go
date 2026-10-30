@@ -40,18 +40,10 @@ const (
 	minJanitorInterval = 5 * time.Second
 	maxJanitorInterval = 30 * time.Second
 	lspErrorBackoff    = 30 * time.Second
-	// A connection counts as warming for warmupWindow after process start.
-	// Within it, empty answers retry a few times with a short delay per
-	// request (a newer request cancels the wait), and a connection that has
-	// not announced its indexing yet is still waited on, because on a loaded
-	// host the announcement itself arrives late.
-	warmupWindow     = 45 * time.Second
-	warmupRetryDelay = 700 * time.Millisecond
-	warmupRetries    = 5
-	// How long a request may wait for the server's announced indexing to
-	// end, measured from the connection's start. Under load an index run
-	// takes far longer than idle, and a partial answer after a short wait is
-	// exactly the missed-usages bug this bound exists for.
+	// How long a request may wait for the server to be indexed, measured
+	// from the connection's start. Under load an index run takes far longer
+	// than idle, and a partial answer after a short wait is exactly the
+	// missed-usages bug this bound exists for.
 	indexWaitBudget = 90 * time.Second
 	// callBudget bounds one lookup as a whole: the longest index wait plus
 	// time for the answer. A server that hangs on a call would otherwise
@@ -122,13 +114,25 @@ type Service struct {
 	// servers, read again on every admission and janitor round.
 	maxProjects atomic.Pointer[func() int]
 
-	// Seams for tests: process start, time, and the warming grace a silent
-	// connection is waited on, warmupWindow outside tests.
-	startConn   func(ctx context.Context, profile *Profile, argv, env []string, root string, initOptions any, notify func()) (*lspConn, error)
-	now         func() time.Time
-	warmupGrace time.Duration
+	// images keeps the files type searches and the types below a type read
+	// out of the servers' images, ownFiles what type searches read off the
+	// projects' own files.
+	images       imageSources
+	ownFiles     ownFiles
+	typeReuse    typeReuse
+	libraryFiles libraryFiles
+	// holds numbers the documents lookups open for a request at a position
+	// in them, see lookupHolder.
+	holds atomic.Int64
+
+	// Seams for tests: process start and time.
+	startConn func(ctx context.Context, profile *Profile, argv, env []string, root string, initOptions any, notify func()) (*lspConn, error)
+	now       func() time.Time
 	// callBudget is the deadline of one lookup, callBudget outside tests.
 	callBudget time.Duration
+	// walkBudget is how long a walk to the indirect types below a type may
+	// take, walkBudget outside tests.
+	walkBudget time.Duration
 	// kick runs one janitor round at once, so a test drives the real loop
 	// without waiting out its interval.
 	kick chan struct{}
@@ -247,8 +251,8 @@ func New(projectsRoot, cacheRoot string, dockerHost func() string) *Service {
 		sweepDone:    swept,
 		startConn:    startLSPConn,
 		now:          time.Now,
-		warmupGrace:  warmupWindow,
 		callBudget:   callBudget,
+		walkBudget:   walkBudget,
 		kick:         make(chan struct{}),
 	}
 	s.wg.Add(1)
@@ -447,19 +451,9 @@ type IndexState struct {
 }
 
 // IndexStatus answers which of the project's servers are indexing right
-// now: a starting connection counts as indexing (its announcement has not
-// arrived yet), a ready one by its announced work, and a ready one that has
-// announced nothing counts as indexing for the warming window, because the
-// announcement itself arrives seconds after the handshake and the indicator
-// must not flicker off in that gap.
-//
-// That last rule is about the gap between a handshake and the work it
-// started, so it holds only for the servers that work there. A
-// `SilentStart` server has no such gap: it is ready when it answers, so
-// counting its silence as indexing would put a bar on the screen for work
-// that is not happening, waiting for an end that is not coming. Its silence
-// is readiness and is reported as such; the work it does announce later,
-// fetching types for an untyped dependency, shows like anybody else's.
+// now, which is when a lookup waits: a starting connection counts as
+// indexing, a ready one while its announced work runs, and one that indexes
+// at the handshake until it announced that run (lspConn.starting).
 func (s *Service) IndexStatus(project string) []IndexState {
 	if s == nil {
 		return []IndexState{}
@@ -486,11 +480,8 @@ func (s *Service) IndexStatus(project string) []IndexState {
 			select {
 			case <-sn.mc.ready:
 				if sn.mc.conn != nil && sn.mc.conn.alive() {
-					var seen bool
-					state.Indexing, seen, state.Percentage = sn.mc.conn.progress()
-					if !state.Indexing && !seen && sn.mc.conn.warming(s.warmupGrace) {
-						state.Indexing = true
-					}
+					state.Indexing, _, state.Percentage = sn.mc.conn.progress()
+					state.Indexing = state.Indexing || sn.mc.conn.starting()
 					if !state.Indexing {
 						state.Percentage = -1
 					}

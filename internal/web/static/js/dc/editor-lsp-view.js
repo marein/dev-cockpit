@@ -74,7 +74,9 @@ export function lspView(state, view, hooks) {
   };
 
   // One lookup at a time and the newest position waiting behind it, so a
-  // pointer crossing the text never stacks up requests.
+  // pointer crossing the text never stacks up requests. A position waiting
+  // for a document the view no longer holds, after a tab switch or an edit,
+  // is dropped.
   let asking = false;
   let queued = null;
   function lookUp(v, pos) {
@@ -83,7 +85,7 @@ export function lspView(state, view, hooks) {
     const names = st.field(namesField, false);
     if (!word || !names || within(names.asked, pos) || !hooks.lspNamesUsable?.()) return;
     if (asking) {
-      queued = { v, pos };
+      queued = { v, pos, doc: st.doc };
       return;
     }
     asking = true;
@@ -103,7 +105,7 @@ export function lspView(state, view, hooks) {
       asking = false;
       const next = queued;
       queued = null;
-      if (next) lookUp(next.v, next.pos);
+      if (next && next.v.state.doc === next.doc) lookUp(next.v, next.pos);
     });
   }
 

@@ -335,7 +335,7 @@ L.runFeature("PROJECT-SHARE", async ({ browser, page, run, bag, mobilePage }) =>
         "ignored/secret.txt": "gitignored-secret-marker\n",
         ".env": "SHARE_ENV=env-marker\n",
         "go.mod": "module example.com/share\n\ngo 1.22\n",
-        "main.go": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\t_ = fmt.Errorf(\"share\")\n}\n",
+        "main.go": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\t_ = fmt.Errorf(\"share\")\n}\n\ntype ShareProbe struct{}\n\ntype Prober interface{ Probe() }\n\nfunc (ShareProbe) Probe() {}\n\nvar _ Prober = ShareProbe{}\n",
         "compose.yaml": `services:\n  ticker:\n    image: alpine:latest\n    command: ["sh", "-c", "echo share-log-start; while true; do echo tick-$$(date +%s); sleep 1; done"]\n    ports: ["127.0.0.1::8080"]\n`,
       };
       for (const dir of ["src", "ignored"]) {

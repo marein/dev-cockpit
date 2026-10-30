@@ -202,10 +202,6 @@ func (s *Service) launch(ctx context.Context, key connKey, mc *managedConn, prof
 	}
 	s.wg.Add(1)
 	go s.watchRestart(key, mc, profile)
-	if !profile.SilentStart {
-		s.wg.Add(1)
-		go s.endSilentWindow(project, mc)
-	}
 	// The handshake ended: preparing hands over to the announced indexing.
 	s.notifyChange(project)
 	return ""
@@ -216,30 +212,6 @@ func (s *Service) release(mc *managedConn) {
 	s.mu.Lock()
 	mc.holds--
 	s.mu.Unlock()
-}
-
-// endSilentWindow publishes the one moment a connection stops counting as
-// indexing merely because its announcement had not arrived yet. Nothing
-// else ever looks at that clock again: the indicator is event driven, so
-// without this the bar of a server that announces late, or never announces
-// at all, stands until some unrelated move of the picture happens to take
-// it down, which for an idle project is never. One timer per connection,
-// bounded by the warming window, and the death of the server is the other
-// way out, which reports itself.
-func (s *Service) endSilentWindow(project string, mc *managedConn) {
-	defer s.wg.Done()
-	left := s.warmupGrace - time.Since(mc.conn.startedAt)
-	if left <= 0 {
-		return
-	}
-	timer := time.NewTimer(left)
-	defer timer.Stop()
-	select {
-	case <-s.ctx.Done():
-	case <-mc.conn.exited:
-	case <-timer.C:
-		s.notifyChange(project)
-	}
 }
 
 // watchRestart waits a running server out. A death whose exit code the

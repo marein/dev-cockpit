@@ -36,7 +36,7 @@ async function treeMenu(page, rowSel, label) {
 }
 
 // openPalette drives the quick open palette from the editor menu. The keyboard
-// shortcuts (Ctrl+O, Ctrl+Shift+F) never reach the page in headless Chromium,
+// shortcuts (Ctrl+Shift+O, Ctrl+Shift+F) never reach the page in headless Chromium,
 // the browser keeps them for itself.
 async function openPalette(page, which) {
   const backdrop = page.locator("[data-editor-backdrop]");

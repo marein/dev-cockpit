@@ -33,6 +33,7 @@ func newTestServiceWithCache(t *testing.T) (*Service, string) {
 		t.Fatal(err)
 	}
 	installFakeDocker(t, filepath.Join(work, "docker-args"), marker, "", "")
+	installFakeImage(t, fakeImageFiles)
 	cacheRoot := t.TempDir()
 	s := New(t.TempDir(), cacheRoot, nil)
 	t.Cleanup(s.Close)
@@ -310,15 +311,12 @@ func TestServiceChangeEvents(t *testing.T) {
 	}
 }
 
-// A server that announces no startup work has no warming stretch to sit
-// out: its silence is readiness, not a late announcement. Waiting it out
-// cost 45 seconds of spinner for an answer that stood at once. The servers
-// that index at the handshake keep that wait, their complete answers hang
-// on it, which is TestServiceWarmingGraceForSilentServer further down.
+// A server that announces no startup work is indexed when it answers:
+// waiting for an announcement it never makes would hold every lookup until
+// the budget ran out.
 func TestSilentStartServerIsNotWaitedOut(t *testing.T) {
 	installFakeLSP(t, "mute", "tsgo")
 	s := newTestService(t)
-	s.warmupGrace = 3 * time.Second
 
 	req := goRequest(t)
 	req.Path = "src/index.ts"
@@ -335,58 +333,84 @@ func TestSilentStartServerIsNotWaitedOut(t *testing.T) {
 	}
 }
 
-// And an empty answer from such a server is the truth rather than a warming
-// artifact, so it comes back instead of being retried into a longer
-// spinner. The handshake servers keep their retries, see
-// TestServiceEmptyAnswerRetriesThenReturns.
-func TestEmptyAnswerFromSilentStartServerIsNotRetried(t *testing.T) {
-	installFakeLSP(t, "empty", "tsgo")
-	s := newTestService(t)
+// The answer of an indexed server is final, an empty one too: it comes
+// back at once and is asked once, a definition and a type search alike,
+// whether the server announced its indexing or never has any.
+func TestEmptyAnswerOfAnIndexedServerIsFinal(t *testing.T) {
+	for _, server := range []string{"gopls", "tsgo"} {
+		t.Run(server, func(t *testing.T) {
+			installFakeLSP(t, "empty", server)
+			requests := filepath.Join(t.TempDir(), "requests")
+			t.Setenv("FAKE_LSP_LOG", requests)
+			s := newTestService(t)
 
-	req := goRequest(t)
-	req.Path = "src/index.ts"
+			req := goRequest(t)
+			if server == "tsgo" {
+				req.Path = "src/index.ts"
+			}
+			start := time.Now()
+			res, err := s.Definition(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.Available || len(res.Locations) != 0 {
+				t.Fatalf("an empty answer is still an answer: %+v", res)
+			}
+			if took := time.Since(start); took > time.Second {
+				t.Fatalf("an empty answer must not be retried, took %v", took)
+			}
+		})
+	}
+
+	installFakeLSP(t, "normal", "gopls")
+	requests := filepath.Join(t.TempDir(), "requests")
+	t.Setenv("FAKE_LSP_LOG", requests)
+	s := newTestService(t)
 	start := time.Now()
-	res, err := s.Definition(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
+	res := s.Types(context.Background(), typesRequest(writeTypesProject(t), "none"))
+	if len(res.Types) != 0 || len(res.Statuses) != 0 {
+		t.Fatalf("nothing matches: %+v", res)
 	}
-	if !res.Available || len(res.Locations) != 0 {
-		t.Fatalf("an empty answer is still an answer: %+v", res)
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("an empty type search must not be retried, took %v", took)
 	}
-	if took := time.Since(start); took > 2*time.Second {
-		t.Fatalf("an empty answer must not be retried into a long wait, took %v", took)
+	if asked := fakeRequests(t, requests, "gopls"); strings.Count(asked, "workspace/symbol ") != len(goTypeAsks("", "none")) {
+		t.Fatalf("each ask goes out once: %q", asked)
 	}
 }
 
-// The warming window is a clock nobody looks at twice, so its end has to
-// travel as an event: without it the indicator of a server that announces
-// nothing keeps a bar up that only an unrelated move would ever take down.
-func TestSilentWarmingWindowPublishesItsEnd(t *testing.T) {
-	installFakeLSP(t, "mute", "gopls")
+// A server that indexes at the handshake but announces it late, the way
+// intelephense does on a loaded host, is not indexed until that run ended:
+// the indicator shows it indexing and a lookup waits for the run however
+// late it is announced, never answering out of the index not built yet.
+func TestLateAnnouncementIsWaitedFor(t *testing.T) {
+	installFakeLSP(t, "late", "gopls")
 	s := newTestService(t)
-	s.warmupGrace = 700 * time.Millisecond
-	moves := make(chan struct{}, 32)
-	s.OnChange(func(string) {
-		select {
-		case moves <- struct{}{}:
-		default:
-		}
-	})
 
 	req := goRequest(t)
+	req.Path = "use.go"
 	s.Warm(req.ProjectName, req.ProjectRoot, []WarmMode{{ProfileID: "go"}})
-	// Wait the window out through the events alone, the way the browser
-	// does: no status is pulled until one arrives.
-	deadline := time.After(6 * time.Second)
-	for {
-		select {
-		case <-moves:
-			if states := s.IndexStatus(req.ProjectName); len(states) == 1 && !states[0].Indexing {
-				return
-			}
-		case <-deadline:
-			t.Fatal("the end of the warming window was never published")
-		}
+	if states := s.IndexStatus(req.ProjectName); len(states) != 1 || !states[0].Indexing {
+		t.Fatalf("a server that has not announced its run yet is indexing: %+v", states)
+	}
+	start := time.Now()
+	res, err := s.References(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Available || len(res.Locations) != 2 || res.Outside != 1 {
+		t.Fatalf("must wait for the announced indexing: %+v", res)
+	}
+	if took := time.Since(start); took < time.Second {
+		t.Fatalf("answered before the late announcement, took %v", took)
+	}
+	if states := s.IndexStatus(req.ProjectName); len(states) != 1 || states[0].Indexing {
+		t.Fatalf("the run ended: %+v", states)
+	}
+
+	s = newTestService(t)
+	if res := s.Types(context.Background(), typesRequest(writeTypesProject(t), "a")); len(res.Types) != 10 {
+		t.Fatalf("a type search waits for the late run as well: %s", typeRows(res))
 	}
 }
 
@@ -442,19 +466,6 @@ func TestServiceReferences(t *testing.T) {
 	}
 	if len(res.Locations) != len(want) || res.Locations[0] != want[0] || res.Locations[1] != want[1] {
 		t.Fatalf("locations %+v", res.Locations)
-	}
-}
-
-func TestServiceEmptyAnswerRetriesThenReturns(t *testing.T) {
-	installFakeLSP(t, "empty", "gopls")
-	s := newTestService(t)
-
-	res, err := s.Definition(context.Background(), goRequest(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Available || len(res.Locations) != 0 {
-		t.Fatalf("empty: %+v", res)
 	}
 }
 
@@ -795,28 +806,6 @@ func TestServiceWaitsOutAnnouncedIndexing(t *testing.T) {
 	}
 	if time.Since(start) < 500*time.Millisecond {
 		t.Fatal("answered before the indexing ended")
-	}
-}
-
-func TestServiceWarmingGraceForSilentServer(t *testing.T) {
-	installFakeLSP(t, "mute", "gopls")
-	s := newTestService(t)
-	s.warmupGrace = 400 * time.Millisecond
-
-	req := goRequest(t)
-	req.Path = "use.go"
-	start := time.Now()
-	res, err := s.References(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A server that never announces is held for the warming grace, then
-	// asked anyway.
-	if !res.Available || len(res.Locations) == 0 {
-		t.Fatalf("silent server must still answer after the grace: %+v", res)
-	}
-	if time.Since(start) < 350*time.Millisecond {
-		t.Fatal("answered before the warming grace passed")
 	}
 }
 

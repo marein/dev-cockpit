@@ -19,9 +19,10 @@ import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
 import { lspView as editorLSPView } from "@dc/editor-lsp-view";
+import { typeRow, typesStatusNote, typesWaitText } from "@dc/editor-types";
 import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeaves, readGroups, removeAt, screenOrder, splitAt } from "@dc/editor-groups";
 import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPreview, isArchive, isAudio, isImage, isMarkdown, isSvg, isVideo, langUrl, modeUrl } from "@dc/editor-filetypes";
-import { baseName, byteLength, commitDate, countLines, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
+import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
 import { showPreview, wirePreviewLinks } from "@dc/editor-preview";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
 import { authorHead, commentRow, findUniqueQuoteLine, placeNodes, sortComments, visibleLine } from "@dc/editor-comments";
@@ -133,6 +134,8 @@ async function init(root) {
   const quickOpenList = root.querySelector("[data-editor-quickopen-list]");
   const quickOpenRegexBtn = root.querySelector("[data-editor-quickopen-regex]");
   const quickOpenCaseBtn = root.querySelector("[data-editor-quickopen-case]");
+  const quickOpenKindsEl = root.querySelector("[data-editor-quickopen-kinds]");
+  const quickOpenKindBtns = [...root.querySelectorAll("[data-editor-quickopen-kind]")];
   const quickOpenActionsEl = root.querySelector("[data-editor-quickopen-actions]");
   const replaceProjectItem = root.querySelector("[data-editor-replace-project-item]");
   const quickOpenReplaceInput = root.querySelector("[data-editor-quickopen-replace]");
@@ -148,6 +151,7 @@ async function init(root) {
   const settingsItem = root.querySelector("[data-editor-settings-item]");
   const reindexItem = root.querySelector("[data-editor-reindex-item]");
   const quickOpenItem = root.querySelector("[data-editor-quick-open-item]");
+  const typeOpenItem = root.querySelector("[data-editor-type-open-item]");
   const sheetEl = root.querySelector("[data-editor-sheet]");
   const sheetPanelEl = root.querySelector("[data-editor-sheet-panel]");
   const sheetTitleEl = root.querySelector("[data-editor-sheet-title]");
@@ -409,8 +413,10 @@ async function init(root) {
   };
 
   // The indicator follows the lsp event, no poll stands behind it; the seq
-  // guard keeps a slow older answer from painting over a newer one.
+  // guard keeps a slow older answer from painting over a newer one. The
+  // state it last showed is what the type search says while it waits.
   let lspIndexSeq = 0;
+  let lspIndexState = null;
   async function pullLSPIndex() {
     if (!lsp) return;
     const seq = ++lspIndexSeq;
@@ -423,6 +429,8 @@ async function init(root) {
   }
 
   function renderLSPIndex(state) {
+    lspIndexState = state;
+    repaintTypesWait();
     if (!state) {
       lspIndexEl.hidden = true;
       return;
@@ -566,7 +574,7 @@ async function init(root) {
     const res = await lspCall("references", pos, `Finding usages of "${pos.word}"…`);
     if (!res) return;
     const locs = res.locations || [];
-    if (locs.length === 0) {
+    if (locs.length === 0 && !belowGroup(res)) {
       lspNote(res.outside ? "Every usage is outside the project." : "No usages found.");
       return;
     }
@@ -1941,16 +1949,6 @@ async function init(root) {
     const tab = tabByPath(path);
     if (!tab) return;
     openMenu({ x, y, items: tabMenuItems(tab), signal });
-  }
-
-  // externalHint cuts an absolute path from the front, never from the end:
-  // what says which file this is, the module and its version, stands at
-  // the end of it, and that is exactly what an ellipsis on the right would
-  // eat. The whole path stays on the tab as its tooltip.
-  function externalHint(path) {
-    const parts = parentDir(path).split("/").filter(Boolean);
-    const tail = parts.slice(-2).join("/");
-    return parts.length > 2 ? `…/${tail}` : `/${tail}`;
   }
 
   function readOnlyHint(tab) {
@@ -7399,7 +7397,9 @@ async function init(root) {
 
   // The palette has two modes: "files" ranks paths, "search" greps file contents
   // and jumps to the matched line. Both ask the server, which answers from an
-  // index of the whole project.
+  // index of the whole project. "types" stands beside "files" and asks the
+  // project's language servers for the types a name matches, ranked by the
+  // rule the files are.
   let quickOpenMode = "files";
   // Which list stands under the search field: the hits, or one of the two
   // choosers the context line opens. There is only ever one list, in one place,
@@ -7588,6 +7588,7 @@ async function init(root) {
 
   const resultsPlaceholder = () => {
     if (quickOpenMode === "replace") return "Replace in files…";
+    if (quickOpenMode === "types") return "Go to type…";
     return quickOpenMode === "search" ? "Find in files…" : "Go to file…";
   };
 
@@ -7645,6 +7646,10 @@ async function init(root) {
       scheduleSearch(0);
       return;
     }
+    if (quickOpenMode === "types") {
+      void runTypeQuery(quickOpenInput.value);
+      return;
+    }
     showQuickOpenNote("Loading…");
     runFileQuery(quickOpenInput.value);
   }
@@ -7678,7 +7683,7 @@ async function init(root) {
   }
 
   function renderQuickOpenContext() {
-    const showFolder = quickOpenMode !== "usages";
+    const showFolder = quickOpenMode !== "usages" && quickOpenMode !== "types";
     const showMask = findsInFiles();
     quickOpenContextEl.hidden = !showFolder && !showMask;
     quickOpenFolderSlot.hidden = !showFolder;
@@ -7759,6 +7764,7 @@ async function init(root) {
   function runQuickOpenQuery() {
     if (quickOpenMode === "usages") return;
     if (findsInFiles()) scheduleSearch(0);
+    else if (quickOpenMode === "types") scheduleTypeQuery(0);
     else scheduleFileQuery(0);
   }
 
@@ -7856,11 +7862,158 @@ async function init(root) {
     return `${n} ${n === 1 ? one : many}`;
   }
 
+  // ---- types -----------------------------------------------------------------
+
+  // A type search asks the language servers, which may be starting or
+  // indexing and then hold the answer back until their index stands: the
+  // list says what they are doing meanwhile, from the indicator's picture,
+  // and never stands empty as if that were the answer. Every query cancels
+  // the one before it, here and on the server.
+  let typesSeq = 0;
+  let typesTimer = 0;
+  let typesAbort = null;
+  let lastTypes = null;
+
+  function scheduleTypeQuery(delay = 120) {
+    clearTimeout(typesTimer);
+    typesSeq++;
+    typesAbort?.abort();
+    typesAbort = null;
+    lastTypes = null;
+    if (quickOpenView === "results") showTypesPending();
+    typesTimer = setTimeout(() => void runTypeQuery(currentQuery()), delay);
+  }
+
+  async function runTypeQuery(raw) {
+    const query = raw.trim();
+    const seq = ++typesSeq;
+    typesAbort?.abort();
+    typesAbort = null;
+    if (!lsp) {
+      lastTypes = { covered: false, types: [] };
+      renderTypes();
+      return;
+    }
+    // An empty query asks no language server, the answer only says whether
+    // one covers the project.
+    const abort = new AbortController();
+    typesAbort = abort;
+    void pullLSPIndex();
+    if (quickOpenView === "results") showTypesPending();
+    try {
+      const data = await lsp.types(query, abort.signal);
+      if (seq !== typesSeq || quickOpenEl.hidden || quickOpenMode !== "types") return;
+      lastTypes = { ...data, query, idle: !query };
+      renderTypes();
+    } catch (err) {
+      if (abort.signal.aborted || seq !== typesSeq || quickOpenMode !== "types") return;
+      lastTypes = null;
+      if (quickOpenView === "results") {
+        showQuickOpenNote(err.message, true);
+        setQuickOpenFoot("", "");
+      }
+    } finally {
+      if (typesAbort === abort) typesAbort = null;
+    }
+  }
+
+  function showTypesPending() {
+    if (currentQuery().trim()) {
+      showTypesWait();
+      return;
+    }
+    showQuickOpenNote("Loading…");
+    setQuickOpenFoot("", "");
+  }
+
+  function showTypesWait() {
+    const wait = typesWaitText(lspIndexState);
+    showQuickOpenNote(wait || "Searching…");
+    setQuickOpenFoot("", "");
+  }
+
+  // The answer in the palette, or what a server said instead of one.
+  function renderTypes() {
+    if (quickOpenEl.hidden || quickOpenMode !== "types" || quickOpenView !== "results") return;
+    const res = lastTypes;
+    if (!res) {
+      showTypesWait();
+      return;
+    }
+    if (!res.covered) {
+      showQuickOpenNote("No language server covers this project.");
+      setQuickOpenFoot("", "");
+      return;
+    }
+    if (res.idle) {
+      showQuickOpenNote("Type the name of a type.");
+      setQuickOpenFoot(typesWaitText(lspIndexState), "");
+      return;
+    }
+    const types = res.types || [];
+    const note = typesStatusNote(res.statuses, LSP_STATUS_TEXT);
+    if (types.length === 0) {
+      showQuickOpenNote(note || "No matching types.", !!note);
+      setQuickOpenFoot("0 types", "");
+      return;
+    }
+    quickOpenMatches = types;
+    quickOpenActive = 0;
+    quickOpenList.replaceChildren(...types.map((entry, i) => {
+      const item = typeRow(entry, res.query);
+      item.classList.toggle("active", i === 0);
+      item.addEventListener("click", (event) => {
+        if (event.ctrlKey || event.metaKey) {
+          event.preventDefault();
+          void openRowBehind([...quickOpenList.children].indexOf(item));
+          return;
+        }
+        chooseQuickOpen(entry);
+      });
+      return item;
+    }));
+    setQuickOpenFoot(countLabel(types.length, "type", "types"), note || (res.truncated ? "truncated, narrow the search" : ""));
+  }
+
+  // The indicator moved: a list still waiting says the new state, an idle
+  // one the state beside its hint.
+  function repaintTypesWait() {
+    if (quickOpenEl.hidden || quickOpenMode !== "types" || quickOpenView !== "results") return;
+    if (typesAbort) showTypesPending();
+    else if (lastTypes?.idle) renderTypes();
+  }
+
+  // Files and types are one palette on two lists, so a switch keeps what is
+  // typed and asks the other list.
+  function switchQuickOpenKind(kind) {
+    if (quickOpenMode === kind) return;
+    if (quickOpenView !== "results") closeQuickOpenPicker();
+    quickOpenMode = kind;
+    quickOpenInput.placeholder = resultsPlaceholder();
+    syncQuickOpenSwitches();
+    renderQuickOpenContext();
+    quickOpenInput.focus();
+    if (kind === "types") scheduleTypeQuery(0);
+    else scheduleFileQuery(0);
+  }
+
+  // The keys that open a list switch to it while the palette shows the other.
+  function openQuickOpenKind(kind) {
+    if (!quickOpenEl.hidden && (quickOpenMode === "files" || quickOpenMode === "types")) switchQuickOpenKind(kind);
+    else openQuickOpen(kind);
+  }
+
   // Both switches are about the query, so they step aside while the field
   // filters a chooser instead, and the field's padding follows how many of them
   // stand there.
   function syncQuickOpenSwitches() {
     const show = findsInFiles() && quickOpenView === "results";
+    quickOpenKindsEl.hidden = (quickOpenMode !== "files" && quickOpenMode !== "types") || quickOpenView !== "results";
+    for (const button of quickOpenKindBtns) {
+      const on = button.dataset.editorQuickopenKind === quickOpenMode;
+      button.classList.toggle("active", on);
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+    }
     for (const [button, on] of [[quickOpenCaseBtn, !!editorSettings.search_case],
       [quickOpenRegexBtn, !!editorSettings.search_regex]]) {
       button.hidden = !show;
@@ -8188,6 +8341,10 @@ async function init(root) {
       renderSearchResults(lastSearch.matches, lastSearch.truncated);
       return;
     }
+    if (quickOpenMode === "types") {
+      renderTypes();
+      return;
+    }
     renderQuickOpen();
   }
 
@@ -8455,9 +8612,71 @@ async function init(root) {
   }
 
   function usagesNote(locations, res) {
-    if (res.truncated) return `Only the first ${locations.length} usages are shown.`;
+    const cut = [];
+    const below = belowGroup(res);
+    if (below && res[`${below}Truncated`]) cut.push(`Only the first ${res[below].length} ${USAGE_GROUPS[below].many} are shown.`);
+    if (below && res.indirectTruncated) cut.push(`The search for ${USAGE_GROUPS[INDIRECT[below]].many} stopped at its limit.`);
+    if (res.truncated) cut.push(`Only the first ${locations.length} usages are shown.`);
+    if (cut.length > 0) return cut.join(" ");
     if (res.outside) return `${res.outside} more outside the project.`;
     return "";
+  }
+
+  const USAGE_GROUPS = {
+    implementations: { title: "Implementations", one: "implementation", many: "implementations" },
+    indirectImplementations: { title: "Indirect implementations", one: "indirect implementation", many: "indirect implementations" },
+    subclasses: { title: "Subclasses", one: "subclass", many: "subclasses" },
+    indirectSubclasses: { title: "Indirect subclasses", one: "indirect subclass", many: "indirect subclasses" },
+    usages: { title: "Usages", one: "usage", many: "usages" },
+  };
+
+  // The group the types below the asked one through another one stand in,
+  // beneath the group of the direct ones.
+  const INDIRECT = { implementations: "indirectImplementations", subclasses: "indirectSubclasses" };
+
+  // The group of the types below the asked one, which a usages answer
+  // holds beside the usages when it holds one, direct or indirect.
+  function belowGroup(res) {
+    return ["implementations", "subclasses"].find((group) => res[group]?.length > 0 || (res.below === group && res.indirect?.length > 0)) || "";
+  }
+
+  function groupCount(group, n) {
+    return countLabel(n, USAGE_GROUPS[group].one, USAGE_GROUPS[group].many);
+  }
+
+  function usageRows(locations, res) {
+    const below = belowGroup(res);
+    if (!below) return locations;
+    return [
+      ...(res[below] || []).map((l) => ({ ...l, group: below })),
+      ...(res.indirect || []).map((l) => ({ ...l, group: INDIRECT[below] })),
+      ...locations.map((l) => ({ ...l, group: "usages" })),
+    ];
+  }
+
+  // The counts of the groups an answer or a filter leaves rows in, in their
+  // order, the usages' also when asked for or when no row stands at all.
+  function groupCounts(rows, withUsages) {
+    const counts = new Map();
+    for (const row of rows) counts.set(row.group || "usages", (counts.get(row.group || "usages") || 0) + 1);
+    if (withUsages || counts.size === 0) counts.set("usages", counts.get("usages") || 0);
+    return [...counts].map(([group, n]) => groupCount(group, n));
+  }
+
+  function withUsageGroups(rows, node) {
+    return rows.flatMap((row, i) => (row.group && row.group !== rows[i - 1]?.group
+      ? [usageGroupHead(row.group), node(row, i)]
+      : [node(row, i)]));
+  }
+
+  function usageGroupHead(group) {
+    const head = sheetHead(USAGE_GROUPS[group].title);
+    head.dataset.editorUsageGroup = group;
+    return head;
+  }
+
+  function usagesCount(rows) {
+    return groupCounts(rows, false).join(", ");
   }
 
   let usagesAll = [];
@@ -8465,9 +8684,10 @@ async function init(root) {
 
   // Bottom sheet on a small screen, else the search panel in usages mode.
   function openUsages(word, locations, res) {
-    const title = `${locations.length} ${locations.length === 1 ? "usage" : "usages"} of "${word}"`;
+    const parts = groupCounts(usageRows(locations, res), true);
+    const title = `${parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0]} of "${word}"`;
     if (mobileMedia.matches) {
-      openUsagesSheet(word, locations, res, title);
+      openUsagesSheet(word, usageRows(locations, res), usagesNote(locations, res), title);
       return;
     }
     closeDrawer();
@@ -8482,7 +8702,7 @@ async function init(root) {
     searchQuery = word;
     // external travels along: it is what the row's jump reads to know
     // which of the two ways of opening a file it takes.
-    usagesAll = locations.map((l) => ({ path: l.path, line: l.line, character: l.character, external: l.external, text: l.preview || "" }));
+    usagesAll = usageRows(locations, res).map((l) => ({ path: l.path, line: l.line, character: l.character, external: l.external, text: l.preview || "", group: l.group }));
     usagesNoteText = usagesNote(locations, res);
     paintUsages(usagesAll, true);
     quickOpenInput.focus();
@@ -8491,7 +8711,11 @@ async function init(root) {
   // The note describes the whole answer, so it only stands unfiltered.
   function paintUsages(rows, withNote) {
     renderSearchResults(rows, false);
-    setQuickOpenFoot(countLabel(rows.length, "usage", "usages"), withNote ? usagesNoteText : "");
+    if (rows.some((row) => row.group)) {
+      const items = quickOpenList.querySelectorAll(".editor-quickopen-item");
+      quickOpenList.replaceChildren(...withUsageGroups(rows, (_, i) => items[i]));
+    }
+    setQuickOpenFoot(usagesCount(rows), withNote ? usagesNoteText : "");
   }
 
   function usageHaystack(m) {
@@ -8507,7 +8731,7 @@ async function init(root) {
     paintUsages(usagesAll.filter((m) => matchesTokens(usageHaystack(m), q)), false);
   }
 
-  function openUsagesSheet(word, locations, res, title) {
+  function openUsagesSheet(word, locations, note, title) {
     closeDrawer();
     openSheet("usages", title);
     const wrap = document.createElement("div");
@@ -8521,11 +8745,10 @@ async function init(root) {
     input.setAttribute("aria-label", "Filter usages");
     wrap.appendChild(input);
     const listEl = document.createElement("div");
-    const note = usagesNote(locations, res);
     const paint = () => {
       const q = input.value.trim();
       const rows = q ? locations.filter((loc) => matchesTokens(usageHaystack(loc), q)) : locations;
-      listEl.replaceChildren(...rows.map((loc) => usagesSheetRow(word, loc)));
+      listEl.replaceChildren(...withUsageGroups(rows, (loc) => usagesSheetRow(word, loc)));
       if (!q && note) {
         const el = document.createElement("div");
         el.className = "text-secondary small px-3 py-2";
@@ -8597,7 +8820,7 @@ async function init(root) {
     const fromSearch = typeof entry !== "string";
     const path = fromSearch ? entry.path : entry;
     const line = fromSearch ? entry.line : splitLineSuffix(quickOpenInput.value).line;
-    const isUsage = quickOpenMode === "usages";
+    const isUsage = quickOpenMode === "usages" || quickOpenMode === "types";
     closeQuickOpen();
     if (isUsage) {
       await goToLocation(entry);
@@ -8690,6 +8913,10 @@ async function init(root) {
 
   function wireQuickOpen() {
     quickOpenItem.addEventListener("click", () => openQuickOpen("files"), { signal });
+    typeOpenItem.addEventListener("click", () => openQuickOpen("types"), { signal });
+    for (const button of quickOpenKindBtns) {
+      button.addEventListener("click", () => switchQuickOpenKind(button.dataset.editorQuickopenKind), { signal });
+    }
     searchProjectItem.addEventListener("click", () => openQuickOpen("search"), { signal });
     replaceProjectItem?.addEventListener("click", () => openQuickOpen("replace"), { signal });
     quickOpenReplaceInput.addEventListener("input", () => {
@@ -8726,6 +8953,7 @@ async function init(root) {
       }
       scheduleSearchDraftSave();
       if (findsInFiles()) scheduleSearch();
+      else if (quickOpenMode === "types") scheduleTypeQuery();
       else scheduleFileQuery();
     }, { signal });
     quickOpenInput.addEventListener("keydown", quickOpenKeydown, { signal });
@@ -10279,11 +10507,11 @@ async function init(root) {
     void openTermPanel({ focus: false });
   }
 
-  // A double tap on bare Shift opens the quick open palette like Ctrl+O. Same
-  // state machine as the terminal switcher's double Ctrl/Meta (@dc/doubletap):
-  // two quick clean taps, keydown then keyup with no chord, holding a press is
-  // not a tap, the gesture fires on the second tap's keyup, any other key
-  // resets.
+  // A double tap on bare Shift opens the quick open palette on files like
+  // Ctrl+Shift+O. Same state machine as the terminal switcher's double
+  // Ctrl/Meta (@dc/doubletap): two quick clean taps, keydown then keyup with
+  // no chord, holding a press is not a tap, the gesture fires on the second
+  // tap's keyup, any other key resets.
   const shiftTap = new DoubleTap();
   // A Shift+click is not a bare Shift tap.
   document.addEventListener("pointerdown", () => shiftTap.reset(), { capture: true, signal });
@@ -10300,9 +10528,9 @@ async function init(root) {
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
       save();
-    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "o") {
+    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "o") {
       e.preventDefault();
-      openQuickOpen("files");
+      openQuickOpenKind(e.shiftKey ? "files" : "types");
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       openQuickOpen("search");
@@ -10407,9 +10635,14 @@ async function init(root) {
   }, { capture: true, signal });
   document.addEventListener("keyup", (e) => {
     if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
-    if (shiftTap.keyup(e.key) && quickOpenEl.hidden && !paletteOpen()) {
+    if (!shiftTap.keyup(e.key) || paletteOpen()) return;
+    if (quickOpenEl.hidden) {
       e.preventDefault();
       openQuickOpen("files");
+    } else if (quickOpenMode === "files" || quickOpenMode === "types") {
+      // In the palette the same gesture flips between its two lists.
+      e.preventDefault();
+      switchQuickOpenKind(quickOpenMode === "files" ? "types" : "files");
     }
   }, { signal });
   window.addEventListener("beforeunload", (e) => {
@@ -10975,16 +11208,20 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     return true;
   };
 
+  const findUsagesKey = () => {
+    if (!hooks.lspUsable?.()) return false;
+    void hooks.onFindUsages?.();
+    return true;
+  };
+
   const editableExtensions = (langExt, blame = []) => [
     keymap.of([
       { key: "Ctrl-f", run: search.openSearchPanel },
       {
-        key: "Shift-F12",
-        run: () => {
-          if (!hooks.lspUsable?.()) return false;
-          void hooks.onFindUsages?.();
-          return true;
-        },
+        // By the physical key like the page's other Ctrl+Alt keys, since
+        // Option makes U a dead key on a mac. A character AltGr types comes
+        // without Ctrl and Alt, so it stays typed.
+        any: (_view, e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat && e.code === "KeyU" && findUsagesKey(),
       },
       {
         // Always claimed, or the surface takes it as a formatting command;

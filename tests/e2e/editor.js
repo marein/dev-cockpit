@@ -248,7 +248,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
   // file is already the active one the tab wait passes at once, and a palette
   // still open then covers the whole editor, the menu button included.
   const openViaPalette = async (target, name) => {
-    await target.keyboard.press("Control+o");
+    await target.keyboard.press("Control+Shift+O");
     await target.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 4000 });
     await target.fill("[data-editor-quickopen-input]", name);
     await sleep(300);
@@ -505,13 +505,13 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.evaluate((s) => document.querySelector(`${s} .editor-tab-state`).click(), tabSel(qoFile));
       await page.waitForFunction((s) => !document.querySelector(s), tabSel(qoFile), { timeout: 6000 });
       await page.click(".cm-content");
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.fill("[data-editor-quickopen-input]", qoFile.slice(0, 8));
       await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
       await page.keyboard.press("Enter");
       await page.waitForSelector(`${tabSel(qoFile)}.active`, { timeout: 8000 });
-      // Double Shift opens the palette like Ctrl+O; a Shift chord must not,
+      // Double Shift opens the palette like Ctrl+Shift+O; a Shift chord must not,
       // and a held Shift is not a tap.
       await page.click(".cm-content");
       await page.keyboard.press("Shift+A");
@@ -718,7 +718,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       // first so the editor has to open it from nothing again.
       await closeTab(longFile);
       const askLine = 120;
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.fill("[data-editor-quickopen-input]", `${longFile}:${askLine}`);
       await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
@@ -732,7 +732,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
 
       // Without a suffix the file opens at the top, the jump is opt-in.
       await closeTab(longFile);
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.fill("[data-editor-quickopen-input]", longFile);
       await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });
@@ -941,7 +941,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       // folder alone, never the mask.
       await page.keyboard.press("Escape");
       await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.waitForSelector(maskSlot, { state: "hidden", timeout: 4000 });
       await page.waitForSelector(folderSlot, { state: "visible", timeout: 4000 });
@@ -1098,7 +1098,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
         "Escape from a filter did not leave the chooser");
       await page.keyboard.press("Escape");
       await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       at = await step("Tab");
       assert(at.name === "data-editor-quickopen-folder-slot", `Tab went to ${at.name}`);
@@ -1390,7 +1390,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       // and quick open keeps the folder without the content query.
       await page.keyboard.press("Escape");
       await page.waitForSelector("[data-editor-quickopen][hidden]", { state: "attached", timeout: 4000 });
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.waitForSelector("[data-editor-quickopen-replace]", { state: "hidden", timeout: 4000 });
       assert((await page.inputValue("[data-editor-quickopen-input]")) === "", "quick open opened on the content query");
@@ -2427,7 +2427,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert((await outOfBand(fresh, "deep")) === 200, "the deep file was not created");
       await page.waitForSelector(`.editor-dir[data-path="fresh_${tag}"]`, { timeout: 15000 });
       await page.click(".cm-content");
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
       await page.fill("[data-editor-quickopen-input]", `deep_${tag}`);
       // The index is a cache with a staleness bound of its own; the point here
@@ -3342,7 +3342,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
         await write(other, "one line\n");
       }, [project, longFile, shortFile]);
       const openViaPalette = async (name) => {
-        await page.keyboard.press("Control+O");
+        await page.keyboard.press("Control+Shift+O");
         await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 6000 });
         await page.fill("[data-editor-quickopen-input]", name);
         await page.waitForSelector(".editor-quickopen-item", { timeout: 6000 });

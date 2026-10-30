@@ -52,6 +52,10 @@ type Launcher interface {
 	// The caller has checked that the root holds the path; whether the
 	// file can be read at all, and how, is this way's business.
 	ReadSource(ctx context.Context, root SourceRoot, path string) (string, error)
+	// ReadSources answers the texts of several files under one of its own
+	// roots at once, by path, the way ReadSource answers one; a file that
+	// cannot be read is left out.
+	ReadSources(ctx context.Context, root SourceRoot, paths []string) (map[string]string, error)
 	// WantsRestart reads a dead server's exit code: true means the way
 	// asks for an immediate fresh start (the container's workspace watcher
 	// ends the container with an agreed code on a relevant change), every
@@ -141,6 +145,23 @@ func (l dockerLauncher) ReadSource(ctx context.Context, root SourceRoot, path st
 		return "", err
 	}
 	return readImageSource(ctx, dockerPath, l.ProcEnv(), root.Image, path)
+}
+
+func (l dockerLauncher) ReadSources(ctx context.Context, root SourceRoot, paths []string) (map[string]string, error) {
+	if root.Image == "" {
+		texts := map[string]string{}
+		for _, p := range paths {
+			if text, err := readHostSource(root, p); err == nil {
+				texts[p] = text
+			}
+		}
+		return texts, nil
+	}
+	dockerPath, err := lookDocker()
+	if err != nil {
+		return nil, err
+	}
+	return readImageSources(ctx, dockerPath, l.ProcEnv(), root.Image, paths)
 }
 
 func (l dockerLauncher) cacheDir(project string, p *Profile) string {

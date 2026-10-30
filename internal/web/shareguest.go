@@ -348,6 +348,7 @@ func (s *Server) registerShareRoutes(r *gin.Engine) {
 	g.read(http.MethodPost, lsp+"/class-name", s.handleEditorLSPClassName)
 	g.read(http.MethodPost, lsp+"/close", s.handleEditorLSPClose)
 	g.read(http.MethodGet, lsp+"/status", s.handleEditorLSPStatus)
+	g.read(http.MethodGet, lsp+"/types", s.handleEditorLSPTypes)
 	g.read(http.MethodGet, lsp+"/source", s.handleEditorLSPSource)
 
 	const editorPath = "/projects/:name/editor"

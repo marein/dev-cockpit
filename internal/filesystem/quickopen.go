@@ -252,6 +252,28 @@ func scoreQuickOpen(path, lower string, tokens []string) (tier, pos int, ok bool
 	return tier, pos, true
 }
 
+// RankQuickOpen grades a name by the rule scoreQuickOpen grades a path by,
+// for a search whose rows are names and not files: every query token has to
+// appear in the name or in the context beside it, and the first token alone
+// decides the rank by where it hits the name, a hit only in the context
+// coming last. Lower tiers and positions rank first; ok is false for a miss,
+// and an empty query matches everything alike.
+func RankQuickOpen(name, context, query string) (tier, pos int, ok bool) {
+	tokens := strings.Fields(strings.ToLower(query))
+	if len(tokens) == 0 {
+		return 0, 0, true
+	}
+	lowerName := string(appendLowerASCII(nil, name))
+	lowerContext := string(appendLowerASCII(nil, context))
+	for _, t := range tokens {
+		if !strings.Contains(lowerName, t) && !strings.Contains(lowerContext, t) {
+			return 0, 0, false
+		}
+	}
+	tier, pos = rankName(name, lowerName, tokens[0])
+	return tier, pos, true
+}
+
 // rankName finds token in the lowercased name and reads the original name to
 // tell where a word starts, since only it still carries the case.
 func rankName(name, lower, token string) (tier, pos int) {

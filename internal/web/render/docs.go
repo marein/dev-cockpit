@@ -269,13 +269,18 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Quick open",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "O"}}},
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "O"}}},
 					Desc:  `Open any project file by name. Pressing bare Shift twice does the same.`,
 				},
 				{
+					Title: "Go to type",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "O"}}},
+					Desc:  `Open a type by name. <em>Files</em> and <em>Types</em> beside the field, or bare <kbd>Shift</kbd> twice, switch the list and keep the query. Words match in any order, a qualified name too. Types of dependencies and the standard library follow, marked library. PHP's standard library, Python's libraries and JavaScript projects without TypeScript files list their own types only. While a language server indexes, the palette says so.`,
+				},
+				{
 					Title: "Go to definition and usages",
-					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "B"}}, {Caps: []string{"Shift", "F12"}}},
-					Desc:  `For PHP, Go, TypeScript, JavaScript and Python. Hold <kbd>Ctrl</kbd> and click a symbol to jump to its definition, or to its usages when the cursor already sits on the declaration, and on touch a tap raises a small <em>Look up</em> action. A target outside the project opens too, a dependency's sources or a standard library, as a read only tab. PHP and Go index the project first, the statusbar showing how far, and a lookup waits for that index; <em>Reindex</em> in the editor's menu starts them over. A JavaScript or TypeScript project without a <code>jsconfig.json</code> or <code>tsconfig.json</code> gets a default one. A Python project without a Pyright configuration of its own finds its dependencies in a <code>.venv</code> or <code>venv</code> inside it. Settings &rarr; Editor &rarr; LSP picks how each server runs. A project's servers stop after 300 seconds without editor use, minimum 60. At most 3 projects run servers at the same time, minimum 1, all languages of a project count as one. Another project stops the least recently used one, unless all are busy.`,
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "B"}}, {Caps: []string{"Ctrl", "Alt", "U"}}},
+					Desc:  `For PHP, Go, TypeScript, JavaScript and Python. Hold <kbd>Ctrl</kbd> and click a symbol to jump to its definition, or to its usages when the cursor already sits on the declaration, and on touch a tap raises a small <em>Look up</em> action. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>U</kbd> lists the usages at the cursor. On a declaration, the implementations of an interface and the subclasses of a class stand above the usages, the indirect ones below them. A target outside the project opens too, a dependency's sources or a standard library, as a read only tab. PHP and Go index the project first, the statusbar showing how far, and a lookup waits for that index; <em>Reindex</em> in the editor's menu starts them over. A JavaScript or TypeScript project without a <code>jsconfig.json</code> or <code>tsconfig.json</code> gets a default one. A Python project without a Pyright configuration of its own finds its dependencies in a <code>.venv</code> or <code>venv</code> inside it. Settings &rarr; Editor &rarr; LSP picks how each server runs. A project's servers stop after 300 seconds without editor use, minimum 60. At most 3 projects run servers at the same time, minimum 1, all languages of a project count as one. Another project stops the least recently used one, unless all are busy.`,
 				},
 				{
 					Title: "Copy a class name",
@@ -321,7 +326,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "One menu for everything else",
-					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the open files, go to file, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and the keyboard shortcuts.`,
+					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the open files, go to file, go to type, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and the keyboard shortcuts.`,
 				},
 				{
 					Title: "The sheets take the keyboard",

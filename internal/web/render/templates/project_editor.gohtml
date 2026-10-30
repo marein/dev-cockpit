@@ -331,6 +331,10 @@
         <div class="position-relative flex-shrink-0">
           <input type="text" class="form-control" placeholder="Go to file…" data-editor-quickopen-input autocomplete="off" spellcheck="false" aria-label="Go to file">
           <div class="editor-quickopen-actions position-absolute top-50 end-0 translate-middle-y me-2" data-editor-quickopen-actions>
+            <div class="btn-group" role="group" aria-label="Search for" data-editor-quickopen-kinds hidden>
+              <button type="button" class="btn btn-sm btn-ghost-secondary px-2" data-editor-quickopen-kind="files" title="Files (Ctrl+Shift+O)" aria-pressed="true">Files</button>
+              <button type="button" class="btn btn-sm btn-ghost-secondary px-2" data-editor-quickopen-kind="types" title="Types (Ctrl+O)" aria-pressed="false">Types</button>
+            </div>
             <button type="button" class="btn btn-sm btn-ghost-secondary px-2" data-editor-quickopen-case title="Match case" aria-label="Match case" aria-pressed="false" hidden>Aa</button>
             <button type="button" class="btn btn-sm btn-ghost-secondary px-2 font-monospace" data-editor-quickopen-regex title="Regular expression" aria-pressed="false" hidden>.*</button>
           </div>

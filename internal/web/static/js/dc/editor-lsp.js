@@ -65,6 +65,9 @@ export function createClient(base, spec, namesSpec) {
     definition: (payload, signal) => post("definition", payload, signal),
     references: (payload, signal) => post("references", payload, signal),
     className: (payload, signal) => post("class-name", payload, signal),
+    // The project's types matching a query, over every language it holds.
+    // The client id lets a newer query cancel this one on the server.
+    types: (query, signal) => getJSON(`${base}/lsp/types?client=${encodeURIComponent(id)}&q=${encodeURIComponent(query)}`, { signal }),
     // The file behind a target outside the project, out of the source
     // directories the servers themselves work from. It answers text and
     // no version: nothing read here can be written back.

@@ -99,17 +99,8 @@ func mapLocations(rootURI string, raw []lspLocation, roots []SourceRoot) (locs [
 	locs = []Location{}
 	seen := map[Location]bool{}
 	for _, l := range raw {
-		target := uriPath(l.URI)
-		if target == "" {
-			outside++
-			continue
-		}
-		loc := Location{Line: l.Range.Start.Line + 1, Character: l.Range.Start.Character}
-		if rel, ok := strings.CutPrefix(target, root+"/"); root != "" && ok && rel != "" {
-			loc.Path = rel
-		} else if _, ok := FindSourceRoot(roots, target); ok {
-			loc.Path, loc.External = target, true
-		} else {
+		loc, ok := mapLocation(root, l, roots)
+		if !ok {
 			outside++
 			continue
 		}
@@ -120,6 +111,25 @@ func mapLocations(rootURI string, raw []lspLocation, roots []SourceRoot) (locs [
 		locs = append(locs, loc)
 	}
 	return locs, outside
+}
+
+// mapLocation maps one of the server's locations by the rule of
+// mapLocations, root being the project's own path. False means the editor
+// cannot open it.
+func mapLocation(root string, l lspLocation, roots []SourceRoot) (Location, bool) {
+	target := uriPath(l.URI)
+	if target == "" {
+		return Location{}, false
+	}
+	loc := Location{Line: l.Range.Start.Line + 1, Character: l.Range.Start.Character}
+	if rel, ok := strings.CutPrefix(target, root+"/"); root != "" && ok && rel != "" {
+		loc.Path = rel
+	} else if _, ok := FindSourceRoot(roots, target); ok {
+		loc.Path, loc.External = target, true
+	} else {
+		return Location{}, false
+	}
+	return loc, true
 }
 
 // documentPath is the absolute path of one document the editor addresses:

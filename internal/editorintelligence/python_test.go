@@ -14,12 +14,10 @@ import (
 // Pyright lists the workspace's files from a timer after the handshake and
 // says nothing about it, and a usages list asked meanwhile holds the
 // declaration alone. The lookup waits for its first diagnostics, which it
-// publishes only once the listing is complete, and not for the warming
-// window, which a server that announces nothing would sit out whole.
+// publishes only once the listing is complete, and for nothing else.
 func TestListsLateServerIsWaitedForItsListing(t *testing.T) {
 	installFakeLSP(t, "lists-late", "pyright-langserver")
 	s := newTestService(t)
-	s.warmupGrace = 10 * time.Second
 
 	req := goRequest(t)
 	req.Path = "src/inventory/models.py"
@@ -37,7 +35,7 @@ func TestListsLateServerIsWaitedForItsListing(t *testing.T) {
 		t.Fatalf("answered before the listing ended, took %v", took)
 	}
 	if took > 5*time.Second {
-		t.Fatalf("a server that lists late must not be waited out like a silent one, took %v", took)
+		t.Fatalf("a server that lists late must be waited for its listing alone, took %v", took)
 	}
 
 	// The listing ends once per server, the next lookup goes out at once.

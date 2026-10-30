@@ -48,3 +48,13 @@ export function parentDir(path) {
   const i = path.lastIndexOf("/");
   return i >= 0 ? path.slice(0, i) : "";
 }
+
+// externalHint cuts the folder of an absolute path from the front, never from
+// the end: what says which file this is, the module and its version, stands
+// at the end of it, and that is exactly what an ellipsis on the right would
+// eat. The whole path stays in the tooltip.
+export function externalHint(path) {
+  const parts = parentDir(path).split("/").filter(Boolean);
+  const tail = parts.slice(-2).join("/");
+  return parts.length > 2 ? `…/${tail}` : `/${tail}`;
+}

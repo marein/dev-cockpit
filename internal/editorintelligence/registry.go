@@ -57,6 +57,74 @@ type Profile struct {
 	// describes, empty for any other symbol. Nil for a language without
 	// such names, whose editor surface then offers none.
 	ClassName func(hover string) string
+	// TypeOf reads one workspace symbol of the language: the type it
+	// declares, with the word the palette shows for its kind and the place
+	// its name stands, ok false for any other symbol. line answers a line of
+	// the symbol's file by its 1-based number, read only when asked for and
+	// false when it cannot be read: it is where a server that files several
+	// things under one kind is told apart, and where the name is found when
+	// the server's range starts before it. Nil for a language whose types
+	// the palette does not list.
+	TypeOf func(sym Symbol, line func(n int) (string, bool)) (Declared, bool)
+	// TypeAsks are the workspace symbol requests a type search sends for
+	// each of the words symbolWords reads off its query. A server's limit
+	// takes the symbols of every kind, of the project and of its libraries,
+	// together, so a server whose libraries would crowd the project's own
+	// types out of it, or that leaves the libraries out unless asked, gets
+	// one request for each. root is the project's path. Nil asks the word
+	// alone.
+	TypeAsks func(root, query string) []symbolAsk
+	// Crowded plans what a type search adds for the words whose first
+	// request filled the server's limit, for a server that then may have
+	// left the project's own types out of it, walking the project's own
+	// files of the language with what files keeps of them. complete are the
+	// query's other words, whose answers hold every symbol named like them.
+	// Nil for a server whose own types the requests of TypeAsks keep.
+	Crowded func(files *ownFiles, walk ownWalk, words, complete []string) crowdedPlan
+	// TypeHierarchy marks a server whose type hierarchy names the types
+	// implementing an interface, which the usages of an interface's
+	// declaration then list apart.
+	TypeHierarchy bool
+	// Heritage marks a server whose implementation request names the types
+	// below the one declared at a position, which the usages of an
+	// interface's or a class's declaration then list apart. Its answer holds
+	// more than types, and the language's rule reads which are. Nil for a
+	// server without one.
+	Heritage *heritage
+	// Clauses marks a server without an implementation request whose
+	// references of a type include the names in the heritage clauses of the
+	// types below it, which the usages of an interface's or a class's
+	// declaration then list apart. The language's rule reads which
+	// references stand there. Nil for a server without them.
+	Clauses *clauses
+	// SymbolLimit is the most symbols the server answers one workspace
+	// symbol request with, of every kind together; an answer that long was
+	// cut by the server and not by what matches. Zero for no known limit.
+	SymbolLimit int
+	// QueryWords marks a server that matches every word of a workspace
+	// symbol query on its own against the package qualified name, so it is
+	// asked the whole query. Every other server reads the query as one word
+	// against the name, a space included, and is asked each word apart; the
+	// quick open rule weighs the others.
+	QueryWords bool
+	// LibraryFiles are the extensions of the own files a server needs before
+	// it names any library's symbol: a project without one, outside the
+	// folders dependencies are installed in, is not sent the asks TypeAsks
+	// marks as the libraries'.
+	LibraryFiles []string
+	// Qualified marks a server that matches a workspace symbol query holding
+	// backslashes against the qualified names, its parts in their order, and
+	// then names a symbol by its qualified name, see profileTypes.
+	Qualified bool
+	// LoadsByDocument marks a server that loads a project only for an open
+	// document of it: until one is open, a request about the whole
+	// workspace finds nothing.
+	LoadsByDocument bool
+	// Dependencies are the names of the folders the language's package
+	// managers install into, at any depth. A server indexes them beside the
+	// project, and what is declared below one, in whichever language, is not
+	// the project's own.
+	Dependencies []string
 	// languageIDs maps the owned file extensions (lowercase, without dot)
 	// to the LSP language identifier sent in didOpen.
 	languageIDs map[string]string
@@ -69,12 +137,23 @@ type Profile struct {
 // list with that verification, not before.
 var profiles = []*Profile{
 	{
-		ID:          "go",
-		Label:       "Go",
-		Command:     []string{"gopls"},
-		Server:      "gopls",
-		Marker:      "go.mod",
-		languageIDs: map[string]string{"go": "go"},
+		ID:      "go",
+		Label:   "Go",
+		Command: []string{"gopls"},
+		Server:  "gopls",
+		Marker:  "go.mod",
+		// The type search lists the types of the dependencies and the
+		// standard library beside the project's own, which gopls names
+		// only in this scope.
+		Settings: map[string]any{
+			"gopls": map[string]any{"symbolScope": "all"},
+		},
+		TypeOf:        goTypeOf,
+		TypeAsks:      goTypeAsks,
+		TypeHierarchy: true,
+		SymbolLimit:   100,
+		QueryWords:    true,
+		languageIDs:   map[string]string{"go": "go"},
 		container: container{
 			Image:      "dev-cockpit-gopls",
 			Dockerfile: goplsDockerfile + entrypointDockerfile,
@@ -100,13 +179,19 @@ var profiles = []*Profile{
 		},
 	},
 	{
-		ID:          "php",
-		Label:       "PHP",
-		Command:     []string{"intelephense", "--stdio"},
-		Server:      "intelephense",
-		Marker:      "composer.json",
-		ClassName:   phpClassName,
-		languageIDs: map[string]string{"php": "php"},
+		ID:           "php",
+		Label:        "PHP",
+		Command:      []string{"intelephense", "--stdio"},
+		Server:       "intelephense",
+		Marker:       "composer.json",
+		ClassName:    phpClassName,
+		TypeOf:       phpTypeOf,
+		Crowded:      phpCrowded,
+		Clauses:      phpClauses,
+		Qualified:    true,
+		SymbolLimit:  1000,
+		Dependencies: []string{"vendor"},
+		languageIDs:  map[string]string{"php": "php"},
 		container: container{
 			Image:      "dev-cockpit-intelephense",
 			Dockerfile: intelephenseDockerfile + entrypointDockerfile,
@@ -127,12 +212,19 @@ var profiles = []*Profile{
 		},
 	},
 	{
-		ID:          "typescript",
-		Label:       "JS / TS",
-		Command:     []string{"tsgo", "--lsp", "-stdio"},
-		Server:      "tsgo",
-		Marker:      "package.json",
-		SilentStart: true,
+		ID:              "typescript",
+		Label:           "JS / TS",
+		Command:         []string{"tsgo", "--lsp", "-stdio"},
+		Server:          "tsgo",
+		Marker:          "package.json",
+		SilentStart:     true,
+		TypeOf:          tsTypeOf,
+		TypeAsks:        tsTypeAsks,
+		LibraryFiles:    []string{"ts", "mts", "cts", "tsx"},
+		Heritage:        &heritage{declares: tsDeclares, reads: tsHeritage},
+		SymbolLimit:     256,
+		LoadsByDocument: true,
+		Dependencies:    []string{"node_modules"},
 		languageIDs: map[string]string{
 			"ts":  "typescript",
 			"mts": "typescript",
@@ -190,7 +282,14 @@ var profiles = []*Profile{
 				"extraPaths":      []string{".venv/lib/python3*/site-packages", "venv/lib/python3*/site-packages"},
 			}},
 		},
-		languageIDs: map[string]string{"py": "python", "pyi": "python"},
+		// The server leaves a virtual environment out of the workspace on
+		// its own, unless a configuration of the project says otherwise; an
+		// installed package lies in site-packages, or dist-packages for the
+		// system's interpreter, whatever the environment around it.
+		TypeOf:       pythonTypeOf,
+		Clauses:      pythonClauses,
+		Dependencies: []string{"site-packages", "dist-packages"},
+		languageIDs:  map[string]string{"py": "python", "pyi": "python"},
 		container: container{
 			Image:      "dev-cockpit-pyright",
 			Dockerfile: pythonDockerfile + entrypointDockerfile,

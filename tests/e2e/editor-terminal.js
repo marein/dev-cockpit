@@ -194,10 +194,12 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, page, run, mobilePage }) => {
 
     await run("desktop: editor shortcuts stay away while focus is inside the terminal", async () => {
       await page.click(`${panel} .editor-term-pane.active .xterm-screen`);
-      await page.keyboard.press("Control+o");
-      await sleep(400);
-      const quickOpenHidden = await page.evaluate(() => document.querySelector("[data-editor-quickopen]").hidden);
-      assert(quickOpenHidden, "Ctrl+O opened the quick open palette from inside the terminal");
+      for (const key of ["Control+o", "Control+Shift+O"]) {
+        await page.keyboard.press(key);
+        await sleep(400);
+        const quickOpenHidden = await page.evaluate(() => document.querySelector("[data-editor-quickopen]").hidden);
+        assert(quickOpenHidden, `${key} opened the quick open palette from inside the terminal`);
+      }
       await page.keyboard.press("Control+c");
       await sleep(300);
     });

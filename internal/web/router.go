@@ -359,6 +359,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/projects/:name/editor/lsp/class-name", s.handleEditorLSPClassName)
 	auth.POST("/projects/:name/editor/lsp/close", s.handleEditorLSPClose)
 	auth.GET("/projects/:name/editor/lsp/status", s.handleEditorLSPStatus)
+	auth.GET("/projects/:name/editor/lsp/types", s.handleEditorLSPTypes)
 	// The file behind a target outside the project, read out of the source
 	// directories the language servers themselves work from and nowhere
 	// else. It is a read like the lookups above and belongs beside them.

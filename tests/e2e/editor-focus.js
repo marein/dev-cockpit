@@ -2,17 +2,17 @@ const L = require("./lib");
 const { assert, BASE } = L;
 
 // Editor focus while a file loads: the editor takes the focus when a file
-// stands, but a file that arrives while the project palette (Ctrl+Shift+P),
-// the quick open (Ctrl+O, and its find and replace in files modes) or a sheet
+// stands, but a file that arrives while the project palette (Ctrl+Shift+P), the
+// quick open (Ctrl+Shift+O, and its find and replace in files modes) or a sheet
 // (git, comments, open files) stands must leave their field the keystrokes. A
 // restored tab after a load, a jump from `?file=&line=` and a file link from
 // the terminal panel (the `dc:open-file` event) are the late arrivals; before,
-// they moved the focus into the buffer under the open overlay and the next
-// keys landed in the file. Closing the palette, the quick open or a sheet
-// hands the focus to the editor, by Escape, a sheet's close button or a click
-// on the backdrop alike; a sheet that hands over to the palette, the quick
-// open or one of its files leaves the focus where that one puts it, and with
-// nothing open the restored file takes it as before.
+// they moved the focus into the buffer under the open overlay and the next keys
+// landed in the file. Closing the palette, the quick open or a sheet hands the
+// focus to the editor, by Escape, a sheet's close button or a click on the
+// backdrop alike; a sheet that hands over to the palette, the quick open or one
+// of its files leaves the focus where that one puts it, and with nothing open
+// the restored file takes it as before.
 // One rule decides the focus. Closing the palette, the quick open or a sheet
 // gives it back to the element that held it when the overlay opened (the
 // terminal, the commit message, an editor), or to the editor in front when
@@ -56,7 +56,7 @@ L.runFeature("EDITOR-FOCUS", async ({ engine, page, run, mobilePage }) => {
   const press = (key) => () => page.keyboard.press(key);
   const overlays = [
     { name: "project palette", open: press("Control+Shift+P"), box: "[data-editor-palette]", field: "[data-editor-project-filter]" },
-    { name: "quick open", open: press("Control+O"), box: "[data-editor-quickopen]", field: "[data-editor-quickopen-input]" },
+    { name: "quick open", open: press("Control+Shift+O"), box: "[data-editor-quickopen]", field: "[data-editor-quickopen-input]" },
     { name: "find in files", open: press("Control+Shift+F"), box: "[data-editor-quickopen]", field: "[data-editor-quickopen-input]" },
     { name: "replace in files", open: press("Control+Shift+H"), box: "[data-editor-quickopen]", field: "[data-editor-quickopen-input]" },
   ];
@@ -273,7 +273,7 @@ L.runFeature("EDITOR-FOCUS", async ({ engine, page, run, mobilePage }) => {
 
       await sheets[1].open();
       await page.waitForSelector(`${sheet.box}:not([hidden])`, { timeout: 4000 });
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 4000 });
       assert(await focusIn("[data-editor-quickopen-input]"), "the quick open opened from the comments sheet does not hold the focus");
       await page.keyboard.press("Escape");
@@ -384,7 +384,7 @@ L.runFeature("EDITOR-FOCUS", async ({ engine, page, run, mobilePage }) => {
     });
 
     await run("a tab switch under an open quick open leaves the quick open its focus", async () => {
-      await page.keyboard.press("Control+O");
+      await page.keyboard.press("Control+Shift+O");
       await page.waitForSelector("[data-editor-quickopen]:not([hidden])", { timeout: 4000 });
       const front = await page.evaluate(() => document.querySelector(".editor-group-focused .editor-tab.active")?.dataset.path);
       await page.keyboard.press("Control+Tab");

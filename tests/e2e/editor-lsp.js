@@ -2,10 +2,12 @@ const L = require("./lib");
 const { assert, sleep, BASE } = L;
 
 // Editor code navigation over LSP: Ctrl/Cmd+click and Ctrl+B jump to the
-// definition, on the declaration the usages open instead, Shift+F12 lists
-// them (bottom sheet on a phone), touch gets the cursor pill
-// ([data-editor-lsp-pill]) with one Look up action; no context menu claim
-// for Go (PHP's class name entry is editor-lsp-class-name.js).
+// definition, on the declaration the usages open instead, Ctrl/Cmd+Alt+U
+// lists them (bottom sheet on a phone) by the physical key, as a mac's
+// Cmd+Option+U arrives, while a character AltGr types on U passes and
+// Shift+F12 does nothing, touch gets the cursor pill ([data-editor-lsp-pill])
+// with one Look up action; no context menu claim for Go (PHP's class name
+// entry is editor-lsp-class-name.js).
 // Routes: POST /projects/:name/editor/lsp/{definition,references,close}
 // (internal/editorintelligence).
 // Instance: fake language server first on PATH as "gopls"
@@ -179,10 +181,10 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     await openFile("use.go");
   });
 
-  await run("shift+f12 lists the references with the outside note", async () => {
+  await run("ctrl+alt+u lists the references with the outside note", async () => {
     const pt = await wordPoint("IntelTarget(", "IntelTarget");
     await page.mouse.click(pt.x, pt.y);
-    await page.keyboard.press("Shift+F12");
+    await page.keyboard.press("Control+Alt+u");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
       && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 20000 });
     const state = await page.evaluate(() => ({
@@ -231,7 +233,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
   });
 
   await run("escape closes the panel and hands the focus back to the editor", async () => {
-    await page.keyboard.press("Shift+F12");
+    await page.keyboard.press("Control+Alt+u");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 20000 });
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 5000 });
@@ -241,6 +243,49 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     }));
     assert(state.focused, "the editor holds the focus again");
     assert(/^5:2$/.test(state.pos), `the cursor stands where it stood, got "${state.pos}"`);
+  });
+
+  await run("shift+f12 does nothing: no lookup, no palette, the key not taken", async () => {
+    const asked = [];
+    const record = (req) => { if (req.url().includes("/editor/lsp/")) asked.push(req.url().replace(/^.*\/editor\/lsp\//, "")); };
+    page.on("request", record);
+    let taken;
+    try {
+      await page.keyboard.press("Shift+F12");
+      taken = await page.evaluate(() => {
+        const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "F12", code: "F12", shiftKey: true });
+        document.querySelector(".cm-content").dispatchEvent(ev);
+        return ev.defaultPrevented;
+      });
+      await sleep(800);
+    } finally {
+      page.off("request", record);
+    }
+    const state = await page.evaluate(() => ({
+      shown: document.querySelector("[data-editor-quickopen]").getClientRects().length > 0,
+      focused: !!document.activeElement?.closest?.(".cm-content"),
+      pos: document.querySelector("[data-editor-pos]")?.textContent || "",
+    }));
+    assert(!taken && !state.shown && asked.length === 0, `Shift+F12 still acts: taken ${taken}, palette ${state.shown}, asked ${asked.join(",")}`);
+    assert(state.focused && /^5:2$/.test(state.pos), `the editor stays as it was, got ${JSON.stringify(state)}`);
+  });
+
+  await run("ctrl+alt+u goes by the physical key: a mac's cmd+option+u lists the usages, an AltGr character on u stays typed", async () => {
+    // The shapes the browsers send: on a mac Option makes U a dead key, and
+    // a character AltGr types comes without Ctrl and Alt.
+    const send = (init) => page.evaluate((i) => {
+      const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...i });
+      document.querySelector(".cm-content").dispatchEvent(ev);
+      return ev.defaultPrevented;
+    }, init);
+    assert(!(await send({ key: "€", code: "KeyU", modifierAltGraph: true })), "the AltGr character was taken");
+    await sleep(500);
+    assert(await page.evaluate(() => document.querySelector("[data-editor-quickopen]").hidden), "the AltGr character opened the usages");
+    assert(await send({ key: "Dead", code: "KeyU", metaKey: true, altKey: true }), "Cmd+Option+U was not taken");
+    await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
+      && document.querySelector("[data-editor-quickopen-input]").placeholder === '3 usages of "IntelTarget"', null, { timeout: 20000 });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 5000 });
   });
 
   await run("a right click on a symbol stays the browser's own menu", async () => {
@@ -335,7 +380,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
   await run("chain: find usages from outside the project lists the project's own", async () => {
     const pt = await wordPoint("func Println", "Println");
     await page.mouse.click(pt.x, pt.y);
-    await page.keyboard.press("Shift+F12");
+    await page.keyboard.press("Control+Alt+u");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
       && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 20000 });
     const panel = await page.evaluate(() => ({
@@ -782,7 +827,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     await page.waitForFunction(() => [...document.querySelectorAll(".cm-line")].some((l) => l.textContent.includes("IntelTarget(")), null, { timeout: 10000 });
     let pt = await wordPoint("IntelTarget(", "IntelTarget");
     await page.mouse.click(pt.x, pt.y);
-    await page.keyboard.press("Shift+F12");
+    await page.keyboard.press("Control+Alt+u");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
       && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 20000 });
     await page.keyboard.press("Escape");
@@ -796,7 +841,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     await page.waitForFunction(() => [...document.querySelectorAll(".cm-line")].some((l) => l.textContent.includes("IntelTarget(")), null, { timeout: 10000 });
     pt = await wordPoint("IntelTarget(", "IntelTarget");
     await page.mouse.click(pt.x, pt.y);
-    await page.keyboard.press("Shift+F12");
+    await page.keyboard.press("Control+Alt+u");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
       && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 8000 });
     await page.keyboard.press("Escape");
@@ -819,7 +864,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     const pt = await wordPoint("IntelTarget(", "IntelTarget");
     assert(pt, "the symbol still on the surface");
     await page.mouse.click(pt.x, pt.y);
-    await page.keyboard.press("Shift+F12");
+    await page.keyboard.press("Control+Alt+u");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
       && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 20000 });
     await page.keyboard.press("Escape");
@@ -843,7 +888,7 @@ L.runFeature("EDITOR-LSP", async ({ engine, page, run, mobilePage }) => {
     const pt = await wordPoint("IntelTarget(", "IntelTarget");
     assert(pt, "the symbol still on the surface");
     await page.mouse.click(pt.x, pt.y);
-    await page.keyboard.press("Shift+F12");
+    await page.keyboard.press("Control+Alt+u");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden
       && document.querySelectorAll(".editor-quickopen-item").length >= 3, null, { timeout: 20000 });
     await page.keyboard.press("Escape");

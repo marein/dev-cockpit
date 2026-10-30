@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,16 +53,20 @@ type lspConn struct {
 
 	pendingMu sync.Mutex
 	pending   map[int64]chan rpcMessage
+	// partials hands the parts a server streams for a call that asked for
+	// them to the one collecting them, keyed by the raw token the call
+	// carried; awaitCall releases the entry with the call.
+	partials map[string]func(json.RawMessage)
 
 	// docMu serializes the document lifecycle and the send of a navigation
 	// request per connection: the snapshot sync and the request that
 	// describes it stay adjacent on the wire, so no other client's
-	// didChange slips between them, while response waits and retry sleeps
-	// run outside the lock. The connection
-	// is shared by every editor instance of the project, so a document
-	// carries the server's own version counter and the set of clients that
-	// hold it open: versions from different pages cannot be compared, text
-	// can, and the document closes only when its last holder lets go.
+	// didChange slips between them, while response waits run outside the
+	// lock. The connection is shared by every editor instance of the
+	// project, so a document carries the server's own version counter and
+	// the set of clients that hold it open: versions from different pages
+	// cannot be compared, text can, and the document closes only when its
+	// last holder lets go.
 	docMu      sync.Mutex
 	docVersion map[string]int
 	docText    map[string]string
@@ -70,8 +75,8 @@ type lspConn struct {
 	// The server's announced work, standard progress notifications: which
 	// tokens are between begin and end right now, whether any begin was
 	// ever seen, and the last reported percentage while work is active
-	// (-1 while the server reports none). All of it feeds waitIndexed and
-	// the editor's indexing indicator.
+	// (-1 while the server reports none). All of it feeds indexed and the
+	// editor's indexing indicator.
 	progressMu     sync.Mutex
 	progressActive map[string]bool
 	progressSeen   bool
@@ -129,6 +134,7 @@ func startLSPConn(ctx context.Context, profile *Profile, argv, env []string, roo
 		stdin:          stdin,
 		startedAt:      time.Now(),
 		pending:        map[int64]chan rpcMessage{},
+		partials:       map[string]func(json.RawMessage){},
 		docVersion:     map[string]int{},
 		docText:        map[string]string{},
 		docClients:     map[string]map[string]bool{},
@@ -236,7 +242,34 @@ func (c *lspConn) initialize(ctx context.Context) error {
 // splitting the two is what lets a navigation send happen under docMu while
 // the wait runs outside it.
 func (c *lspConn) startCall(method string, params any) (int64, chan rpcMessage, error) {
+	return c.sendCall(c.seq.Add(1), method, params)
+}
+
+// startStreamedCall is startCall for a request whose results a server may
+// stream: it carries a partial result token, and every part sent under it
+// goes to part, on the reading goroutine, until awaitCall releases the
+// call. A server that streams nothing answers whole as usual.
+func (c *lspConn) startStreamedCall(method string, params map[string]any, part func(json.RawMessage)) (int64, chan rpcMessage, error) {
 	id := c.seq.Add(1)
+	token := partialToken(id)
+	c.pendingMu.Lock()
+	c.partials[strconv.Quote(token)] = part
+	c.pendingMu.Unlock()
+	params["partialResultToken"] = token
+	id, ch, err := c.sendCall(id, method, params)
+	if err != nil {
+		c.pendingMu.Lock()
+		delete(c.partials, strconv.Quote(token))
+		c.pendingMu.Unlock()
+	}
+	return id, ch, err
+}
+
+func partialToken(id int64) string {
+	return "partial-" + strconv.FormatInt(id, 10)
+}
+
+func (c *lspConn) sendCall(id int64, method string, params any) (int64, chan rpcMessage, error) {
 	ch := make(chan rpcMessage, 1)
 	c.pendingMu.Lock()
 	c.pending[id] = ch
@@ -256,6 +289,7 @@ func (c *lspConn) awaitCall(ctx context.Context, id int64, ch chan rpcMessage, r
 	defer func() {
 		c.pendingMu.Lock()
 		delete(c.pending, id)
+		delete(c.partials, strconv.Quote(partialToken(id)))
 		c.pendingMu.Unlock()
 	}()
 	select {
@@ -335,7 +369,9 @@ func (c *lspConn) readLoop(r *bufio.Reader) {
 		case msg.ID != nil:
 			c.answerServerRequest(msg)
 		case msg.Method == "$/progress":
-			c.trackProgress(msg.Params)
+			if !c.deliverPartial(msg.Params) {
+				c.trackProgress(msg.Params)
+			}
 		case msg.Method == "textDocument/publishDiagnostics":
 			// Never surfaced, only their arrival counts, see listed.
 			c.diagnosedOnce.Do(func() { close(c.diagnosed) })
@@ -394,6 +430,26 @@ func (c *lspConn) answerServerRequest(msg rpcMessage) {
 	}
 }
 
+// deliverPartial hands one part of a streamed answer to the call that asked
+// for it, false for progress that belongs to no such call.
+func (c *lspConn) deliverPartial(params json.RawMessage) bool {
+	var p struct {
+		Token json.RawMessage `json:"token"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return false
+	}
+	c.pendingMu.Lock()
+	part := c.partials[string(p.Token)]
+	c.pendingMu.Unlock()
+	if part == nil {
+		return false
+	}
+	part(p.Value)
+	return true
+}
+
 // trackProgress follows the server's announced work: a begin marks its
 // token active, the end takes it down again, and the percentage riding on
 // begin and report frames is remembered for the indexing indicator. The
@@ -437,21 +493,24 @@ func (c *lspConn) trackProgress(params json.RawMessage) {
 	}
 }
 
-// warming reports whether the connection is still in the stretch where an
-// answer may be short because the server has not got going yet: it indexes
-// the workspace at the handshake and announces that run seconds late, so
-// until the announcement arrives its silence cannot be told from a server
-// already deep in a run and is waited out.
-//
-// A server that announces no startup work (Profile.SilentStart) has no such
-// stretch: it is ready when it answers, and waiting its silence out would
-// hold every lookup for the whole window against an announcement that is
-// never coming.
-func (c *lspConn) warming(grace time.Duration) bool {
-	if c.profile.SilentStart {
-		return false
-	}
-	return time.Since(c.startedAt) < grace
+// starting reports a server that indexes the workspace at the handshake and
+// has not announced that run yet. gopls and intelephense announce it at every
+// start, cold or warm, in an empty workspace and on a starved CPU alike, but
+// intelephense does so only after its first answers, which come out of an
+// index not built yet: until the announcement, its silence is a run to come.
+// A server that announces no startup work (Profile.SilentStart) is ready when
+// it answers.
+func (c *lspConn) starting() bool {
+	_, seen, _ := c.progress()
+	return !seen && !c.profile.SilentStart
+}
+
+// indexed reports whether the server has its workspace: its startup run
+// ended, no announced work runs, and a server that lists late has listed.
+// Its answer is then final, an empty one too.
+func (c *lspConn) indexed() bool {
+	busy, _, _ := c.progress()
+	return !busy && !c.starting() && c.listed()
 }
 
 // listed reports whether the server has its workspace's files. Only a
@@ -477,29 +536,24 @@ func (c *lspConn) progress() (busy, seen bool, pct int) {
 	return len(c.progressActive) > 0, c.progressSeen, c.progressPct
 }
 
-// waitIndexed holds a navigation request back while the server indexes the
-// workspace. Answers during that phase are real but partial, references
-// most of all, and a partial answer is not empty, so the empty-answer retry
-// never catches it. The indexing travels as standard progress notifications
-// (the initialize declares the capability), but the announcement itself
-// arrives only seconds after the handshake, and on a loaded host later
-// still, so the whole warming window doubles as the wait for it: a
-// connection that has announced nothing counts as warming for `grace` after
-// process start. Every supported server announces, and the test fakes
-// announce an already finished run right after the handshake, so only a
-// truly silent server ever sits this wait out. Past the budget the request
-// goes out and answers what is indexed by then.
+// waitIndexed holds a request back until the server is indexed. Answers
+// before that are real but partial or empty, references most of all, and
+// intelephense even keeps the empty answer to a query for that query's next
+// ask. The indexing travels as standard progress notifications (the
+// initialize declares the capability), and the announcement may arrive late
+// on a loaded host, so it is waited for, not timed. The test fakes announce
+// an already finished run right after the handshake. Past the budget the
+// request goes out and answers what is indexed by then.
 //
 // Announced work is waited out whoever announces it: a server that reports
 // none at startup can still announce a run of its own later, and a lookup
 // during it would be answered out of half a picture. A server that lists
 // its workspace unannounced is waited out the same way, until it shows the
 // listing ended (listed).
-func (c *lspConn) waitIndexed(ctx context.Context, grace, budget time.Duration) error {
+func (c *lspConn) waitIndexed(ctx context.Context, budget time.Duration) error {
 	deadline := c.startedAt.Add(budget)
 	for {
-		busy, seen, _ := c.progress()
-		if !busy && (seen || !c.warming(grace)) && c.listed() {
+		if c.indexed() {
 			return nil
 		}
 		if time.Now().After(deadline) {
