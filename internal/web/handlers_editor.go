@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/git"
 	"github.com/marein/dev-cockpit/internal/project"
@@ -42,6 +43,12 @@ type editorRenameForm struct {
 
 type editorPreviewForm struct {
 	Content string `form:"content"`
+}
+
+type editorHeadingsForm struct {
+	Content   string `form:"content"`
+	Line      int    `form:"line"`
+	Character int    `form:"character"`
 }
 
 // handleEditorList returns the directory listing at ?path= as JSON.
@@ -683,6 +690,25 @@ func (s *Server) handleEditorPreview(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"html": html})
+}
+
+// handleEditorHeadings answers the headings of posted markdown as the
+// structure of its file, the one around the cursor's 0-based line and
+// UTF-16 character marked.
+func (s *Server) handleEditorHeadings(c *gin.Context) {
+	if _, ok := s.editorProject(c); !ok {
+		return
+	}
+	var form editorHeadingsForm
+	if err := c.ShouldBind(&form); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body."})
+		return
+	}
+	if len(form.Content) > filesystem.MaxEditableBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The document is too large for its headings."})
+		return
+	}
+	c.JSON(http.StatusOK, editorintelligence.MarkdownStructure(form.Content, form.Line, form.Character))
 }
 
 // handleEditorGitChanges returns what the working copy carries on top of HEAD,

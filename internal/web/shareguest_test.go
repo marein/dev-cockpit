@@ -67,7 +67,7 @@ func TestGuestRoutesNeverReachWhatNoLinkMay(t *testing.T) {
 			continue
 		}
 		if route.Method != http.MethodGet && !strings.HasSuffix(path, "/watch") && !strings.HasSuffix(path, "/preview") &&
-			!strings.HasSuffix(path, "/file-links") && !strings.Contains(path, "/lsp/") {
+			!strings.HasSuffix(path, "/headings") && !strings.HasSuffix(path, "/file-links") && !strings.Contains(path, "/lsp/") {
 			t.Fatalf("%s %s is a POST that is no read", route.Method, route.Path)
 		}
 	}

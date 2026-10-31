@@ -78,6 +78,17 @@
 # symbols of an open file: a class of the PHP code on its name, and a
 # script's class and a style's selector of an HTML part in the plain shape.
 #
+# Document symbols answer off the open document's text the way each server
+# shaped its answer: gopls v0.23.0 a tree of the constants, the structs with
+# their fields, the interfaces with their methods, the functions and the
+# methods by receiver, each with gopls' detail, and only once its index
+# stands, as the real one answers no request before its workspace loaded,
+# while every other server answers at once; tsgo 7.0.0-dev the flat list
+# it gives a client without the tree, every imported name, the exported
+# constants, a class's properties and methods and a method's locals, each
+# naming its container; every other server the class lines and the HTML
+# parts above, a mixed answer.
+#
 # The implementations runner's shape.go is answered off its text as gopls
 # v0.23.0 answered it: a type's definition is its declaration, its references
 # every place its name stands, its type hierarchy item carries gopls' kind
@@ -487,6 +498,94 @@ def document_symbols(uri, text):
     return symbols
 
 
+def span(line, start, end_line, end):
+    return {"start": {"line": line, "character": start}, "end": {"line": end_line, "character": end}}
+
+
+def closing(lines, n, indent):
+    """The line of the brace closing the block opened on line n."""
+    for m in range(n + 1, len(lines)):
+        if lines[m] == indent + "}":
+            return m
+    return n
+
+
+GO_FUNC = re.compile(r"func (?:\(\w+ (\*?)(\w+)\) )?(\w+)(\(.*\S)\s*\{$")
+GO_TYPE = re.compile(r"type (\w+) (struct|interface) \{$")
+
+
+def go_document_symbols(text):
+    """gopls v0.23.0's tree: constants, structs with their fields and
+    interfaces with their methods, functions and methods by receiver, each
+    with gopls' detail."""
+    lines = text.split("\n")
+    symbols = []
+    for n, line in enumerate(lines):
+        const = re.match(r"const (\w+) = ", line)
+        typ = GO_TYPE.match(line)
+        fn = GO_FUNC.match(line)
+        if const:
+            name = const.group(1)
+            symbols.append({"name": name, "kind": 14, "range": span(n, 6, n, len(line)), "selectionRange": span(n, 6, n, 6 + len(name))})
+        elif typ:
+            name, what = typ.group(1), typ.group(2)
+            end = closing(lines, n, "")
+            children = []
+            for m in range(n + 1, end):
+                member = re.match(r"\t(\w+)(\(.*)$", lines[m]) if what == "interface" else re.match(r"\t(\w+)\s+(.+)$", lines[m])
+                if member:
+                    child, rest = member.group(1), member.group(2)
+                    children.append({"name": child, "detail": "func" + rest if what == "interface" else rest,
+                                     "kind": 6 if what == "interface" else 8,
+                                     "range": span(m, 1, m, len(lines[m])), "selectionRange": span(m, 1, m, 1 + len(child))})
+            symbols.append({"name": name, "detail": what + "{...}", "kind": 23 if what == "struct" else 11,
+                            "range": span(n, 5, end, 1), "selectionRange": span(n, 5, n, 5 + len(name)), "children": children})
+        elif fn:
+            star, receiver, name, rest = fn.groups()
+            at = line.index(name + "(")
+            symbols.append({"name": "(%s%s).%s" % (star, receiver, name) if receiver else name, "detail": "func" + rest,
+                            "kind": 6 if receiver else 12,
+                            "range": span(n, 0, closing(lines, n, ""), 1), "selectionRange": span(n, at, n, at + len(name))})
+    return symbols
+
+
+def ts_document_symbols(uri, text):
+    """The flat list tsgo 7.0.0-dev answers a client without the tree: every
+    imported name, the exported constants, a class with its properties and
+    methods and a method's locals, each naming its container."""
+    lines = text.split("\n")
+    symbols = []
+    def plain(name, kind, container, line, start, end_line, end):
+        entry = {"name": name, "kind": kind, "location": {"uri": uri, "range": span(line, start, end_line, end)}}
+        if container:
+            entry["containerName"] = container
+        symbols.append(entry)
+    cls = method = ""
+    for n, line in enumerate(lines):
+        imports = re.match(r"import \{ (.*) \} from ", line)
+        if imports:
+            at = line.index("{") + 2
+            for name in imports.group(1).split(", "):
+                plain(name, 13, "", n, at, n, at + len(name))
+                at += len(name) + 2
+        elif re.match(r"export const (\w+) = ", line):
+            name = line.split()[2]
+            plain(name, 13, "", n, 13, n, len(line) - 1)
+        elif re.match(r"export class (\w+) \{$", line):
+            cls = line.split()[2]
+            plain(cls, 5, "", n, 0, closing(lines, n, ""), 1)
+        elif cls and re.match(r"  (\w+)\(.*\) \{$", line):
+            method = line.split("(")[0].strip()
+            plain(method, 6, cls, n, 2, closing(lines, n, "  "), 3)
+        elif cls and re.match(r"  (\w+) = ", line):
+            name = line.split()[0]
+            plain(name, 7, cls, n, 2, n, len(line) - 1)
+        elif method and re.match(r"    const (\w+) = ", line):
+            name = line.split()[1]
+            plain(name, 13, method, n, 10, n, len(line) - 1)
+    return symbols
+
+
 def qualified_symbols(root, query):
     """intelephense's answer to a query holding a backslash: the symbols whose
     qualified name holds the query's parts in their order, named by it."""
@@ -616,9 +715,20 @@ def main():
                     send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
                           "params": {"uri": uri, "diagnostics": []}})
                 threading.Thread(target=publish, args=(doc["uri"],), daemon=True).start()
+        elif method == "textDocument/documentSymbol" and server == "gopls":
+            def answer_indexed(msg_id, text):
+                indexed.wait()
+                send({"jsonrpc": "2.0", "id": msg_id, "result": go_document_symbols(text)})
+            uri = msg["params"]["textDocument"]["uri"]
+            threading.Thread(target=answer_indexed, args=(msg["id"], docs.get(uri, "")), daemon=True).start()
         elif method == "textDocument/documentSymbol":
             uri = msg["params"]["textDocument"]["uri"]
-            result = document_symbols(uri, docs[uri]) if uri in docs else []
+            if uri not in docs:
+                result = []
+            elif server == "tsgo":
+                result = ts_document_symbols(uri, docs[uri])
+            else:
+                result = document_symbols(uri, docs[uri])
             send({"jsonrpc": "2.0", "id": msg["id"], "result": result})
         elif method == "textDocument/didClose":
             docs.pop(msg["params"]["textDocument"]["uri"], None)

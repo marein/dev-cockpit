@@ -39,10 +39,10 @@ func lspClassNameServer(t *testing.T) (*Server, *gin.Engine) {
 	return s, r
 }
 
-func postClassName(t *testing.T, r *gin.Engine, body string) (int, map[string]any) {
+func postLSP(t *testing.T, r *gin.Engine, action, body string) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/projects/demo/editor/lsp/class-name", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/projects/demo/editor/lsp/"+action, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	r.ServeHTTP(rec, req)
@@ -62,7 +62,7 @@ func TestEditorLSPClassNameRefusesWhatIsNoLookup(t *testing.T) {
 		"a path out of the project":        `{"client":"c","path":"../x.php",` + position + `}`,
 		"an absolute path no server holds": `{"client":"c","path":"/etc/x.php",` + position + `}`,
 	} {
-		code, answer := postClassName(t, r, body)
+		code, answer := postLSP(t, r, "class-name", body)
 		if code != http.StatusBadRequest || answer["error"] == nil {
 			t.Fatalf("%s: %d %v", name, code, answer)
 		}
@@ -72,13 +72,13 @@ func TestEditorLSPClassNameRefusesWhatIsNoLookup(t *testing.T) {
 func TestEditorLSPClassNameAnswersAStatusWithoutAServer(t *testing.T) {
 	s, r := lspClassNameServer(t)
 	body := `{"client":"c","path":"src/a.php","content":"<?php\nnew A();","position":{"line":1,"character":5}}`
-	code, answer := postClassName(t, r, body)
+	code, answer := postLSP(t, r, "class-name", body)
 	if code != http.StatusOK || answer["available"] != false || answer["status"] != "unavailable" {
 		t.Fatalf("no service: %d %v", code, answer)
 	}
 
 	s.settings.Set(editorLSPServerKey("php"), "off")
-	code, answer = postClassName(t, r, body)
+	code, answer = postLSP(t, r, "class-name", body)
 	if code != http.StatusOK || answer["available"] != false || answer["status"] != "disabled" {
 		t.Fatalf("php switched off: %d %v", code, answer)
 	}

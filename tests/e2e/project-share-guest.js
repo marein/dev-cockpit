@@ -324,6 +324,58 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
     });
 
+    await run("the guest's file structure lists main.go's declarations over the real gopls and opens on the one at the cursor, another project's structure answers the plain 404", async () => {
+      await gp.keyboard.press("Control+Alt+o");
+      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 5, null, { timeout: 90000 });
+      const rows = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-open", (els) => els.map((el) => el.title).join(" | "));
+      assert(rows === "function main func(), line 5 | struct ShareProbe struct{}, line 9 | interface Prober interface{...}, line 11 | method Probe in Prober func(), line 11 | method (ShareProbe).Probe func(), line 13", `the structure reads ${rows}`);
+      await gp.keyboard.type("prober");
+      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 2, null, { timeout: 5000 });
+      const ranked = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-open", (els) => els.map((el) => el.title).join(" | "));
+      assert(ranked === "interface Prober interface{...}, line 11 | method Probe in Prober func(), line 11", `the filtered structure reads ${ranked}`);
+      await gp.keyboard.press("Enter");
+      await gp.waitForFunction(() => document.querySelector("[data-editor-pos]")?.textContent === "11:6", null, { timeout: 10000 });
+      await gp.keyboard.press("Control+Alt+o");
+      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 5, null, { timeout: 30000 });
+      const marked = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-row.selected .editor-sheet-open", (els) => els.map((el) => el.title).join(" | "));
+      assert(marked === "interface Prober interface{...}, line 11", `the structure opened on ${marked}`);
+      await gp.keyboard.press("Escape");
+      await gp.waitForFunction(() => document.querySelector("[data-editor-sheet]").hidden, null, { timeout: 5000 });
+      const csrf = await gp.evaluate(() => document.querySelector('meta[name="csrf-token"]').content);
+      const nothing = await fetchRaw(`${BASE}/no/such/page`, { headers: { Accept: "application/json" } });
+      const ask = (project) => fetchRaw(at(`/projects/${project}/editor/lsp/structure`), {
+        method: "POST", body: JSON.stringify({ client: "guest", path: "main.go", content: "package main\n\ntype Other struct{}\n" }),
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, Accept: "application/json" },
+      });
+      const own = await ask(fx.project);
+      assert(own.status === 200 && JSON.parse(own.body).symbols.some((sym) => sym.name === "Other"), `the link's project answered ${own.status}`);
+      const other = await ask(fx.other);
+      assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
+    });
+
+    await run("the guest's file structure lists README.md's headings without a language server, another project's headings answer the plain 404", async () => {
+      await openFile(gp, "README.md");
+      await gp.waitForFunction(() => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === "README.md", null, { timeout: 8000 });
+      await gp.keyboard.press("Control+Alt+o");
+      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 1, null, { timeout: 30000 });
+      const rows = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-row", (els) => els.map((el) => `${el.querySelector(".editor-sheet-open").title}${el.classList.contains("selected") ? " (marked)" : ""}`).join(" | "));
+      assert(rows === "h1 Shared, line 1 (marked)", `the structure reads ${rows}`);
+      await gp.keyboard.press("Escape");
+      await gp.waitForFunction(() => document.querySelector("[data-editor-sheet]").hidden, null, { timeout: 5000 });
+      const csrf = await gp.evaluate(() => document.querySelector('meta[name="csrf-token"]').content);
+      const nothing = await fetchRaw(`${BASE}/no/such/page`, { headers: { Accept: "application/json" } });
+      const ask = (project) => fetchRaw(at(`/projects/${project}/editor/headings`), {
+        method: "POST", body: new URLSearchParams({ content: "# Other\n", line: "0", character: "0" }).toString(),
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": csrf, Accept: "application/json" },
+      });
+      const own = await ask(fx.project);
+      assert(own.status === 200 && JSON.parse(own.body).symbols[0]?.name === "Other", `the link's project answered ${own.status} ${own.body}`);
+      const other = await ask(fx.other);
+      assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
+      await openFile(gp, "main.go");
+      await gp.waitForFunction(() => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === "main.go", null, { timeout: 8000 });
+    });
+
     await run("the guest's Ctrl+Alt+U on an interface's declaration lists its implementations above the usages, another project's usages answer the plain 404", async () => {
       await gp.waitForFunction(() => [...document.querySelectorAll(".cm-line")].some((l) => l.textContent.includes("type Prober interface")), null, { timeout: 8000 });
       const pt = await L.wordPoint(gp, "type Prober interface", "Prober");

@@ -6,7 +6,7 @@ import { hitRanges } from "@dc/filter";
 // and the jump are the palette's own, as for every other mode; this draws a
 // row and says what stands between the query and the answer.
 
-const KIND_ICONS = {
+export const KIND_ICONS = {
   class: "ti-letter-c",
   enum: "ti-list-numbers",
   interface: "ti-plug",
@@ -24,11 +24,10 @@ export function packageHint(container) {
   return parts.length > 2 ? `…${sep}${parts.slice(-2).join(sep)}` : container || "";
 }
 
-// The server matches the parts of a qualified name as words, see queryParts.
-function markedName(name, query) {
+export function markedName(name, query) {
   let html = "";
   let at = 0;
-  for (const [from, to] of hitRanges(name, query.replace(/[\\.]/g, " "))) {
+  for (const [from, to] of hitRanges(name, query)) {
     html += `${escapeHtml(name.slice(at, from))}<mark>${escapeHtml(name.slice(from, to))}</mark>`;
     at = to;
   }
@@ -45,10 +44,12 @@ export function typeRow(entry, query) {
   item.setAttribute("role", "option");
   item.dataset.kind = entry.kind;
   item.title = `${entry.kind} ${entry.name}${entry.container ? ` in ${entry.container}` : ""}, ${entry.path}:${entry.line}${entry.library ? ", outside the project" : ""}`;
+  // The server matches the parts of a qualified name as words, see queryParts.
+  const words = query.replace(/[\\.]/g, " ");
   const head = document.createElement("div");
   head.className = "editor-quickopen-match-head";
   head.innerHTML = `<i class="ti ${KIND_ICONS[entry.kind] || "ti-code"}"></i>`
-    + `<span class="editor-quickopen-name">${markedName(entry.name, query)}</span>`
+    + `<span class="editor-quickopen-name">${markedName(entry.name, words)}</span>`
     + `<span class="badge bg-secondary-lt flex-shrink-0">${escapeHtml(entry.kind)}</span>`
     + (entry.library ? `<span class="badge badge-outline text-secondary flex-shrink-0" data-editor-type-library>library</span>` : "")
     + `<span class="editor-quickopen-dir">${escapeHtml(packageHint(entry.container))}</span>`;

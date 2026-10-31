@@ -36,7 +36,7 @@ function isCdnNoise(t) {
 // it, `/projects/<name>/editor/…` included, which is exactly where a real
 // access control failure would have to gate.
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|costs\/status|git\/prompt|time|editor\/(terminals|docker|lsp\/(status|source)|list|file|watch|git\/changes))\b.*due to access control checks/.test(t)
+  return /\/(events|update\/check|costs\/status|git\/prompt|time|editor\/(terminals|docker|lsp\/(status|source)|list|file|watch|git\/changes|search-draft))\b.*due to access control checks/.test(t)
     || /\/(projects|terminal-tabs|assistants\/[^/\s?]+|splits\/[^/\s?]+)(\?\S*)? due to access control checks/.test(t)
     || /\/assistants\/[^/\s]+\/messages\/[^/\s]+ due to access control checks/.test(t)
     || /\/(shells|coders)\/[^/\s]+\/file-links due to access control checks/.test(t);

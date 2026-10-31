@@ -20,6 +20,7 @@ import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
 import { lspView as editorLSPView } from "@dc/editor-lsp-view";
 import { typeRow, typesStatusNote, typesWaitText } from "@dc/editor-types";
+import { filterStructure, structureRow, structureRows } from "@dc/editor-structure";
 import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeaves, readGroups, removeAt, screenOrder, splitAt } from "@dc/editor-groups";
 import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPreview, isArchive, isAudio, isImage, isMarkdown, isSvg, isVideo, langUrl, modeUrl } from "@dc/editor-filetypes";
 import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
@@ -431,6 +432,7 @@ async function init(root) {
   function renderLSPIndex(state) {
     lspIndexState = state;
     repaintTypesWait();
+    repaintStructureWait();
     if (!state) {
       lspIndexEl.hidden = true;
       return;
@@ -1095,7 +1097,7 @@ async function init(root) {
   // menu's, which is where the movement itself lives.
   const SHEET_ROW = ".dropdown-item, .editor-sheet-open";
   const sheetRows = () => rowsOf(sheetBodyEl, SHEET_ROW);
-  const FILTERED_SHEETS = new Set(["files", "docker", "git", "comments", "history"]);
+  const FILTERED_SHEETS = new Set(["files", "structure", "docker", "git", "comments", "history"]);
   // Which sheets a row does not close, see the click handler far below.
   const STANDING_SHEETS = new Set(["settings", "docker", "git", "comments", "history"]);
   let sheetQuery = "";
@@ -1107,14 +1109,21 @@ async function init(root) {
     return unit && sheetBodyEl.contains(unit) ? unit : row;
   }
 
+  // The row the filter's Enter takes and its arrows start from: the one a
+  // sheet marks as where the editor stands, or the first.
+  function sheetMarkIndex(rows) {
+    return Math.max(0, rows.findIndex((row) => row.closest("[data-editor-sheet-mark]")));
+  }
+
   function paintSheetMark() {
     if (sheetMarked) sheetMarked.classList.remove("selected");
     sheetMarked = null;
     if (document.activeElement !== sheetFilterEl) return;
-    const [first] = sheetRows();
-    if (!first) return;
-    const line = first.closest(".editor-sheet-row");
-    sheetMarked = line && sheetBodyEl.contains(line) ? line : first;
+    const rows = sheetRows();
+    const row = rows[sheetMarkIndex(rows)];
+    if (!row) return;
+    const line = row.closest(".editor-sheet-row");
+    sheetMarked = line && sheetBodyEl.contains(line) ? line : row;
     sheetMarked.classList.add("selected");
   }
 
@@ -1176,6 +1185,11 @@ async function init(root) {
     for (const divider of sheetBodyEl.querySelectorAll(".dropdown-divider")) {
       divider.hidden = query !== "" && !sheetDividerNeeded(divider, shown);
     }
+    paintSheetFilter(found, total);
+  }
+
+  function paintSheetFilter(found, total) {
+    const query = sheetQuery;
     sheetEmptyEl.textContent = `Nothing matches "${query}".`;
     sheetEmptyEl.hidden = query === "" || found > 0;
     sheetFilterCountEl.textContent = query === "" ? "" : `${found} of ${total}`;
@@ -1183,10 +1197,13 @@ async function init(root) {
     paintSheetMark();
   }
 
+  // The structure ranks its rows by the quick open rule, so it paints them
+  // again instead of hiding the ones that miss.
   function setSheetQuery(query) {
     if (query === sheetQuery) return;
     sheetQuery = query;
-    applySheetFilter();
+    if (sheetKind === "structure") renderStructureSheet();
+    else applySheetFilter();
   }
 
   function clearSheetFilter() {
@@ -1926,6 +1943,7 @@ async function init(root) {
       { label: "Download", icon: "ti-download", action: () => startDownload(tab.path) },
       isArchive(tab.name) && can("files") ? { label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(tab.path) } : null,
       { label: "Reveal in tree", icon: "ti-list-tree", hint: "Ctrl+Alt+R", action: () => revealInTree(tab.path) },
+      structureMenuItem(tab.path),
       { divider: true },
       previewMenuItem(tab),
       diffMenuItem(tab),
@@ -2488,6 +2506,7 @@ async function init(root) {
     if (!entry.isDir && isArchive(baseName(entry.path)) && can("files")) {
       items.push({ label: "Extract here", icon: "ti-file-zip", action: () => void extractArchive(entry.path) });
     }
+    if (!entry.isDir) items.push(structureMenuItem(entry.path));
     // What git says about one file, then two files against each other, picked
     // in two steps because the second one is usually somewhere else in the
     // tree than the first.
@@ -7988,6 +8007,146 @@ async function init(root) {
     else if (lastTypes?.idle) renderTypes();
   }
 
+  // ---- structure -------------------------------------------------------------
+
+  // The structure is about the file in front, not a search of the project, so
+  // it stands in a sheet beside the open files. It is asked each time the
+  // sheet opens, with the text and the cursor as they stand, of its server
+  // or, for markdown, of the cockpit, and filtered here as the query changes.
+  // It does not wait for the index, only for a server being built.
+  let structureSeq = 0;
+  let structureAbort = null;
+  let lastStructure = null;
+
+  function structureMenuItem(path) {
+    if (!isMarkdown(baseName(path)) && !lsp?.usable(path)) return null;
+    return { label: "Structure", icon: "ti-list-details", hint: "Ctrl+Alt+O", action: () => void structureOf(path) };
+  }
+
+  async function structureOf(path) {
+    await openPath(path);
+    if (activeTab()?.path === path) openStructureSheet();
+  }
+
+  function openStructureSheet() {
+    const tab = activeTab();
+    openSheet("structure", tab ? `Structure of ${tab.name}` : "Structure");
+    focusSheetTop();
+    void loadStructure();
+  }
+
+  async function loadStructure() {
+    const seq = ++structureSeq;
+    structureAbort?.abort();
+    structureAbort = null;
+    lastStructure = null;
+    const tab = activeTab();
+    const file = tab && !tab.kind && !tab.compare && !tab.revision;
+    const headings = file && isMarkdown(tab.name);
+    if (!headings && !lspUsable()) {
+      lastStructure = { note: file ? "No language server covers this file." : "Open a file to see its structure." };
+      renderStructureSheet();
+      return;
+    }
+    const abort = new AbortController();
+    structureAbort = abort;
+    if (!headings) void pullLSPIndex();
+    renderStructureSheet();
+    const at = editor.lspPosition?.();
+    const position = at && { line: at.line, character: at.character };
+    try {
+      const res = headings
+        ? await markdownHeadings(tab, position, abort.signal)
+        : await lsp.structure({ path: tab.path, content: liveText(tab), position }, abort.signal);
+      if (seq !== structureSeq) return;
+      if (res.available) {
+        lastStructure = { tab, rows: structureRows(res.symbols), truncated: !!res.truncated };
+      } else {
+        lsp.note(tab.path, res.status);
+        lastStructure = res.status === "no-language"
+          ? { note: "No language server covers this file." }
+          : { note: LSP_STATUS_TEXT[res.status] || "The language server did not answer.", danger: true };
+      }
+    } catch (err) {
+      if (abort.signal.aborted || seq !== structureSeq) return;
+      lastStructure = { note: err.message, danger: true };
+    } finally {
+      if (structureAbort === abort) structureAbort = null;
+    }
+    renderStructureSheet();
+  }
+
+  async function markdownHeadings(tab, position, signal) {
+    const res = await postForm(`${base}/headings`, { content: liveText(tab), ...position }, { signal });
+    await ensureOk(res, "The headings could not be read.");
+    return res.json();
+  }
+
+  function structureNote(text, danger = false) {
+    const el = document.createElement("div");
+    el.className = `small px-3 py-2 ${danger ? "text-danger" : "text-secondary"}`;
+    el.dataset.editorStructureNote = "";
+    el.textContent = text;
+    return el;
+  }
+
+  function structureWaitNote() {
+    const state = lspIndexState;
+    const tab = activeTab();
+    return structureNote(state?.preparing && tab && state.label === lsp.label(tab.path) ? typesWaitText(state) : "Loading…");
+  }
+
+  function renderStructureSheet() {
+    if (sheetKind !== "structure") return;
+    const res = lastStructure;
+    const note = !res ? structureWaitNote()
+      : res.note ? structureNote(res.note, !!res.danger)
+        : res.rows.length === 0 ? structureNote("The file declares nothing.") : null;
+    if (note) {
+      sheetBodyEl.replaceChildren(note);
+      sheetEmptyEl.hidden = true;
+      sheetFilterCountEl.textContent = "";
+      sheetFilterClearBtn.style.visibility = sheetQuery === "" ? "hidden" : "";
+      return;
+    }
+    const query = sheetQuery;
+    const rows = filterStructure(res.rows, query);
+    sheetBodyEl.replaceChildren(...rows.map((row) => {
+      const item = structureRow(row, query);
+      if (!query && row.cursor) {
+        item.classList.add("active");
+        item.dataset.editorSheetMark = "";
+      }
+      item.querySelector(".editor-sheet-open").addEventListener("click", () => {
+        closeSheet();
+        void goToStructureRow(row, res.tab);
+      });
+      return item;
+    }));
+    if (res.truncated && !query) sheetBodyEl.appendChild(structureNote(`Only the first ${res.rows.length} symbols are shown.`));
+    paintSheetFilter(rows.length, res.rows.length);
+    const mark = sheetBodyEl.querySelector("[data-editor-sheet-mark]");
+    if (!mark) {
+      sheetBodyEl.scrollTop = 0;
+      return;
+    }
+    const box = sheetBodyEl.getBoundingClientRect();
+    const at = mark.getBoundingClientRect();
+    sheetBodyEl.scrollTop += at.top - box.top - (box.height - at.height) / 2;
+  }
+
+  // A heading moves the preview too, which on a phone covers the text.
+  async function goToStructureRow(row, tab) {
+    await goToLocation({ ...row, path: tab.path, external: !!tab.external });
+    if (!row.anchor || activeTab() !== tab || !previewVisible(group)) return;
+    tab.previewHash = row.anchor;
+    schedulePreview(0, group);
+  }
+
+  function repaintStructureWait() {
+    if (!lastStructure) renderStructureSheet();
+  }
+
   // Files and types are one palette on two lists, so a switch keeps what is
   // typed and asks the other list.
   function switchQuickOpenKind(kind) {
@@ -9592,11 +9751,12 @@ async function init(root) {
       e.preventDefault();
       const rows = sheetRows();
       if (!rows.length) return;
-      focusRow(sheetBodyEl, e.key === "ArrowDown" ? rows[Math.min(1, rows.length - 1)] : rows[rows.length - 1]);
+      const at = sheetMarkIndex(rows);
+      focusRow(sheetBodyEl, e.key === "ArrowDown" ? rows[Math.min(at + 1, rows.length - 1)] : rows[at > 0 ? at - 1 : rows.length - 1]);
     } else if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      const [first] = sheetRows();
-      if (first) first.click();
+      const rows = sheetRows();
+      rows[sheetMarkIndex(rows)]?.click();
     } else if (e.key === "Escape") {
       if (sheetFilterEl.value === "") return;
       e.preventDefault();
@@ -10536,6 +10696,11 @@ async function init(root) {
     } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "o") {
       e.preventDefault();
       openQuickOpenKind(e.shiftKey ? "files" : "types");
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
+      && e.code === "KeyO" && quickOpenEl.hidden) {
+      e.preventDefault();
+      if (sheetKind === "structure") closeSheet();
+      else openStructureSheet();
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       openQuickOpen("search");
@@ -10762,7 +10927,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   ]);
   const { EditorView, basicSetup } = cm;
   const { ChangeSet, EditorState, Compartment, StateEffect, StateField } = state;
-  const { keymap, Decoration } = view;
+  const { keymap, Decoration, BlockType } = view;
   const { indentWithTab } = commands;
   const { indentUnit } = language;
   const langConf = new Compartment();
@@ -11448,6 +11613,14 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     mergeView.a.dispatch({ effects: mapped.map((pos) => mergeMod.uncollapseUnchanged.of(pos)) });
   }
 
+  // A jump into the unchanged code a diff folds away lands on no line anybody
+  // can see, so the fold around it opens first, as a click on it would.
+  function unfoldAt(v, pos) {
+    if (!mergeView && !unifiedOn) return;
+    const block = v.lineBlockAt(pos);
+    if (block.type === BlockType.WidgetRange) expandBlocks([v.state.doc.lineAt(block.from).number]);
+  }
+
   function liveScroll() {
     if (mergeView) return { top: Math.round(mergeView.dom.scrollTop), left: Math.round(mergeView.b.scrollDOM.scrollLeft) };
     return { top: Math.round(editorView.scrollDOM.scrollTop), left: Math.round(editorView.scrollDOM.scrollLeft) };
@@ -11865,6 +12038,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       const doc = view.state.doc;
       const target = doc.line(Math.max(1, Math.min(line, doc.lines)));
       const pos = target.from + Math.max(0, Math.min(character || 0, target.length));
+      unfoldAt(view, pos);
       view.dispatch({
         selection: { anchor: pos },
         effects: EditorView.scrollIntoView(pos, { y: "center" }),

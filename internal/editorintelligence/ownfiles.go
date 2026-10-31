@@ -217,17 +217,6 @@ func (of *ownFiles) remember(abs string, doc ownDocument, types []TypeSymbol) {
 	}
 }
 
-// documentSymbol is the wire shape of one document symbol. A server may
-// answer the plain shape of a workspace symbol instead, with a location and
-// no selection range.
-type documentSymbol struct {
-	Name           string           `json:"name"`
-	Kind           int              `json:"kind"`
-	SelectionRange *lspRange        `json:"selectionRange"`
-	Location       json.RawMessage  `json:"location"`
-	Children       []documentSymbol `json:"children"`
-}
-
 // phpDocumentTypes reads the types intelephense's document symbols name in
 // one file: the declarations of its PHP code, each on its name, inside the
 // namespace a bracketed block puts it in. What an HTML part of the file

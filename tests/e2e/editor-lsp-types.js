@@ -4,8 +4,8 @@ const { assert, sleep, BASE } = L;
 // The type search of the editor's quick open palette: Ctrl+O, Go to type in
 // the menu, the Files and Types buttons beside the field, bare Shift twice in
 // the palette, Ctrl+O and Ctrl+Shift+O switching between the two lists with
-// the query kept, Ctrl+Alt+O doing nothing; rows with kind, name, package and
-// path, ranked by the files' rule;
+// the query kept, Ctrl+Alt+O opening no palette and switching no list; rows
+// with kind, name, package and path, ranked by the files' rule;
 // Enter, a click and a tap opening the declaration; the waiting states of a
 // server that is built and indexes; the note of a project no server covers.
 // A mixed project holds every language, and a file of each kind in the
@@ -369,7 +369,7 @@ L.runFeature("EDITOR-LSP-TYPES", async ({ engine, page, run, mobilePage }) => {
     await closePalette();
   });
 
-  await run("the keyboard switches between files and types and keeps the query, ctrl+alt+o does nothing", async () => {
+  await run("the keyboard switches between files and types and keeps the query, ctrl+alt+o opens no palette and switches no list", async () => {
     await page.click(".editor-tree");
     await page.keyboard.press("Control+Alt+o");
     await sleep(400);
@@ -393,6 +393,7 @@ L.runFeature("EDITOR-LSP-TYPES", async ({ engine, page, run, mobilePage }) => {
     await sleep(400);
     state = await palette();
     assert(state.placeholder === "Go to file…" && state.value === "box" && state.pressed === "files", `Ctrl+Alt+O switched ${JSON.stringify(state)}`);
+    assert(await page.evaluate(() => document.querySelector("[data-editor-sheet]").hidden), "Ctrl+Alt+O opened a sheet over the palette");
     await page.keyboard.press("Control+o");
     await waitTypeRows(page, 1);
     state = await palette();
@@ -436,7 +437,7 @@ L.runFeature("EDITOR-LSP-TYPES", async ({ engine, page, run, mobilePage }) => {
     }));
     assert(hints.buttons === "Files (Ctrl+Shift+O) | Types (Ctrl+O)", `the buttons' titles read "${hints.buttons}"`);
     assert(hints.empty.trim().startsWith("Ctrl+Shift+O go to file ·"), `the empty editor's hint reads "${hints.empty}"`);
-    assert(!hints.page.includes("Ctrl+Alt+O") && !/Ctrl\+O go to file|Files \(Ctrl\+O\)/.test(hints.page), "the page names an old key");
+    assert(!/Ctrl\+Alt\+O (go to|types)|Types \(Ctrl\+Alt\+O\)|Ctrl\+O go to file|Files \(Ctrl\+O\)/i.test(hints.page), "the page names an old key");
     const note = await page.evaluate(() => [...document.querySelectorAll("#editor-shortcuts-modal .dc-shortcuts-note")]
       .map((n) => n.textContent.trim()).find((n) => n.includes("files and types")) || "");
     assert(note === "In the palette bare Shift twice switches between files and types.", `the dialog note reads "${note}"`);
@@ -459,7 +460,7 @@ L.runFeature("EDITOR-LSP-TYPES", async ({ engine, page, run, mobilePage }) => {
     });
     assert(files === "Ctrl+Shift+O", `the docs' quick open keys read "${files}"`);
     const docsText = await page.evaluate(() => document.body.textContent.replace(/\s+/g, " "));
-    assert(!docsText.includes("Ctrl+Alt+O"), "the docs name Ctrl+Alt+O");
+    assert(!item.desc.includes("Alt") && !files.includes("Alt"), "the docs name Ctrl+Alt+O for types or files");
     assert(!examples.test(docsText), "the docs name an example");
   });
 

@@ -278,6 +278,11 @@ func DocsTopics() []DocsTopic {
 					Desc:  `Open a type by name. <em>Files</em> and <em>Types</em> beside the field, or bare <kbd>Shift</kbd> twice, switch the list and keep the query. Words match in any order, a qualified name too. Types of dependencies and the standard library follow, marked library. PHP's standard library, Python's libraries and JavaScript projects without TypeScript files list their own types only. While a language server indexes, the palette says so.`,
 				},
 				{
+					Title: "File structure",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "O"}}},
+					Desc:  `Opens a sheet with the types, functions, methods, properties and constants of the open file with its unsaved changes, nested in file order, each with its kind, the signature or type the language server gives and its line. A markdown file lists its headings, nested by level. <em>Structure</em> in the menu of a tab or of a file in the tree opens it too, for a closed file after opening it. It opens on the innermost symbol the cursor stands in. Typing narrows the list, Enter jumps to the line, in a diff on the working copy, and scrolls a shown preview to the heading. PHP answers while it still indexes, Go once its index stands.`,
+				},
+				{
 					Title: "Go to definition and usages",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "B"}}, {Caps: []string{"Ctrl", "Alt", "U"}}},
 					Desc:  `For PHP, Go, TypeScript, JavaScript and Python. Hold <kbd>Ctrl</kbd> and click a symbol to jump to its definition, or to its usages when the cursor already sits on the declaration, and on touch a tap raises a small <em>Look up</em> action. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>U</kbd> lists the usages at the cursor. On a declaration, the implementations of an interface and the subclasses of a class stand above the usages, the indirect ones below them. A target outside the project opens too, a dependency's sources or a standard library, as a read only tab. PHP and Go index the project first, the statusbar showing how far, and a lookup waits for that index; <em>Reindex</em> in the editor's menu starts them over. A JavaScript or TypeScript project without a <code>jsconfig.json</code> or <code>tsconfig.json</code> gets a default one. A Python project without a Pyright configuration of its own finds its dependencies in a <code>.venv</code> or <code>venv</code> inside it. Settings &rarr; Editor &rarr; LSP picks how each server runs. A project's servers stop after 300 seconds without editor use, minimum 60. At most 3 projects run servers at the same time, minimum 1, all languages of a project count as one. Another project stops the least recently used one, unless all are busy.`,
@@ -330,7 +335,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "The sheets take the keyboard",
-					Desc:  `The git sheet, the docker sheet, the open files and a file's history open with the first row marked: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor at its right edge, on a phone the full width from the bottom.`,
+					Desc:  `The git sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor at its right edge, on a phone the full width from the bottom.`,
 				},
 				{
 					Title: "Open files and their order",

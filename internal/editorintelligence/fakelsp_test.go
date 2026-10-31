@@ -407,6 +407,9 @@ func runFakeLSP(mode string) {
 				case "lists-late":
 					// Silent as well, and partial until the didOpen above
 					// publishes its diagnostics.
+				case "held":
+					// An indexing that never ends.
+					progress("begin", -1)
 				default:
 					indexed.Store(true)
 					progress("begin", -1)

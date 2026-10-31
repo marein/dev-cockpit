@@ -376,6 +376,17 @@ func (s *Server) handleEditorLSPClassName(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// handleEditorLSPStructure answers the declarations of the document the
+// body carries, its unsaved text. An unavailable server answers with a
+// status inside a 200 like a navigation.
+func (s *Server) handleEditorLSPStructure(c *gin.Context) {
+	_, req, ok := s.editorLSPRequest(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, s.intel.Structure(c.Request.Context(), req))
+}
+
 // handleEditorLSPDefinition answers where the symbol at the position is
 // defined. An unavailable server answers with a status inside a 200, a
 // malformed request is the only error case.

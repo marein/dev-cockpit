@@ -214,6 +214,9 @@ func (c *lspConn) initialize(ctx context.Context) error {
 				"definition": map[string]any{},
 				"references": map[string]any{},
 				"hover":      map[string]any{"contentFormat": []string{"markdown", "plaintext"}},
+				// The flat list leaves the detail out, a signature or a
+				// type, and gopls the fields of a struct too.
+				"documentSymbol": map[string]any{"hierarchicalDocumentSymbolSupport": true},
 			},
 			"workspace": map[string]any{
 				"configuration":    true,

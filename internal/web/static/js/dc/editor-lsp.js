@@ -62,9 +62,13 @@ export function createClient(base, spec, namesSpec) {
     names(path) {
       return nameExts.has(extOf(path));
     },
+    label(path) {
+      return langs.get(extOf(path)) || "";
+    },
     definition: (payload, signal) => post("definition", payload, signal),
     references: (payload, signal) => post("references", payload, signal),
     className: (payload, signal) => post("class-name", payload, signal),
+    structure: (payload, signal) => post("structure", payload, signal),
     // The project's types matching a query, over every language it holds.
     // The client id lets a newer query cancel this one on the server.
     types: (query, signal) => getJSON(`${base}/lsp/types?client=${encodeURIComponent(id)}&q=${encodeURIComponent(query)}`, { signal }),

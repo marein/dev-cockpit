@@ -224,7 +224,9 @@ func positionExchange(req Request, profile *Profile, langID, method string, read
 // in flight call beside the client and the method, the document for a lookup
 // at a position, a type search's request otherwise. refusable marks a
 // request a server answers with an error for a position that holds nothing
-// of what it asks about, which then reads as an empty answer.
+// of what it asks about, which then reads as an empty answer. unindexed
+// marks a request the server answers off its document alone, which goes out
+// without the wait.
 type exchange struct {
 	client    string
 	project   string
@@ -234,6 +236,7 @@ type exchange struct {
 	scope     string
 	method    string
 	refusable bool
+	unindexed bool
 	open      func(c *lspConn) error
 	send      func(c *lspConn) (int64, chan rpcMessage, error)
 	read      func(json.RawMessage) error
@@ -268,7 +271,7 @@ func (s *Service) exchange(ctx context.Context, x exchange) (*managedConn, strin
 	}
 	// The wait runs outside docMu: it may stand for a long time, and a tab
 	// closing meanwhile must not queue behind it.
-	if err == nil {
+	if err == nil && !x.unindexed {
 		err = mc.conn.waitIndexed(callCtx, indexWaitBudget)
 	}
 	if err == nil {
