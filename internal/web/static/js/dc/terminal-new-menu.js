@@ -1,13 +1,21 @@
 import { followPointer, openedByKeyboard, revealRow } from "@dc/contextmenu";
+import { el, syncAnimations } from "@dc/dom";
 import { rankRows, rankTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import * as projectSort from "@dc/project-sort";
 
 export const RESUME_FOLD_LIMIT = 3;
+export const HIT_LIMIT = 30;
 
 const finePointer = window.matchMedia("(pointer: fine)");
 
 const nameOf = (row) => row.dataset.resumeName ?? row.textContent.trim();
+
+export function showMore(row, count = 0) {
+  const label = "Show " + count + " more";
+  if (count && row.textContent !== label) row.lastChild.textContent = label;
+  if (row.hidden !== !count) row.hidden = !count;
+}
 
 // NewMenu is the + menu of the tab strip: new coder, new shell and the
 // inactive coders to resume, folded per project, under a filter field that
@@ -26,6 +34,8 @@ export class NewMenu {
     this.index = -1;
     this.filtering = false;
     this.expanded = new Set();
+    this.uncapped = new Set();
+    this.query = "";
     this.prevFocus = null;
     this.refocus = false;
     this.wire();
@@ -59,6 +69,9 @@ export class NewMenu {
       this.index = 0;
       this.filter();
     }, { signal });
+    this.list.addEventListener("contentvisibilityautostatechange", (event) => {
+      if (!event.skipped) syncAnimations(event.target);
+    }, { capture: true, signal });
     // Bootstrap takes Escape in a menu on the document while capturing and
     // answers it by focusing the toggle, so the field claims its keys on the
     // window first. Keys from anywhere else reach onKeydown through the strip.
@@ -106,8 +119,32 @@ export class NewMenu {
   prepare() {
     for (const node of this.list.querySelectorAll("[data-tabs-resume-projects], [data-tabs-editors]")) projectSort.sort(node);
     this.order = Array.from(this.list.querySelectorAll("[data-tabs-new], [data-resume-id]"));
-    this.list.querySelectorAll("[data-tabs-resume-fold]").forEach((group) => this.fold(group));
+    this.more = new Map();
+    for (const group of this.list.querySelectorAll("[data-tabs-resume-fold]")) {
+      this.fold(group);
+      if (group.querySelectorAll("[data-resume-id]").length > HIT_LIMIT) this.moreRow(group);
+    }
     this.filter();
+  }
+
+  // With a query a group shows its best hits only, this row the rest. It
+  // stands behind the fold's box, which counts every child as a row.
+  moreRow(group) {
+    const key = group.getAttribute("data-tabs-resume-fold");
+    const row = el("button", {
+      type: "button",
+      class: "dropdown-item text-center text-secondary small py-1",
+      hidden: true,
+      "data-tabs-resume-more": key,
+    }, el("span"));
+    row.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.uncapped.add(key);
+      this.filter();
+    }, { signal: this.signal });
+    group.after(row);
+    this.more.set(key, row);
   }
 
   // A filter suspends the fold, every hit shows.
@@ -133,10 +170,16 @@ export class NewMenu {
 
   filter() {
     const query = this.field.value.trim();
-    const shown = rankRows(this.order, (row) => (query ? rankTokens(nameOf(row), `${nameOf(row)} ${row.dataset.resumeProject ?? ""}`, query) : 0), {
+    if (query !== this.query) {
+      this.query = query;
+      this.uncapped.clear();
+    }
+    const { shown, rest } = rankRows(this.order, (row) => (query ? rankTokens(nameOf(row), `${nameOf(row)} ${row.dataset.resumeProject ?? ""}`, query) : 0), {
       groupOf: (row) => row.dataset.resumeProject ?? "",
       unitOf: (row) => row.closest("form") ?? row,
+      limitOf: (key) => (query && !this.uncapped.has(key) ? HIT_LIMIT : Infinity),
     });
+    for (const [key, row] of this.more) showMore(row, rest.get(key));
     // The fold counts the rows in the order they stand, so it waits until an
     // emptied filter has put them back in theirs.
     if (this.filtering !== (query !== "")) {
@@ -153,6 +196,7 @@ export class NewMenu {
     }
     this.list.querySelector("[data-tabs-new-none]").hidden = shown.length > 0;
     this.paint();
+    if (this.open) syncAnimations(this.list);
   }
 
   rows() {

@@ -1,10 +1,11 @@
 import { el, syncAnimations } from "@dc/dom";
 import { rankRows, rankTokens } from "@dc/filter";
 import { ensureOk, landingURL, postForm } from "@dc/http";
-import { RESUME_FOLD_LIMIT } from "@dc/terminal-new-menu";
+import { HIT_LIMIT, RESUME_FOLD_LIMIT, showMore } from "@dc/terminal-new-menu";
 import { notifyError } from "@dc/toast";
 
-const switcherKey = ({ dataset: d }) => [d.switcherToggle, d.switcherResume, d.switcherId || d.switcherUrl].join("\n");
+const switcherKey = ({ dataset: d }) => [d.switcherToggle, d.switcherMore, d.switcherResume, d.switcherId || d.switcherUrl].join("\n");
+const groupKey = ({ dataset: d }) => (d.switcherSection || "") + "\n" + (d.switcherGroup || "");
 
 // Switcher is the switcher of a terminal-tabs element, its rows built from
 // the element's strip and + menu. The element closes it through its
@@ -164,6 +165,33 @@ export class Switcher {
     return row;
   }
 
+  // With a query a group shows its best hits only, this row the rest.
+  moreRow(key, inactive) {
+    const row = el(
+      "div",
+      {
+        role: "option",
+        class: "terminal-switcher-item terminal-switcher-item-toggle" + (inactive ? " terminal-switcher-item-inactive" : ""),
+        hidden: true,
+        dataset: { switcherMore: key },
+      },
+      el("span", { class: "terminal-switcher-name text-truncate" }),
+    );
+    row.addEventListener("pointerdown", (event) => event.preventDefault(), { signal: this.signal });
+    row.addEventListener("click", () => this.showRest(key), { signal: this.signal });
+    return row;
+  }
+
+  // The first row revealed takes the place and the mark of the more row.
+  showRest(key) {
+    const at = this.visible.indexOf(this.more.get(key));
+    this.uncapped.add(key);
+    this.filter();
+    this.index = Math.max(at, 0);
+    this.paint();
+    syncAnimations(this.overlay);
+  }
+
   expandGroup(project) {
     const list = this.overlay.querySelector(".terminal-switcher-list");
     const scrollTop = list.scrollTop;
@@ -195,6 +223,13 @@ export class Switcher {
 
   buildLists() {
     const host = this.host;
+    const more = new Map();
+    const capped = (members, nodes = members) => {
+      if (members.length <= HIT_LIMIT) return [...nodes];
+      const key = groupKey(members[0]);
+      more.set(key, this.moreRow(key, members[0].dataset.switcherSection === "inactive"));
+      return [...nodes, more.get(key)];
+    };
     const rows = host.tabs().map((tab) => this.switcherRow(tab));
     const resumeRows = [];
     const inactiveNodes = [];
@@ -210,17 +245,10 @@ export class Switcher {
         el("span", { class: "text-truncate" }, project),
       );
       groupLabels.push({ key: project, node: label });
-      inactiveNodes.push(label);
-      buttons.forEach((button, index) => {
-        const row = this.resumeRow(button, project, index >= RESUME_FOLD_LIMIT);
-        resumeRows.push(row);
-        inactiveNodes.push(row);
-      });
-      if (buttons.length > RESUME_FOLD_LIMIT) {
-        const toggle = this.resumeToggleRow(project, buttons.length - RESUME_FOLD_LIMIT);
-        resumeRows.push(toggle);
-        inactiveNodes.push(toggle);
-      }
+      const projectRows = buttons.map((button, index) => this.resumeRow(button, project, index >= RESUME_FOLD_LIMIT));
+      const toggle = buttons.length > RESUME_FOLD_LIMIT ? [this.resumeToggleRow(project, buttons.length - RESUME_FOLD_LIMIT)] : [];
+      resumeRows.push(...projectRows, ...toggle);
+      inactiveNodes.push(label, ...capped(projectRows, [...projectRows, ...toggle]));
     }
     const editorRows = Array.from(host.querySelectorAll("[data-tabs-editors] [data-editor-project]"))
       .map((link) => this.editorRow(link));
@@ -231,23 +259,23 @@ export class Switcher {
       .concat(Array.from(host.querySelectorAll("[data-tabs-assistant-instance]"))
         .map((link) => this.assistantInstanceRow(link)));
     const sections = [];
-    const listNodes = [...rows];
+    const listNodes = capped(rows);
     const addSection = (key, title, nodes) => {
       if (!nodes.length) return;
       const node = el("div", { class: "terminal-switcher-section", dataset: { switcherSection: key } }, title);
       sections.push({ key, node });
       listNodes.push(node, ...nodes);
     };
-    addSection("assistant", "Assistants", assistantRows);
+    addSection("assistant", "Assistants", capped(assistantRows));
     addSection("inactive", "Inactive coders", inactiveNodes);
-    addSection("editors", "Editors", editorRows);
-    addSection("new", "New", actionRows);
+    addSection("editors", "Editors", capped(editorRows));
+    addSection("new", "New", capped(actionRows));
     const cycleRows = rows.concat(assistantRows, resumeRows, editorRows, actionRows);
-    return { rows, cycleRows, listNodes, sections, groupLabels };
+    return { rows, cycleRows, listNodes, sections, groupLabels, more };
   }
 
   open(direction) {
-    const { rows, cycleRows, listNodes, sections, groupLabels } = this.buildLists();
+    const { rows, cycleRows, listNodes, sections, groupLabels, more } = this.buildLists();
     if (!cycleRows.length) return false;
     const input = el("input", {
       type: "text",
@@ -260,6 +288,7 @@ export class Switcher {
       "aria-label": "Filter coders and shells",
     });
     const empty = el("div", { class: "terminal-switcher-empty", hidden: true }, "No matches");
+    const list = el("div", { class: "terminal-switcher-list", role: "listbox" }, listNodes, empty);
     const overlay = el(
       "div",
       { class: "terminal-switcher", role: "dialog", "aria-modal": "true", "aria-label": "Switch coder or shell" },
@@ -267,11 +296,14 @@ export class Switcher {
         "div",
         { class: "terminal-switcher-panel" },
         input,
-        el("div", { class: "terminal-switcher-list", role: "listbox" }, listNodes, empty),
+        list,
         el("div", { class: "terminal-switcher-hint" }, "Type to filter, arrows to cycle, Enter to switch, Esc to close"),
       ),
     );
     input.addEventListener("input", () => this.applyFilter(true), { signal: this.signal });
+    list.addEventListener("contentvisibilityautostatechange", (event) => {
+      if (!event.skipped) syncAnimations(event.target);
+    }, { capture: true, signal: this.signal });
     overlay.addEventListener("pointerdown", (event) => {
       if (event.target === overlay) this.host.closeSwitcher();
     }, { signal: this.signal });
@@ -282,7 +314,10 @@ export class Switcher {
       rows: cycleRows,
       sections,
       groupLabels,
+      more,
       expanded: new Set(),
+      uncapped: new Set(),
+      query: "",
       input,
       empty,
       visible: cycleRows.slice(),
@@ -306,15 +341,16 @@ export class Switcher {
     const anchorAt = inView(this.visible[this.index]) ? this.index : this.visible.findIndex((row) => rect(row).bottom > top);
     const offset = anchorAt === -1 ? 0 : rect(this.visible[anchorAt]).top - top;
     const keys = this.visible.map(switcherKey);
-    const { cycleRows, listNodes, sections, groupLabels } = this.buildLists();
+    const { cycleRows, listNodes, sections, groupLabels, more } = this.buildLists();
     list.replaceChildren(...listNodes, this.empty);
-    Object.assign(this, { rows: cycleRows, sections, groupLabels });
+    Object.assign(this, { rows: cycleRows, sections, groupLabels, more });
     this.filter();
     const fresh = new Map(this.visible.map((row, index) => [switcherKey(row), index]));
     const nearest = (at) => keys.flatMap((_, d) => [keys[at + d], keys[at - d]])
       .map((key) => fresh.get(key)).find((hit) => hit !== undefined) ?? -1;
     this.index = Math.max(nearest(this.index), 0);
     this.paint(false);
+    syncAnimations(this.overlay);
     const anchor = this.visible[nearest(anchorAt)];
     if (anchor) list.scrollTop += rect(anchor).top - top - offset;
   }
@@ -329,28 +365,45 @@ export class Switcher {
     this.filter();
     this.index = Math.max(fromInput ? -1 : this.visible.indexOf(selected), 0);
     this.paint();
+    syncAnimations(this.overlay);
   }
 
   // Each group (the open tabs, a section, a project's inactive coders) sorts
   // its rows by rank on its own, so the sections keep their place.
   filter() {
     const query = this.input.value.trim();
-    this.visible = rankRows(this.rows, (row) => {
+    if (query !== this.query) {
+      this.query = query;
+      this.uncapped.clear();
+    }
+    const { shown, rest } = rankRows(this.rows, (row) => {
       if (row.dataset.switcherToggle) return !query && !this.expanded.has(row.dataset.switcherToggle) ? 0 : -1;
       if (query) return rankTokens(row.querySelector(".terminal-switcher-name")?.textContent || "", row.dataset.switcherName, query);
       return row.dataset.switcherFolded && !this.expanded.has(row.dataset.switcherFolded) ? -1 : 0;
-    }, { groupOf: (row) => (row.dataset.switcherSection || "") + "\n" + (row.dataset.switcherGroup || "") });
+    }, { groupOf: groupKey, limitOf: (key) => (query && !this.uncapped.has(key) ? HIT_LIMIT : Infinity) });
+    this.visible = [];
+    shown.forEach((row, index) => {
+      this.visible.push(row);
+      const key = groupKey(row);
+      if (rest.has(key) && (index + 1 === shown.length || groupKey(shown[index + 1]) !== key)) this.visible.push(this.more.get(key));
+    });
+    for (const [key, row] of this.more) showMore(row, rest.get(key));
     this.empty.hidden = this.visible.length > 0;
-    for (const { node, key } of this.sections) node.hidden = !this.visible.some((row) => row.dataset.switcherSection === key);
-    for (const { node, key } of this.groupLabels) node.hidden = !this.visible.some((row) => row.dataset.switcherGroup === key);
-    syncAnimations(this.overlay);
+    const sections = new Set(this.visible.map((row) => row.dataset.switcherSection));
+    const groups = new Set(this.visible.map((row) => row.dataset.switcherGroup));
+    for (const { node, key } of this.sections) node.hidden = !sections.has(key);
+    for (const { node, key } of this.groupLabels) node.hidden = !groups.has(key);
   }
 
   paint(reveal = true) {
     const selected = this.visible[this.index];
-    for (const row of this.rows) {
-      row.classList.toggle("selected", row === selected);
-      row.setAttribute("aria-selected", row === selected ? "true" : "false");
+    for (const rows of [this.rows, this.more.values()]) {
+      for (const row of rows) {
+        const state = String(row === selected);
+        if (row.getAttribute("aria-selected") === state) continue;
+        row.classList.toggle("selected", row === selected);
+        row.setAttribute("aria-selected", state);
+      }
     }
     if (reveal) selected?.scrollIntoView({ block: "nearest" });
   }
@@ -364,7 +417,8 @@ export class Switcher {
   commit() {
     const selected = this.visible[this.index];
     if (!selected) return;
-    if (selected.dataset.switcherToggle) this.expandGroup(selected.dataset.switcherToggle);
+    if (selected.dataset.switcherMore) this.showRest(selected.dataset.switcherMore);
+    else if (selected.dataset.switcherToggle) this.expandGroup(selected.dataset.switcherToggle);
     else if (selected.dataset.switcherResume) void this.resumeTarget(selected);
     else this.host.navigate(selected.dataset.switcherUrl);
   }

@@ -12,6 +12,7 @@
   --dc-selection-bg: #146ecd;
   --dc-selection-fg: #ffffff;
   --dc-terminal-inset: 3px;
+  --dc-term-icon-size: 22px;
   --dc-float-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.35);
   --dc-sheet-radius: 12px;
 }
@@ -351,7 +352,7 @@ dc-host-status.dc-cockpit-icon { display: flex; }
 /* Session icons: the coder or shell mark as a status light. */
 .dc-term-icon {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border-radius: 6px; flex: none;
+  width: var(--dc-term-icon-size); height: var(--dc-term-icon-size); border-radius: 6px; flex: none;
   background: rgba(var(--tblr-secondary-rgb), 0.16); color: var(--tblr-secondary);
   font-size: 14px; line-height: 1;
 }
@@ -908,6 +909,7 @@ terminal-tabs[data-tabs-vertical] .terminal-tabs-strip { display: flex; flex-dir
 .terminal-tabs-new-rows { max-height: min(70vh, 26rem); overflow-y: auto; overscroll-behavior: contain; }
 .terminal-tabs-new-menu .dropdown-item > .text-truncate { min-width: 0; }
 .terminal-tabs-new-menu .dropdown-item.selected { background: var(--tblr-active-bg, rgba(74, 144, 226, 0.18)); }
+.terminal-tabs-new-menu [data-resume-id] { content-visibility: auto; contain-intrinsic-block-size: auto max(1lh, var(--dc-term-icon-size)); }
 .terminal-tabs-resume-project { padding-top: 0.375rem; padding-bottom: 0.125rem; font-size: 0.6875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .terminal-switcher {
   position: fixed;
@@ -976,12 +978,9 @@ terminal-tabs[data-tabs-vertical] .terminal-tabs-strip { display: flex; flex-dir
 .terminal-switcher-group[hidden] {
   display: none;
 }
-.terminal-switcher-item-toggle {
-  color: var(--tblr-secondary);
-}
-.terminal-switcher-item-inactive {
-  opacity: 0.72;
-}
+.terminal-switcher-item-toggle { color: var(--tblr-secondary); }
+.terminal-switcher-item-inactive { opacity: 0.72; }
+.terminal-switcher-item-inactive:not(.terminal-switcher-item-toggle) { content-visibility: auto; contain-intrinsic-block-size: auto max(1lh, var(--dc-term-icon-size)); }
 .terminal-switcher-item-inactive:hover, .terminal-switcher-item-inactive.selected {
   opacity: 1;
 }

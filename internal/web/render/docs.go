@@ -134,7 +134,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Open the terminal switcher",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Ctrl"}}},
-					Desc:  `Tap Ctrl twice with no other key in between. Type to filter, the arrows move, Enter opens and Escape closes. It lists active terminals, every assistant by its name (the assistants overview only while there is none), resumable coders, project editors and the new-terminal actions. The filter matches everything a row shows.`,
+					Desc:  `Tap Ctrl twice with no other key in between. Type to filter, the arrows move, Enter opens and Escape closes. It lists active terminals, every assistant by its name (the assistants overview only while there is none), resumable coders, project editors and the new-terminal actions. The filter matches everything a row shows. Under a filter each group lists its 30 best hits, <em>Show N more</em> below them lists the rest.`,
 				},
 			},
 		},
@@ -227,7 +227,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Open the plus menu",
 					Keys:  []DocsKeys{{Caps: []string{"Cmd", "T"}}},
-					Desc:  `Opens the plus menu <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> of the tab strip with the keyboard in its filter. Typing narrows it to the new coder, the new shell and the coders to resume that match, the arrows walk what is left and Enter takes it. <i class="ti ti-x align-text-bottom" aria-hidden="true"></i> empties the filter.`,
+					Desc:  `Opens the plus menu <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> of the tab strip with the keyboard in its filter. Typing narrows it to the new coder, the new shell and the coders to resume that match, the arrows walk what is left and Enter takes it. Each project lists its 30 best hits, <em>Show N more</em> below them lists the rest. <i class="ti ti-x align-text-bottom" aria-hidden="true"></i> empties the filter.`,
 				},
 				{
 					Title: "Close the current terminal",

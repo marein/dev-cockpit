@@ -1,4 +1,5 @@
 const L = require("./lib");
+const terminalTabsCap = require("./terminal-tabs-cap");
 const { assert, sleep, BASE } = L;
 
 // The open switcher across a strip refresh, run by terminal-tabs.js on its
@@ -10,7 +11,9 @@ const { assert, sleep, BASE } = L;
 // and is not pulled back to the mark at the top, which is what the rebuild did
 // before. A mark whose row goes moves to the row after it, the typed filter
 // stays. Both on a terminal page, where the strip is the switcher, and on
-// /projects, where the hidden switcher only instance serves it.
+// /projects, where the hidden switcher only instance serves it. The cap of a
+// group under a filter, in the switcher and the + menu, follows in
+// terminal-tabs-cap.js.
 
 module.exports = async function terminalTabsSwitcher({ run, page, project, ids }) {
   const own = Array.from({ length: 12 }, (_, i) => `${project}-p${String(i + 1).padStart(2, "0")}`);
@@ -161,4 +164,5 @@ module.exports = async function terminalTabsSwitcher({ run, page, project, ids }
     await post("/projects/delete", "project=" + encodeURIComponent(comer)).catch(() => {});
     await post("/projects/delete", own.map((name) => "project=" + encodeURIComponent(name)).join("&")).catch(() => {});
   }
+  await terminalTabsCap({ run, page, project, ids });
 };

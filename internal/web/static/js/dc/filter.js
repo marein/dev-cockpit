@@ -23,6 +23,7 @@ export function hitRanges(text, query) {
   return merged;
 }
 
+const ASCII = /^[\x00-\x7f]*$/;
 const WORD_SEPARATOR = /[\s\-_./:]/;
 const UPPER = /\p{Lu}/u;
 const LOWER = /\p{Ll}/u;
@@ -44,33 +45,77 @@ export function rankTokens(name, haystack, query) {
 // group by rank where the group stands, so the groups keep their place: the
 // units of a group, the elements that carry its rows (unitOf), stand next to
 // each other. Equal ranks keep the order the rows come in, so an empty query
-// gives that order back. It answers the rows left, in their new order.
-export function rankRows(rows, rankOf, { groupOf = () => "", unitOf = (row) => row } = {}) {
+// gives that order back. A group shows only its limitOf(group) best rows. It
+// answers the rows shown, in their new order, and per group the count of
+// ranked rows the limit hid. Only the shown units that stand out of that
+// order move, a moved node restarts its animations and is laid out anew.
+export function rankRows(rows, rankOf, { groupOf = () => "", unitOf = (row) => row, limitOf = () => Infinity } = {}) {
   const groups = new Map();
   rows.forEach((row, index) => {
-    const rank = rankOf(row);
-    unitOf(row).hidden = rank < 0;
     const key = groupOf(row);
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ row, index, rank: rank < 0 ? Infinity : rank });
+    groups.get(key).push({ row, unit: unitOf(row), index, rank: rankOf(row) });
   });
   const shown = [];
-  for (const members of groups.values()) {
-    members.sort((a, b) => a.rank - b.rank || a.index - b.index);
-    const units = new Set(members.map(({ row }) => unitOf(row)));
-    const last = [...units].find((unit) => !units.has(unit.nextElementSibling));
-    const after = last?.nextSibling || null;
-    for (const { row } of members) {
-      last?.parentNode?.insertBefore(unitOf(row), after);
-      if (!unitOf(row).hidden) shown.push(row);
+  const rest = new Map();
+  for (const [key, members] of groups) {
+    const kept = members.filter(({ rank }) => rank >= 0).sort((a, b) => a.rank - b.rank || a.index - b.index);
+    const limit = limitOf(key);
+    if (kept.length > limit) rest.set(key, kept.length - limit);
+    const show = kept.slice(0, limit);
+    const units = new Set(show.map(({ unit }) => unit));
+    for (const { unit } of members) {
+      const hide = !units.has(unit);
+      if (unit.hidden !== hide) unit.hidden = hide;
     }
+    arrange(new Set(members.map(({ unit }) => unit)), [...units]);
+    for (const { row } of show) shown.push(row);
   }
-  return shown;
+  return { shown, rest };
+}
+
+function arrange(units, order) {
+  if (order.length < 2) return;
+  let first = units.values().next().value;
+  while (units.has(first.previousElementSibling)) first = first.previousElementSibling;
+  const at = new Map();
+  let last = first;
+  for (let node = first; units.has(node); node = node.nextElementSibling) {
+    at.set(node, at.size);
+    last = node;
+  }
+  const stay = longestRising(order.map((unit) => at.get(unit)));
+  let next = last.nextSibling;
+  for (let index = order.length - 1; index >= 0; index--) {
+    if (!stay.has(index)) last.parentNode.insertBefore(order[index], next);
+    next = order[index];
+  }
+}
+
+function longestRising(values) {
+  const tails = [];
+  const before = [];
+  values.forEach((value, index) => {
+    if (value === undefined) return;
+    let low = 0;
+    let high = tails.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (values[tails[mid]] < value) low = mid + 1;
+      else high = mid;
+    }
+    before[index] = low > 0 ? tails[low - 1] : -1;
+    tails[low] = index;
+  });
+  const stay = new Set();
+  for (let index = tails.length ? tails[tails.length - 1] : -1; index >= 0; index = before[index]) stay.add(index);
+  return stay;
 }
 
 // The lowercased name keeps every offset of the original, which alone still
 // carries the case a camel case word start is read from.
 function lowerInPlace(text) {
+  if (ASCII.test(text)) return text.toLowerCase();
   return Array.from(text, (ch) => {
     const low = ch.toLowerCase();
     return low.length === ch.length ? low : ch;
