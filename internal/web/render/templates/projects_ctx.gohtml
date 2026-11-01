@@ -42,7 +42,7 @@
   {{range .Rows}}
   {{$name := .Name}}{{$editorURL := print "/projects/" .Name "/editor"}}
   <a class="list-group-item list-group-item-action{{if .Grouped}} is-nested{{end}}" href="/projects#project-{{.Name}}" data-dc-focus="work" data-index-project="{{.Name}}" data-index-path="{{.Path}}" data-index-active="{{if .Active}}true{{else}}false{{end}}" data-index-used="{{.LastUsedUnix}}"{{if .Grouped}} data-index-worktree-of="{{.GitWorktreeOf}}"{{end}}{{with .SearchTags}} data-index-tags="{{join . " "}}"{{end}}{{if not .GitWorktree}} data-index-tags-url="/projects/{{.Name}}/tags"{{end}}
-     {{- if .GitRepo}} data-git-project="{{.Name}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}?view=commit" data-git-compare="{{$editorURL}}?view=compare"{{end}}
+     {{- if .GitRepo}} data-git-project="{{.Name}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}?view=commit" data-git-compare="{{$editorURL}}?view=compare" data-git-forge="/projects/{{.Name}}/forge"{{end}}
      {{- with index $.Docker .Name}}{{if .Stacks}} data-docker-project="{{$name}}"{{end}}{{end}}
      {{- with .DeleteNote}} data-index-delete-note="{{.}}"{{end}}>
     {{if .Grouped}}<i class="ti ti-git-fork" aria-hidden="true"></i>{{end}}{{if .Tags}}<span class="dc-tagged flex-fill"><span class="dc-mono dc-trunc">{{.Name}}</span>{{template "tag_pie.gohtml" .Tags}}</span>{{else}}<span class="dc-mono dc-trunc flex-fill">{{.Name}}</span>{{end}}

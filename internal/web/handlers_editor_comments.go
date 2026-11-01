@@ -3,47 +3,15 @@ package web
 import (
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/forge"
+	"github.com/marein/dev-cockpit/internal/linecomment"
 	"github.com/marein/dev-cockpit/internal/project"
 )
-
-// maxLineCommentText bounds one stored note. It is far beyond any note a
-// person writes and only refuses a body that cannot be one.
-const maxLineCommentText = 16 << 10
-
-// maxLineCommentQuote bounds the quoted code line. The quote is what the
-// text export cites, one line of code, so anything past this is cut
-// rather than stored: the state file must not grow with a minified file
-// somebody commented on.
-const maxLineCommentQuote = 500
-
-// clampLineQuote cuts the quoted code line to its cap, on a rune boundary so
-// the stored text stays valid UTF-8.
-func clampLineQuote(text string) string {
-	if len(text) <= maxLineCommentQuote {
-		return text
-	}
-	cut := maxLineCommentQuote
-	for cut > 0 && !isRuneStart(text[cut]) {
-		cut--
-	}
-	return text[:cut]
-}
-
-func isRuneStart(b byte) bool {
-	return b&0xC0 != 0x80
-}
-
-// fileLine is one line of a file the way a quote holds it. A file with
-// Windows line endings ends every line with a carriage return, which belongs
-// to the ending, not to the code.
-func fileLine(line string) string {
-	return clampLineQuote(strings.TrimSuffix(line, "\r"))
-}
 
 // checkCommentPath verifies that a comment's path stays inside the project.
 // The file itself does not have to exist: a note may outlive its file, and
@@ -60,108 +28,100 @@ func checkCommentPath(c *gin.Context, root, rel string) bool {
 	return true
 }
 
-// lineCommentView is one comment the way a read answers it: the stored note,
-// plus whether its quote still matches the file. Outdated is judged on every
-// read and never stored, so a file that comes back heals its comments by
-// itself. Mine marks a note the reading guest wrote under its own link.
+// lineCommentView is one comment the way a read answers it: the stored
+// thread, whether its quote still matches the file, judged on every read and
+// never stored, so a file that comes back heals its comments by itself, and
+// where a thread of the forge came from. Resolved is the thread's state. Mine
+// marks a note the reading guest wrote under its own link. Nothing of the link a guest wrote a note under
+// shows, another guest has no business with it.
 type lineCommentView struct {
-	lineComment
-	Outdated bool `json:"outdated,omitempty"`
-	Mine     bool `json:"mine,omitempty"`
+	ID        string           `json:"id"`
+	Path      string           `json:"path"`
+	Line      int              `json:"line"`
+	LineText  string           `json:"lineText,omitempty"`
+	Text      string           `json:"text"`
+	Author    string           `json:"author,omitempty"`
+	Forge     *forgeThreadView `json:"forge,omitempty"`
+	Replies   []lineReplyView  `json:"replies,omitempty"`
+	Resolved  bool             `json:"resolved,omitempty"`
+	UpdatedAt time.Time        `json:"updatedAt"`
+	Outdated  bool             `json:"outdated,omitempty"`
+	Mine      bool             `json:"mine,omitempty"`
+}
+
+// lineReplyView is one reply of a thread the way a read answers it, Mine
+// marking one the reading guest wrote.
+type lineReplyView struct {
+	ID        string    `json:"id"`
+	Text      string    `json:"text"`
+	Author    string    `json:"author,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Mine      bool      `json:"mine,omitempty"`
+}
+
+// forgeThreadView is what a reader sees of where a thread of the forge came
+// from: the kind of forge with its name and icon and the thread's page there.
+// The owner, who answers and resolves threads, reads the thread's id too.
+type forgeThreadView struct {
+	Kind   string `json:"kind"`
+	Label  string `json:"label"`
+	Icon   string `json:"icon"`
+	URL    string `json:"url,omitempty"`
+	Thread string `json:"thread,omitempty"`
 }
 
 // commentWriterOf answers who a request writes line comments as, the guest
 // of the link it came in through or the owner.
-func commentWriterOf(c *gin.Context) commentWriter {
+func commentWriterOf(c *gin.Context) linecomment.Writer {
 	if g, ok := guestOf(c); ok {
-		return commentWriter{link: g.share.ID, name: g.share.Name}
+		return linecomment.Writer{Link: g.share.ID, Name: g.share.Name}
 	}
-	return commentWriter{}
+	return linecomment.Writer{}
 }
 
-// shown is a comment the way w reads it: whether w wrote it, and nothing of
-// the link a guest wrote it under, which another guest has no business with.
-func (w commentWriter) shown(view lineCommentView) lineCommentView {
-	view.Mine = w.link != "" && view.Link == w.link
-	view.Link = ""
+// commentView is a judged comment the way w reads it.
+func (s *Server) commentView(w linecomment.Writer, v linecomment.View) lineCommentView {
+	view := lineCommentView{
+		ID:        v.ID,
+		Path:      v.Path,
+		Line:      v.Line,
+		LineText:  v.LineText,
+		Text:      v.Text,
+		Author:    v.Author,
+		UpdatedAt: v.UpdatedAt,
+		Resolved:  v.Resolved,
+		Outdated:  v.Outdated,
+		Mine:      w.Link != "" && v.Link == w.Link,
+	}
+	for _, r := range v.Replies {
+		view.Replies = append(view.Replies, lineReplyView{ID: r.ID, Text: r.Text, Author: r.Author, UpdatedAt: r.UpdatedAt, Mine: w.Link != "" && r.Link == w.Link})
+	}
+	if f := v.Forge; f != nil {
+		kind := s.forgeKind(f.Kind)
+		view.Forge = &forgeThreadView{Kind: f.Kind, Label: kind.Label, Icon: kind.Icon, URL: f.URL}
+		if w.Link == "" {
+			view.Forge.Thread = f.Thread
+		}
+	}
 	return view
 }
 
-// reconcileLineComments holds every stored quote against the file it points
-// at, reading only the commented files. A quote that still stands where its
-// line says is fine. A quote that moved and stands in the file exactly once
-// is a comment to rebind, returned per file for the caller to persist; the
-// view already shows the new line, so the answer never lags its own repair.
-// Everything else is honestly outdated: the quote gone or ambiguous, the
-// file missing, renamed or no longer readable as text. An empty quote never
-// rebinds, every empty line would match it. Deliberately nothing fuzzy here:
-// the quote matches exactly, or the comment is outdated.
-func reconcileLineComments(root string, list []lineComment) ([]lineCommentView, map[string][]lineComment) {
-	files := map[string][]string{}
-	readable := map[string]bool{}
-	linesOf := func(rel string) ([]string, bool) {
-		if ok, seen := readable[rel]; seen {
-			return files[rel], ok
+// forgeKind is the kind of forge with that id, its id and the globe for one
+// no provider of this build knows.
+func (s *Server) forgeKind(id string) forge.Kind {
+	if s.forge != nil {
+		if k, ok := s.forge.Kind(id); ok {
+			return k
 		}
-		content, _, err := filesystem.ReadFileText(root, rel)
-		readable[rel] = err == nil
-		if err == nil {
-			files[rel] = strings.Split(content, "\n")
-		}
-		return files[rel], readable[rel]
 	}
-	views := make([]lineCommentView, 0, len(list))
-	rebinds := map[string][]lineComment{}
-	for _, comment := range list {
-		view := lineCommentView{lineComment: comment}
-		lines, ok := linesOf(comment.Path)
-		// TODO(v2.0.0): a released build quoted the disk with the carriage
-		// return of a Windows line ending, fileLine cuts it on both sides.
-		quote := fileLine(comment.LineText)
-		switch {
-		case !ok:
-			view.Outdated = true
-		case comment.Line >= 1 && comment.Line <= len(lines) && fileLine(lines[comment.Line-1]) == quote:
-		case quote == "":
-			view.Outdated = true
-		default:
-			at := 0
-			hits := 0
-			for i, line := range lines {
-				if fileLine(line) == quote {
-					at = i + 1
-					hits++
-				}
-			}
-			if hits == 1 {
-				view.Line = at
-				rebinds[comment.Path] = append(rebinds[comment.Path], lineComment{ID: comment.ID, Line: at, LineText: quote})
-			} else {
-				view.Outdated = true
-			}
-		}
-		views = append(views, view)
-	}
-	sort.SliceStable(views, func(i, j int) bool {
-		if views[i].Path != views[j].Path {
-			return views[i].Path < views[j].Path
-		}
-		return views[i].Line < views[j].Line
-	})
-	return views, rebinds
+	return forge.Kind{ID: id, Label: id, Icon: "ti-world"}
 }
 
 // reconciledLineComments is the one read every answer goes through: it judges
 // the stored comments against the disk, persists what could be rebound and
 // publishes the move, so every open editor follows the repair live.
-func (s *Server) reconciledLineComments(p project.Project) []lineCommentView {
-	views, rebinds := reconcileLineComments(p.Path, s.lineComments.List(p.Name))
-	changed := false
-	for path, moves := range rebinds {
-		if s.lineComments.Move(p.Name, path, moves, commentWriter{}) {
-			changed = true
-		}
-	}
+func (s *Server) reconciledLineComments(p project.Project) []linecomment.View {
+	views, changed := s.lineComments.Reconciled(p.Name, p.Path)
 	if changed {
 		s.publishLineComments(p.Name)
 	}
@@ -183,8 +143,8 @@ func (s *Server) handleEditorComments(c *gin.Context) {
 	patterns := c.QueryArray("path")
 	list := []lineCommentView{}
 	for _, comment := range s.reconciledLineComments(p) {
-		if len(patterns) == 0 || matchesAnyCommentPath(patterns, comment.Path) {
-			list = append(list, w.shown(comment))
+		if len(patterns) == 0 || linecomment.MatchesAnyPath(patterns, comment.Path) {
+			list = append(list, s.commentView(w, comment))
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"comments": list})
@@ -198,11 +158,51 @@ type editorCommentSaveRequest struct {
 	Text     string  `json:"text"`
 }
 
-// handleEditorCommentSave stores one note: a new one without an id, an edited
-// one under its id, and a renamed file's note under its id with the new path.
-// A guest's note is written under its link, and a note of anybody else is
-// refused to it. Only a save that changed something is published, so the
-// other devices are not woken for a note they already hold.
+// noteText is the text of a note a request sends, trimmed, refused when it
+// is empty or longer than a note holds.
+func noteText(c *gin.Context, raw, noun string) (string, bool) {
+	text := strings.TrimSpace(raw)
+	switch {
+	case text == "":
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A " + noun + " is required."})
+		return "", false
+	case len(text) > linecomment.MaxText:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "That " + noun + " is too long."})
+		return "", false
+	}
+	return text, true
+}
+
+// answerThread answers a write of one thread: a refusal with its status, a
+// thread or reply deleted on another device meanwhile as gone instead of the
+// request echoed back as stored, else the thread as w reads it. Only a write
+// that changed something is published, so the other devices are not woken for
+// a note they already hold. It reports whether the write went through.
+func (s *Server) answerThread(c *gin.Context, p project.Project, w linecomment.Writer, thread linecomment.Comment, changed bool, err error) bool {
+	if errors.Is(err, linecomment.ErrNotYours) || errors.Is(err, linecomment.ErrForgeThread) {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return false
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return false
+	}
+	if changed {
+		s.publishLineComments(p.Name)
+	}
+	if thread.ID == "" {
+		c.JSON(http.StatusOK, gin.H{"gone": true})
+		return false
+	}
+	c.JSON(http.StatusOK, gin.H{"comment": s.commentView(w, linecomment.View{Comment: thread})})
+	return true
+}
+
+// handleEditorCommentSave stores the first note of a thread: a new one
+// without an id, an edited one under its id, and a renamed file's note under
+// its id with the new path. A guest's note is written under its link, a new
+// one is news for the owner, and a note of anybody else is refused to it, a
+// thread of the forge to everybody.
 func (s *Server) handleEditorCommentSave(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -220,13 +220,7 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "A line number is required."})
 		return
 	}
-	req.Text = strings.TrimSpace(req.Text)
-	if req.Text == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "A comment is required."})
-		return
-	}
-	if len(req.Text) > maxLineCommentText {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "That comment is too long."})
+	if req.Text, ok = noteText(c, req.Text, "comment"); !ok {
 		return
 	}
 	// The quote is the sender's buffer line, stored untouched even when it
@@ -240,49 +234,120 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 	if req.LineText != nil {
 		quote = *req.LineText
 	} else {
-		quote = diskLineQuote(p.Path, req.Path, req.Line)
+		quote = linecomment.DiskQuote(p.Path, req.Path, req.Line)
 	}
 	w := commentWriterOf(c)
-	comment, changed, err := s.lineComments.Save(p.Name, lineComment{
+	comment, changed, err := s.lineComments.Save(p.Name, linecomment.Comment{
 		ID:       req.ID,
 		Path:     req.Path,
 		Line:     req.Line,
-		LineText: fileLine(quote),
+		LineText: linecomment.FileLine(quote),
 		Text:     req.Text,
 	}, w)
-	if errors.Is(err, errNotYourComment) {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
+	if s.answerThread(c, p, w, comment, changed, err) && req.ID == "" {
+		s.guestWrote(p, w, comment, comment.Text, false)
 	}
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if changed {
-		s.publishLineComments(p.Name)
-	}
-	// An id nobody holds is a note deleted on another device meanwhile; the
-	// answer says so instead of echoing the request back as stored.
-	if comment.ID == "" {
-		c.JSON(http.StatusOK, gin.H{"gone": true})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"comment": w.shown(lineCommentView{lineComment: comment})})
 }
 
-// diskLineQuote reads the code line a comment anchors to from the file on
-// disk, empty when the file does not read as text or the line is past its
-// end.
-func diskLineQuote(root, rel string, line int) string {
-	content, _, err := filesystem.ReadFileText(root, rel)
-	if err != nil {
-		return ""
+type editorCommentReplyRequest struct {
+	Thread string `json:"thread"`
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+}
+
+// handleEditorCommentReply stores one reply of a thread: a new one without an
+// id, an edited one under its id. A guest's reply is written under its link,
+// a new one is news for the owner, and an edit of anybody else's is refused
+// to it. A thread of the forge takes its replies there.
+func (s *Server) handleEditorCommentReply(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
 	}
-	lines := strings.Split(content, "\n")
-	if line < 1 || line > len(lines) {
-		return ""
+	var req editorCommentReplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Thread == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
 	}
-	return lines[line-1]
+	text, ok := noteText(c, req.Text, "reply")
+	if !ok {
+		return
+	}
+	w := commentWriterOf(c)
+	thread, changed, err := s.lineComments.Reply(p.Name, req.Thread, linecomment.Reply{ID: req.ID, Text: text}, w)
+	if s.answerThread(c, p, w, thread, changed, err) && req.ID == "" {
+		s.guestWrote(p, w, thread, text, true)
+	}
+}
+
+type editorCommentReplyDeleteRequest struct {
+	Thread string `json:"thread"`
+	ID     string `json:"id"`
+}
+
+// handleEditorCommentReplyDelete takes one reply from its thread, for a guest
+// only one written under its link.
+func (s *Server) handleEditorCommentReplyDelete(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorCommentReplyDeleteRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Thread == "" || req.ID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	w := commentWriterOf(c)
+	thread, changed, err := s.lineComments.RemoveReply(p.Name, req.Thread, req.ID, w)
+	s.answerThread(c, p, w, thread, changed, err)
+}
+
+type editorCommentResolveRequest struct {
+	ID       string `json:"id"`
+	Resolved bool   `json:"resolved"`
+}
+
+// handleEditorCommentResolve marks a thread resolved or open again, for a
+// guest only one it opened.
+func (s *Server) handleEditorCommentResolve(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	var req editorCommentResolveRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.ID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
+		return
+	}
+	w := commentWriterOf(c)
+	thread, changed, err := s.lineComments.Resolve(p.Name, req.ID, req.Resolved, w)
+	s.answerThread(c, p, w, thread, changed, err)
+}
+
+// GuestComment is a note a guest wrote on a project, the first of a thread or
+// a reply, with where its thread stands.
+type GuestComment struct {
+	Project string
+	Guest   string
+	Path    string
+	Line    int
+	Text    string
+	Reply   bool
+}
+
+// SetGuestComment hands every new thread and reply a guest writes to notify,
+// which words the owner's news.
+func (s *Server) SetGuestComment(notify func(GuestComment)) {
+	s.guestComment = notify
+}
+
+// guestWrote rings the owner's news of a note a guest just wrote, nothing for
+// one of the owner.
+func (s *Server) guestWrote(p project.Project, w linecomment.Writer, thread linecomment.Comment, text string, reply bool) {
+	if w.Link == "" || s.guestComment == nil {
+		return
+	}
+	s.guestComment(GuestComment{Project: p.Name, Guest: w.Name, Path: thread.Path, Line: thread.Line, Text: text, Reply: reply})
 }
 
 type editorCommentsDeleteRequest struct {
@@ -300,8 +365,11 @@ type editorCommentsDeleteRequest struct {
 // all everything the project holds, which is what the sheet's delete-all
 // spends. The paths are match expressions against stored comments, never
 // filesystem access, so they are not resolved against the disk. A guest's
-// delete reaches only the notes written under its link, whatever it names.
-// The answer counts what fell, which is what the CLI reports.
+// delete reaches only the notes written under its link, whatever it names,
+// and nobody's a thread of the forge, which goes there or when the forge is
+// no longer read. A thread goes with its replies, so a guest's delete takes
+// one only when it wrote every note of it. The answer counts what fell, which
+// is what the CLI reports.
 func (s *Server) handleEditorCommentsDelete(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -313,25 +381,25 @@ func (s *Server) handleEditorCommentsDelete(c *gin.Context) {
 		return
 	}
 	named := map[string]bool{}
-	pick := func(comment lineComment) bool { return named[comment.ID] }
+	pick := func(comment linecomment.Comment) bool { return named[comment.ID] }
 	switch {
 	case req.All:
-		pick = func(lineComment) bool { return true }
+		pick = func(linecomment.Comment) bool { return true }
 	case req.Outdated:
 		for _, view := range s.reconciledLineComments(p) {
-			if view.Outdated && (len(req.Paths) == 0 || matchesAnyCommentPath(req.Paths, view.Path)) {
+			if view.Outdated && (len(req.Paths) == 0 || linecomment.MatchesAnyPath(req.Paths, view.Path)) {
 				named[view.ID] = true
 			}
 		}
 	case len(req.Paths) > 0:
-		pick = func(comment lineComment) bool { return matchesAnyCommentPath(req.Paths, comment.Path) }
+		pick = func(comment linecomment.Comment) bool { return linecomment.MatchesAnyPath(req.Paths, comment.Path) }
 	default:
 		for _, id := range req.IDs {
 			named[id] = true
 		}
 	}
 	w := commentWriterOf(c)
-	removed := s.lineComments.Remove(p.Name, func(comment lineComment) bool { return pick(comment) && w.may(comment) })
+	removed := s.lineComments.Remove(p.Name, func(comment linecomment.Comment) bool { return pick(comment) && w.MayAll(comment) })
 	if removed > 0 {
 		s.publishLineComments(p.Name)
 	}
@@ -366,16 +434,16 @@ func (s *Server) handleEditorCommentsMove(c *gin.Context) {
 	if !checkCommentPath(c, p.Path, req.Path) {
 		return
 	}
-	positions := make([]lineComment, 0, len(req.Comments))
+	positions := make([]linecomment.Comment, 0, len(req.Comments))
 	for _, entry := range req.Comments {
 		if entry.ID == "" || entry.Line < 1 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
 			return
 		}
-		positions = append(positions, lineComment{
+		positions = append(positions, linecomment.Comment{
 			ID:       entry.ID,
 			Line:     entry.Line,
-			LineText: fileLine(entry.LineText),
+			LineText: linecomment.FileLine(entry.LineText),
 		})
 	}
 	if s.lineComments.Move(p.Name, req.Path, positions, commentWriterOf(c)) {

@@ -244,15 +244,18 @@ func (s *Server) deleteProjectWithCompose(p project.Project) error {
 		s.commitDrafts.Delete(p.Name)
 		s.searchDrafts.Delete(p.Name)
 		s.lineComments.Clear(p.Name)
+		s.forgetForge(p.Name)
 		s.quickOpen.Forget(p.Path)
 		s.approvals.DeclineProject(p.Name)
-		// The project's compose, askpass and post script news read themselves with it, and
-		// deliberately only on success: an aborted deletion keeps its compose
-		// failure notification unread, that is the one word about why nothing
-		// was removed.
+		// The project's compose, askpass, post script, pipeline and comment
+		// news read themselves with it, and deliberately only on success: an aborted
+		// deletion keeps its compose failure notification unread, that is the
+		// one word about why nothing was removed.
 		s.notifier.MarkTargetRead(notify.DockerTarget(p.Name))
 		s.notifier.MarkTargetRead(notify.GitPromptTarget(p.Name))
 		s.notifier.MarkTargetRead(notify.WorktreeTarget(p.Name))
+		s.notifier.MarkTargetRead(notify.PipelineTarget(p.Name))
+		s.notifier.MarkTargetRead(notify.CommentsTarget(p.Name))
 	}
 	s.deletes.finish(p.Name, failure)
 	s.publishProjects()
@@ -330,9 +333,12 @@ func (s *Server) removeProjectNow(p project.Project) error {
 	s.commitDrafts.Delete(p.Name)
 	s.searchDrafts.Delete(p.Name)
 	s.lineComments.Clear(p.Name)
+	s.forgetForge(p.Name)
 	s.quickOpen.Forget(p.Path)
 	s.approvals.DeclineProject(p.Name)
 	s.notifier.MarkTargetRead(notify.WorktreeTarget(p.Name))
+	s.notifier.MarkTargetRead(notify.PipelineTarget(p.Name))
+	s.notifier.MarkTargetRead(notify.CommentsTarget(p.Name))
 	return nil
 }
 

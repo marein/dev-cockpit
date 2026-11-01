@@ -46,12 +46,13 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 			[]string{"capped by default", "`--entries 1 --full` is the whole last message",
 				"narrows before the cap", "reaches messages the capped reading never shows",
 				"how many messages carry the word and how many the thread holds"}},
-		{"line-comment-list", []string{"path", "contains", "outdated"},
+		{"line-comment-list", []string{"path", "contains", "outdated", "open"},
 			[]string{"all before the cap", "`--path` may repeat", "* stays inside a path segment and ** crosses them", "marked outdated",
 				// The instructions say only that an outdated note lost its
 				// anchor; how a quote is judged and when it follows its line
 				// is read here.
 				"Every read holds the quotes against the files", "follows it to the new line on its own"}},
+		{"line-comment-resolve", []string{"reopen"}, []string{"`forge-thread-resolve`"}},
 		{"line-comment-remove", []string{"path", "outdated"},
 			[]string{"`--outdated` combines with `--path`", "* stays inside a path segment and ** crosses them"}},
 		// The instructions carry the rules of a compose run; what a stack is,
@@ -69,12 +70,81 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 		{"project-worktree-script-show", nil, []string{"or say there is none", "time bound and environment", "Reads only, changes nothing"}},
 		{"project-worktree-script-set", nil, []string{"Replace the whole worktree post script", "`project-worktree-script-show` first", "read it, its directory, time bound and environment with", "Empty content deletes", "waits for the user's approval", "Worktree post script approval"}},
 		{"compose-show", []string{"lines"}, []string{"capped at the tail", "`--lines` sets how many", "0 prints everything", "Reads only, changes nothing"}},
+		// The instructions name forge-show and what it reads; which head it
+		// reads, the cap of the jobs and the token it needs are read here.
+		{"forge-show", []string{"branch", "all", "log", "job", "lines", "threads", "fresh"}, []string{"never the local HEAD", "the open change request from that branch, else one merged or closed at the pushed head",
+			"check runs and commit statuses combined", "the local branch or the change request's source stands elsewhere",
+			"capped at the first ones; `--all` lists every one", "Needs the host's token", "Reads only, changes nothing",
+			// What the poll read answers in place of the forge, and how to
+			// ask the forge anyway.
+			"no longer than 30 seconds ago answers", "`--fresh` always asks it",
+			// What a log holds, whose logs --log reads and how a job without
+			// one shows are read here, the instructions name the flag alone.
+			"the first 3 jobs that failed the pipeline", "colours and control sequences taken out",
+			"`--job` the log of one job instead", "is marked `no log`", "the last 100 lines unless `--lines`",
+			// Which threads --threads reads, how the lists stand and that
+			// they always come from the forge are read here.
+			"`--threads` adds the review threads, read from the forge on every call", "file, line, side, whether outdated",
+			"the forge's own system notes left out", "first 30 threads, the unresolved first",
+			"the id `forge-thread-reply` and `forge-thread-resolve` take",
+			// Which jobs cannot run again is marked here, how a retry goes
+			// is the retry's own help.
+			"one the forge cannot run again `no retry`"}},
+		// The instructions name the retry and that it asks first; which jobs
+		// run again on each forge, what is refused, the token it needs and
+		// where the question is turned off are read here.
+		{"forge-pipeline-retry", []string{"branch", "job"}, []string{"the branch HEAD is on unless `--branch` names another", "an id `forge-show` lists",
+			"Only a failed pipeline or job runs again", "its failed and canceled jobs", "each failed trigger job is retried on its own",
+			"every failed GitHub Actions workflow run of the pushed head", "A commit status and a check run of another app cannot run again",
+			"A branch pushed again since, another pipeline or a job that ran again is refused", "the scope api on GitLab", "Actions read and write",
+			"waits for the user's approval", "do not run it again while it waits", "Pipeline retry approval", "Settings › Assistants › Approvals; you cannot",
+			"Without the question the jobs run at once", "forge-pipeline-succeeded"}},
+		// The instructions name the open and that it asks first; what it is
+		// prefilled with, where it merges, what is refused, the token it
+		// needs and where the question is turned off are read here.
+		{"forge-change-new", []string{"branch", "target", "title", "body", "ready"}, []string{"the branch HEAD is on unless `--branch` names another",
+			"merges into the default branch unless `--target`", "opens as a draft unless `--ready`", "made of the commits the pushed head carries since the target",
+			"the oldest one's subject over a list of every subject", "A branch that carries no commit gets no title", "a branch not pushed is refused",
+			"gets no second one, the answer names the open one", "the scope api on GitLab", "Pull requests read and write",
+			"waits for the user's approval", "do not run it again while it waits", "Change request approval", "Settings › Assistants › Approvals; you cannot",
+			"Without the question it opens at once"}},
+		// The instructions name the publish and that it asks first; which
+		// comments publish, where their lines have to stand, what becomes of
+		// them, the token it needs and where the question is turned off are
+		// read here.
+		{"forge-comment-publish", []string{"all"}, []string{"the branch HEAD is on", "the ids `line-comment-list` prints", "with `--all` every comment the user or you wrote",
+			"A review thread of the forge, a guest's comment and one with replies do not publish", "has to stand in the pushed head", "a line not pushed is refused, push it first",
+			"an outdated comment no push carries", "one the change request's diff shows", "else the whole call is refused",
+			"becomes that review thread among the line comments", "the scope api on GitLab", "Pull requests read and write",
+			"waits for the user's approval", "do not run it again while it waits", "Review comment approval", "Settings › Assistants › Approvals; you cannot",
+			"Without the question they are published at once"}},
+		// The instructions name the writes on a thread and that they ask
+		// first; which thread they take, what is refused, the token they
+		// need and where the question is turned off are read here.
+		{"forge-thread-reply", []string{"branch", "resolve"}, []string{"the branch HEAD is on unless `--branch` names another", "the thread id `forge-show --threads` and `line-comment-list` print and a forge-review-comment event names",
+			"`fixed in abc123`", "at most 16 KiB", "`--resolve` resolves the thread after the reply", "A general thread of the conversation is refused",
+			"shows it once that review is submitted", "the scope api on GitLab", "Pull requests read and write", "waits for the user's approval",
+			"do not run it again while it waits", "Review thread approval", "Settings › Assistants › Approvals; you cannot", "Without the question it is posted at once"}},
+		{"forge-thread-resolve", []string{"branch"}, []string{"the branch HEAD is on unless `--branch` names another", "the thread id `forge-show --threads` and `line-comment-list` print and a forge-review-comment event names",
+			"A thread resolved already, one the forge does not resolve and a general one are refused", "`forge-thread-reply --resolve`, one question for both",
+			"the Developer role", "the scope api on GitLab", "Pull requests read and write",
+			"waits for the user's approval", "do not run it again while it waits", "Review thread approval", "Settings › Assistants › Approvals; you cannot",
+			"Without the question it is resolved at once"}},
 		{"compose-stop", nil, []string{"ends as cancelled", "does not wait for that end", "has no run yet and nothing to stop", "already over is refused"}},
-		{"trigger-new", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch", "model"},
+		{"trigger-new", []string{"name", "terminal", "all", "project", "branch", "cron", "tz", "task", "once", "until", "batch", "model"},
 			[]string{"session of its own", "Answer NOTHING on the first line", "job-done", "coder-news", "cron",
 				// A compose run's end is an event like a job's, so the help
 				// names its kinds where it names the others.
 				"compose-done", "compose-ended",
+				// A pipeline's end is read off the poll of the checked out
+				// branch, once per way it ends, and forge-show reads the rest.
+				"forge-pipeline-succeeded", "forge-pipeline-failed", "forge-pipeline-ended", "takes `--project`", "the branch a project has checked out",
+				"once per way it ends, across restarts", "one that ended before the first read never",
+				"narrows it to one branch while it is checked out", "`forge-show` reads the rest",
+				// A review comment is read off the same poll, once per note
+				// by somebody else, and on an idle branch only at its slow pace.
+				"forge-review-comment", "every 5 minutes on an idle branch", "never on a note of the token's account", "one standing at the first read",
+				"`forge-show --threads` reads every thread",
 				// The bounds are the flag table's, so the prose says only what
 				// no flag line does: that a schedule ignores a window.
 				"end the trigger after its first turn", "expiry as a span from now", "it stands until removed",
@@ -147,14 +217,15 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 				"`--since` is what \"what happened yesterday\" asks for",
 				"changed by every fire, every end and every edit",
 				"`--full` prints the tasks whole", "`--all` lifts the cap"}},
-		{"trigger-edit", []string{"name", "terminal", "all", "cron", "tz", "task", "once", "until", "batch", "model"},
+		{"trigger-edit", []string{"name", "terminal", "all", "project", "branch", "cron", "tz", "task", "once", "until", "batch", "model"},
 			[]string{"only the flags you name change anything, everything else " +
 				"stands", "the name with `--name` (an empty one takes the name away", "What cannot is the event", "done or expired is spent and is refused",
 				"one that stays keeps what it reached", "a reaction that runs right now, which keeps the task " +
 					"it was given", "Only your own", "The answer names what changed",
 				"Moving the schedule or its zone works the next tick out again",
 				"neither moves the stored zone, `timezone-set` is what does",
-				"`--model default` clears it back to the assistant default, evaluated when it fires"}},
+				"`--model default` clears it back to the assistant default, evaluated when it fires",
+				"(an empty one takes it back to whichever is checked out)"}},
 		{"trigger-delete", nil, []string{"Only your own", "`trigger-edit`"}},
 		// The zone a schedule falls back to is moved by its own verb and by
 		// nothing else, which is the line the help has to draw: `--tz` is one

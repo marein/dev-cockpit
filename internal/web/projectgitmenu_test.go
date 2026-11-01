@@ -80,12 +80,14 @@ func TestFetchedMessageStopsWhereThereIsNoDistance(t *testing.T) {
 	}
 }
 
-// The editor opens on the two views the git menu links into and on nothing
-// else: a stale or hand written value is the plain editor, not an error.
-func TestEditorViewKeepsOnlyTheTwoViews(t *testing.T) {
+// The editor opens on the two views the git menu links into and on the
+// pipeline a failed pipeline's news links into, and on nothing else: a stale
+// or hand written value is the plain editor, not an error.
+func TestEditorViewKeepsOnlyTheKnownViews(t *testing.T) {
 	for raw, want := range map[string]string{
 		"commit":    "commit",
 		" compare ": "compare",
+		"pipeline":  "pipeline",
 		"":          "",
 		"files":     "",
 		"COMMIT":    "",

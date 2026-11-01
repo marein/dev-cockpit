@@ -180,6 +180,23 @@ func TestTheQuestionCarriesTheCommand(t *testing.T) {
 	}
 }
 
+// A row shows the start of a long value, whatever kind asks, and says how
+// long the value is.
+func TestARowShowsTheStartOfALongValue(t *testing.T) {
+	f := newFixture(t)
+	req := deleting("bot", "shop", counting(new(int), nil))
+	req.Details = []askpass.Detail{{Label: "Project", Value: "shop"}, {Label: "Reply", Value: strings.Repeat("ü", 16<<10)}, {Label: "Description", Value: strings.Repeat("line\n", 40)}}
+	f.s.Ask(req)
+	want := []askpass.Detail{
+		{Label: "Project", Value: "shop"},
+		{Label: "Reply", Value: strings.Repeat("ü", 1000) + "… (16384 characters in all)"},
+		{Label: "Description", Value: strings.TrimSuffix(strings.Repeat("line\n", 20), "\n") + "… (200 characters in all)"},
+	}
+	if q := f.question(t); !slices.Equal(q.Details, want) {
+		t.Fatalf("the rows read %q", q.Details)
+	}
+}
+
 // A run that fails once approved ends Failed with its reason, and that is news.
 func TestAnApprovedActionThatFailsEndsFailed(t *testing.T) {
 	f := newFixture(t)

@@ -1,0 +1,13 @@
+/* Centres an icon and the text beside it on their ink. A line box puts the
+   baseline where the font's ascent and descent say, rounded the engine's way,
+   so centred boxes leave the letters high or low by the font: SF Mono on iOS,
+   Menlo on a Mac, Liberation Mono on Linux all differ. A trimmed text box is
+   the band from the cap height to the baseline, which digits and capitals
+   fill, so texts beside each other share one baseline. The icon's box is the
+   em square tabler-icons draws in, its baseline at 0.9em. An engine without
+   text-box keeps the line boxes. */
+@supports (text-box: trim-both cap alphabetic) {
+  .dc-ink-cap { text-box: trim-both cap alphabetic; }
+  .dc-ink-icon { display: inline-flex; align-items: flex-end; height: 1em; padding-bottom: 0.1em; }
+  .dc-ink-icon::before { text-box: trim-end text alphabetic; }
+}

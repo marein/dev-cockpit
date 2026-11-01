@@ -41,3 +41,16 @@ func TestReadQuarantinesACorruptFile(t *testing.T) {
 		t.Fatalf("the corrupt file is still in place: %v", err)
 	}
 }
+
+// An entry that leaves and comes back stands under the id it had, shaped like
+// one of NewID, and an id another entry holds moves it to the next one.
+func TestDerivedIDComesBackAndSkipsATakenOne(t *testing.T) {
+	first := DerivedID(nil, "p", "k")
+	if len(first) != len(NewID()) || first != DerivedID(nil, "p", "k") || first == DerivedID(nil, "q", "k") {
+		t.Fatalf("the parts p and k derive %q", first)
+	}
+	moved := DerivedID(map[string]bool{first: true}, "p", "k")
+	if len(moved) != len(first) || moved == first || moved != DerivedID(map[string]bool{first: true}, "p", "k") {
+		t.Fatalf("a taken %q moved to %q", first, moved)
+	}
+}

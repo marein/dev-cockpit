@@ -121,7 +121,11 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Git from the projects page",
-					Desc:  `A repository row carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i>. <em>New worktree</em> opens the create form with this project as the source, only on a main repository. <em>Fetch</em> reports in a toast how far the checked out branch stands from its upstream. <em>Commit changes</em> and <em>Compare</em> open the editor on that view; switching the branch, push and pull stay in the editor's git sheet.`,
+					Desc:  `A repository row carries a git button <i class="ti ti-brand-git align-text-bottom" aria-hidden="true"></i>. <em>New worktree</em> opens the create form with this project as the source, only on a main repository. <em>Fetch</em> reports in a toast how far the checked out branch stands from its upstream. <em>Commit changes</em> and <em>Compare</em> open the editor on that view; switching the branch, push and pull stay in the editor's git sheet. <em>Forge</em> shows the forge the project is bound to and changes the binding.`,
+				},
+				{
+					Title: "Where a repository lives",
+					Desc:  `A repository row names its origin and links the repository's page, a worktree row names its main project. An origin on a forge host wears its brand <i class="ti ti-brand-github align-text-bottom" aria-hidden="true"></i> <i class="ti ti-brand-gitlab align-text-bottom" aria-hidden="true"></i>, also over an alias host, any other host a globe <i class="ti ti-world align-text-bottom" aria-hidden="true"></i>. A binding set by hand sets brand and link, one switched off shows the globe. Beside the branch a bound row shows its change request and pipeline, see Forges.`,
 				},
 				{
 					Title: "Worktree post script",
@@ -298,7 +302,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Line comments",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "C"}}, {Caps: []string{"Ctrl", "Shift", "C"}}},
-					Desc:  `Click a line number, or the gutter beside it, for the line's menu: add or edit the comment, delete it, copy the path with the line, relative or through <em>absolute</em> in full, toggle the git blame, and with the blame on, the line's commit. A right click and a long-press open the same menu. Comments stick to their line while you edit, follow a rename, and are saved with the project, so they reach your other devices. The quoted line is the anchor: moved and standing in the file exactly once the comment follows it, otherwise it reads outdated with the number orange and struck through. <em>Line comments</em> in the editor menu lists every one of the project, with <em>Go to line</em>, <em>Edit</em>, <em>Delete</em>, <em>Copy as text</em> and <em>Delete all comments</em>. Each entry of the list shows its path on one line, a control character or line separator as its escape, and its note on one line below. A comment a guest wrote through a shared link carries the link's name: in the line's menu, in the dialog, as the first line of its entry in the list with the person icon <i class="ti ti-user align-text-bottom" aria-hidden="true"></i>, and at the start of its entry in the text. The text quotes each note under its entry line by line as written, code too. A line break, a control character or a line separator shows as its escape in a path or a code line, and in a note any of them but a plain line break, so no line leaves its entry.`,
+					Desc:  `Click a line number, or the gutter beside it, for the line's menu: add a comment or open its thread, one entry per thread where several share the line, delete it, copy the path with the line, relative or through <em>absolute</em> in full, toggle the git blame, and with the blame on, the line's commit. A right click and a long-press open the same menu. A comment is a thread: <em>Open thread</em> shows its first note and every reply with author and time, a pencil on each note you may change and a bin on each such reply, a reply field and <em>Resolve the thread</em> or <em>Reopen the thread</em>. A resolved thread turns its line green. Comments stick to their line while you edit, follow a rename, and are saved with the project, so they reach your other devices. The quoted line is the anchor: moved and standing in the file exactly once the comment follows it, otherwise it reads outdated with the number orange and struck through. <em>Line comments</em> in the editor menu lists every thread of the project, with <em>Go to line</em>, <em>Open thread</em>, <em>Delete</em>, <em>Copy as text</em> and <em>Delete all comments</em>; a delete takes the replies along. Each entry shows its path and the number of replies on one line, a control character or line separator as its escape, and its first note below. A note a guest wrote through a shared link carries the link's name, in the list with the person icon <i class="ti ti-user align-text-bottom" aria-hidden="true"></i>. The text quotes each note under its entry line by line as written, code too, each reply below. A line break, a control character or a line separator shows as its escape in a path or a code line, and in a note any of them but a plain line break, so no line leaves its entry. The forge's review threads stand among them, see Forges.`,
 				},
 				{
 					Title: "Diff and blame a file",
@@ -331,11 +335,11 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "One menu for everything else",
-					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the open files, go to file, go to type, find in the file and in the project, go to line, the editor settings, save all, the git sheet, and the keyboard shortcuts.`,
+					Desc:  `Next to the tabs the toolbar keeps only the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> and, while the open file is unsaved, Save. Everything else is in that menu and reads the same on a phone and on a wide screen: the open files, go to file, go to type, find in the file and in the project, go to line, the editor settings, save all, the git sheet, the forge sheet, and the keyboard shortcuts.`,
 				},
 				{
 					Title: "The sheets take the keyboard",
-					Desc:  `The git sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor at its right edge, on a phone the full width from the bottom.`,
+					Desc:  `The git sheet, the forge sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor at its right edge, on a phone the full width from the bottom.`,
 				},
 				{
 					Title: "Open files and their order",
@@ -508,6 +512,14 @@ func DocsTopics() []DocsTopic {
 					Desc:  `One entry per worktree project, with the reason and the last lines of output. A script that passes rings nothing. Opening or deleting the project reads it.`,
 				},
 				{
+					Title: "A failed pipeline",
+					Desc:  `One entry per project bound to a forge when the pipeline of its checked out branch fails, once per pipeline, also across a restart. The line below names the branch, the project and the change request, then the failed jobs. It opens the editor's forge sheet and reads it there, deleting the project reads it too.`,
+				},
+				{
+					Title: "A guest's comment",
+					Desc:  `One entry per project, when a guest of a shared link adds a line comment or replies to one. The line below names the guest, the file with the line and the project, then the note. It opens the editor on <em>Line comments</em> and reads it there; deleting the project reads it too. Nothing you or an assistant write rings, nor an edit or a resolve.`,
+				},
+				{
 					Title: "An approval",
 					Desc:  `A compose command an assistant waits to run, or a project, coder or assistant it waits to delete, is news, one entry per question; the dialog shows on every page. It marks itself read once you decided or the question ran out.`,
 				},
@@ -574,6 +586,7 @@ func DocsTopics() []DocsTopic {
 				},
 			},
 		},
+		docsForgeTopic(),
 		docsSharingTopic(),
 		{
 			Key:      "settings",

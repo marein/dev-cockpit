@@ -113,6 +113,11 @@ type Trigger struct {
 	// always did.
 	All  bool   `json:"all,omitempty"`
 	Spec string `json:"spec,omitempty"`
+	// Project and Branch narrow a forge event: the project it is about, which
+	// every forge trigger names, and one branch of it, none for whichever one
+	// the project has checked out.
+	Project string `json:"project,omitempty"`
+	Branch  string `json:"branch,omitempty"`
 	// Timezone is the IANA name a schedule's wall clock times are read in,
 	// "Europe/Berlin". Every cron trigger carries one, resolved when it is
 	// written and never left to whatever the host happens to be set to: a
@@ -279,19 +284,23 @@ func (s Trigger) matches(ev CockpitEvent) bool {
 	if s.Source == EventCron {
 		return ev.Target == s.ID
 	}
-	if s.Kind != ev.Kind && s.Kind != umbrellaKind(s.Source) {
+	if s.Kind != ev.Kind && s.Kind != umbrellaKind(ev.Source, ev.Kind) {
 		return false
+	}
+	if s.Source == EventForge {
+		return ev.Project == s.Project && (s.Branch == "" || ev.Branch == s.Branch)
 	}
 	return len(s.Targets) == 0 || s.holds(ev.Target)
 }
 
-// umbrellaKind is the kind of a source that stands for every kind of it:
-// closed for every way a job ends, news for every signal a coder sends,
-// however it was classified. A source without one answers empty, which no
-// stored kind ever equals. For a coder it is the only kind a trigger may name,
-// so every coder trigger goes through this rule, and the event it is fired by
-// still carries the kind it was read as.
-func umbrellaKind(source string) string {
+// umbrellaKind is the kind that stands for an event's kind among others of
+// its source: closed for every way a job ends, news for every signal a coder
+// sends, however it was classified, ended for every end of a compose run and
+// of a pipeline. A kind under none answers empty, which no stored kind ever
+// equals: a review comment is no end of a pipeline. For a coder it is the
+// only kind a trigger may name, so every coder trigger goes through this
+// rule, and the event it is fired by still carries the kind it was read as.
+func umbrellaKind(source, kind string) string {
 	switch source {
 	case EventJob:
 		return JobKindClosed
@@ -299,9 +308,17 @@ func umbrellaKind(source string) string {
 		return CoderKindNews
 	case EventCompose:
 		return ComposeKindEnded
+	case EventForge:
+		if slices.Contains(pipelineEnds, kind) {
+			return PipelineKindEnded
+		}
 	}
 	return ""
 }
+
+// pipelineEnds are the kinds of the ways a pipeline ends, which ended
+// stands for.
+var pipelineEnds = []string{PipelineKindSucceeded, PipelineKindFailed, PipelineKindCanceled, PipelineKindSkipped}
 
 // triggersFileName is what the triggers of one instance are stored as, inside
 // that instance's own directory, next to its jobs.
@@ -525,11 +542,23 @@ func SortTriggers(list []Trigger) {
 // never run: denied, unanswered past the bound, or lost in a restart. The
 // event's target is the run, empty where none was ever started, so a terminal
 // is no filter on it.
+//
+// A forge event is about the branch the forge service polls of a bound
+// project, the one it has checked out. The end of its pipeline: done is a
+// pipeline that passed, failed one that failed, and ended the umbrella over
+// them and over a pipeline canceled or skipped, which no narrow kind takes.
+// A review comment is a note somebody else wrote on its change request, and
+// no umbrella takes it. The kinds carry what they are about in their own
+// name, a forge holds more than its pipelines, and their source in front, so
+// the kind is the name a surface passes, read like those of the other
+// sources. The event names its project and its branch, and a trigger names
+// the project it waits for.
 const (
 	EventJob     = "job"
 	EventCoder   = "coder"
 	EventCron    = "cron"
 	EventCompose = "compose"
+	EventForge   = "forge"
 
 	JobKindClosed       = "closed"
 	CoderKindEnded      = "ended"
@@ -540,6 +569,13 @@ const (
 	ComposeKindFailed   = "failed"
 	ComposeKindDeclined = "declined"
 	ComposeKindEnded    = "ended"
+
+	PipelineKindSucceeded = "forge-pipeline-succeeded"
+	PipelineKindFailed    = "forge-pipeline-failed"
+	PipelineKindCanceled  = "forge-pipeline-canceled"
+	PipelineKindSkipped   = "forge-pipeline-skipped"
+	PipelineKindEnded     = "forge-pipeline-ended"
+	ReviewKindComment     = "forge-review-comment"
 )
 
 // EventOptions are the kinds a trigger may name, per source, in the order the
@@ -567,6 +603,10 @@ var EventOptions = []EventOption{
 	{Source: EventCompose, Kind: ComposeKindFailed, Label: "Compose failed", Help: "a compose command you started ran and failed, timed out or was cancelled, or could not start once the user approved it"},
 	{Source: EventCompose, Kind: ComposeKindDeclined, Label: "Compose declined", Help: "a compose command you started never ran: the user denied it, left it unanswered, or a restart took the question"},
 	{Source: EventCompose, Kind: ComposeKindEnded, Label: "Compose ended", Help: "a compose command you started ended, done, failed or declined"},
+	{Source: EventForge, Kind: PipelineKindSucceeded, Label: "Pipeline succeeded", Help: "the pipeline of a project's checked out branch passed"},
+	{Source: EventForge, Kind: PipelineKindFailed, Label: "Pipeline failed", Help: "the pipeline of a project's checked out branch failed"},
+	{Source: EventForge, Kind: PipelineKindEnded, Label: "Pipeline ended", Help: "the pipeline of a project's checked out branch ended, passed, failed, canceled or skipped"},
+	{Source: EventForge, Kind: ReviewKindComment, Label: "Review comment", Help: "somebody else commented on the change request of a project's checked out branch"},
 	{Source: EventCron, Kind: CronKindTick, Label: "Schedule", Help: "a cron schedule ticks"},
 }
 
@@ -579,10 +619,15 @@ type EventOption struct {
 }
 
 // Name is the one word the CLI and the page pass for a kind: source and kind
-// joined by a dash, "job-done", and the bare "cron" for the schedule.
+// joined by a dash, "job-done", the bare "cron" for the schedule, and a forge
+// kind alone, "forge-pipeline-succeeded" or "forge-review-comment", which already
+// carries its source.
 func (k EventOption) Name() string {
-	if k.Source == EventCron {
+	switch k.Source {
+	case EventCron:
 		return EventCron
+	case EventForge:
+		return k.Kind
 	}
 	return k.Source + "-" + k.Kind
 }
@@ -634,6 +679,12 @@ type TriggerSpec struct {
 	All        bool
 	AllSet     bool
 	Spec       string
+	// Project is the project a forge event is about, empty for a caller that
+	// named none. Branch narrows it to one branch, and an empty one is a
+	// value, whichever is checked out, so it carries a companion.
+	Project   string
+	Branch    string
+	BranchSet bool
 	// Timezone is the IANA name a schedule is read in. Empty is a caller that
 	// named none, which on a create is filled in by the surface before it gets
 	// here (what was asked for, else the stored default, else the server's
@@ -744,6 +795,12 @@ func applyTrigger(trigger *Trigger, spec TriggerSpec, now time.Time) error {
 	if spec.OnceSet {
 		trigger.Once = spec.Once
 	}
+	if project := strings.TrimSpace(spec.Project); project != "" {
+		trigger.Project = project
+	}
+	if spec.BranchSet {
+		trigger.Branch = strings.TrimSpace(spec.Branch)
+	}
 	if spec.BatchSet {
 		if spec.Batch < 0 {
 			return errors.New("A batch window cannot be negative.")
@@ -824,6 +881,19 @@ func applyTrigger(trigger *Trigger, spec TriggerSpec, now time.Time) error {
 			// fire, which is worse than a refusal.
 			return errors.New("A compose event is about no terminal, leave --terminal out: it fires on every compose command you start.")
 		}
+	case EventForge:
+		if trigger.Spec != "" {
+			return errors.New("Only a schedule takes cron fields.")
+		}
+		if trigger.Timezone != "" {
+			return errors.New("Only a schedule takes a zone: the other events happen when they happen.")
+		}
+		if len(trigger.Targets) > 0 {
+			return errors.New("A pipeline or review event takes --project, not --terminal.")
+		}
+		if trigger.Project == "" {
+			return errors.New("A pipeline or review event needs --project.")
+		}
 	default:
 		if trigger.Spec != "" {
 			return errors.New("Only a schedule takes cron fields.")
@@ -831,6 +901,9 @@ func applyTrigger(trigger *Trigger, spec TriggerSpec, now time.Time) error {
 		if trigger.Timezone != "" {
 			return errors.New("Only a schedule takes a zone: the other events happen when they happen.")
 		}
+	}
+	if trigger.Source != EventForge && (trigger.Project != "" || trigger.Branch != "") {
+		return errors.New("Only a pipeline or review event takes --project and --branch.")
 	}
 	trigger.UpdatedAt = now
 	return nil
@@ -897,6 +970,16 @@ func triggerChanges(before, after Trigger) string {
 			out = append(out, "all of them")
 		} else {
 			out = append(out, "any of them")
+		}
+	}
+	if before.Project != after.Project {
+		out = append(out, "project "+after.Project)
+	}
+	if before.Branch != after.Branch {
+		if after.Branch == "" {
+			out = append(out, "the checked out branch")
+		} else {
+			out = append(out, "branch "+after.Branch)
 		}
 	}
 	if before.Spec != after.Spec {

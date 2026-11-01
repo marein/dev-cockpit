@@ -11,6 +11,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/web"
 )
 
 // A coder's signal is not classified: whether it finished, asks something or
@@ -94,6 +95,24 @@ func TestEveryKindIsBuiltTheSameWayRound(t *testing.T) {
 			return postScriptNews("app-feature", project.PostScriptRun{Output: "a\nb\nc\nd\ne\n", Err: "exit status 3"})
 		}},
 		{"long compose", "Compose failed.", "Compose up with a rebuild", run("Compose up with a rebuild", "exit 1")},
+		{"pipeline", "Pipeline failed.", "feature in shop, merge request !4: unit, lint", func() (string, string) {
+			return pipelineNews(assistant.PipelineReport{Project: "shop", Branch: "feature", Change: &assistant.ChangeRequest{Noun: "merge request", Ref: "!4"}, Failing: []string{"unit", "lint"}})
+		}},
+		{"pipeline of jobs named like markup", "Pipeline failed.", "feature in shop: __tests__, <e2e>, *lint*", func() (string, string) {
+			return pipelineNews(assistant.PipelineReport{Project: "shop", Branch: "feature", Failing: []string{"__tests__", "<e2e>", "*lint*"}})
+		}},
+		{"pipeline without change request", "Pipeline failed.", "main in shop", func() (string, string) {
+			return pipelineNews(assistant.PipelineReport{Project: "shop", Branch: "main"})
+		}},
+		{"guest comment", "Guest commented.", "Anna on src/a_b.go:4 in shop: Why *this*? Use b instead", func() (string, string) {
+			return commentNews(web.GuestComment{Project: "shop", Guest: "Anna", Path: "src/a_b.go", Line: 4, Text: "Why *this*?\n\nUse b instead"})
+		}},
+		{"guest reply", "Guest replied.", "Anna on a.txt:1 in shop: fine", func() (string, string) {
+			return commentNews(web.GuestComment{Project: "shop", Guest: "Anna", Path: "a.txt", Line: 1, Text: "fine", Reply: true})
+		}},
+		{"guest comment on a long path", "Guest commented.", "Anna on " + strings.Repeat("d/", 70) + "…:1 in shop: x", func() (string, string) {
+			return commentNews(web.GuestComment{Project: "shop", Guest: "Anna", Path: strings.Repeat("d/", 2000) + "a.go", Line: 1, Text: "x"})
+		}},
 	}
 	for _, c := range cases {
 		title, detail := c.news()

@@ -1545,14 +1545,14 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await gitMenu(source);
       const labels = await menuLabels();
       assert(
-        JSON.stringify(labels) === JSON.stringify(["New worktree", "Fetch", "Commit changes", "Compare"]),
+        JSON.stringify(labels) === JSON.stringify(["New worktree", "Fetch", "Commit changes", "Compare", "Forge"]),
         `the main repository's menu reads ${JSON.stringify(labels)}`,
       );
       await closeMenu();
       await gitMenu(`${source}-wt1`);
       const worktree = await menuLabels();
       assert(
-        JSON.stringify(worktree) === JSON.stringify(["Fetch", "Commit changes", "Compare"]),
+        JSON.stringify(worktree) === JSON.stringify(["Fetch", "Commit changes", "Compare", "Forge"]),
         `the worktree's menu reads ${JSON.stringify(worktree)}`,
       );
       await closeMenu();
@@ -1689,7 +1689,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       });
       assert(fit.width === 390, `the mobile page is ${fit.width} wide`);
       assert(fit.inside, `the menu leaves the viewport: ${JSON.stringify(fit.menu)}`);
-      assert(fit.rows.length === 4 && fit.rows.every((r) => r.inside), `an entry is cut off: ${JSON.stringify(fit.rows)}`);
+      assert(fit.rows.length === 5 && fit.rows.every((r) => r.inside), `an entry is cut off: ${JSON.stringify(fit.rows)}`);
       assert(fit.overflow <= 0, `the row sprang the page by ${fit.overflow}px`);
       await mp.keyboard.press("Escape");
       await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
@@ -1731,7 +1731,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await indexMenu(source);
       const main = await menuLabels();
       assert(
-        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Share", "New worktree", "Fetch", "Commit changes", "Compare", "Delete project"]),
+        JSON.stringify(main) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Edit tags", "Share", "New worktree", "Fetch", "Commit changes", "Compare", "Forge", "Delete project"]),
         `the main repository's row menu reads ${JSON.stringify(main)}`,
       );
       const hrefs = await page.$$eval(".dc-context-menu a.dropdown-item", (els) => els.map((e) => e.getAttribute("href")));
@@ -1747,7 +1747,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       await indexMenu(`${source}-wt1`);
       const worktree = await menuLabels();
       assert(
-        JSON.stringify(worktree) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Share", "Fetch", "Commit changes", "Compare", "Delete project"]),
+        JSON.stringify(worktree) === JSON.stringify(["Open project", "Open editor", "New coder", "New shell", "Share", "Fetch", "Commit changes", "Compare", "Forge", "Delete project"]),
         `the worktree's row menu reads ${JSON.stringify(worktree)}`,
       );
       await closeMenu();

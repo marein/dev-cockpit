@@ -336,6 +336,15 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     printf 'proof from %s\n' "$PWD" > "$PWD/assistant-files/proof.txt"
     answer="Here it is: [the proof](assistant-files/proof.txt)"
     ;;
+  *FORGE_EVENT*)
+    # A reaction to a pipeline's end reads the rest the way its event says:
+    # the forge-show line out of the event's text, run as written in the
+    # workspace, and the answer is the event's line with what it printed.
+    event=$(printf '%s' "$prompt" | sed -n 's/^Event: //p' | head -1)
+    show=$(printf '%s' "$prompt" | grep -o '`\./cockpit forge-show [^`]*`' | head -1 | tr -d '`')
+    shown=$(eval "$show" 2>&1) || shown="forge-show failed: $shown"
+    answer=$(printf 'Event: %s\n\n```\n%s\n```' "$event" "$shown")
+    ;;
   *OWNER*)
     # A cockpit command run the way the instructions say, through the wrapper
     # in the workspace by its path and nothing else on the line. The list marks

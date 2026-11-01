@@ -7,6 +7,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/forge"
 	"github.com/marein/dev-cockpit/internal/project"
 )
 
@@ -47,23 +48,6 @@ func joinAnd(items []string) string {
 		return strings.Join(items, "")
 	}
 	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
-}
-
-// OriginIcon names the tabler icon a project's origin is shown with. The
-// forges the row can recognize get their own brand, everything else gets a
-// globe: the origin is the one thing on the row that lives somewhere else, and
-// that reads better than a third git glyph beside the branch and the worktree.
-func OriginIcon(origin string) string {
-	host, _, _ := strings.Cut(strings.ToLower(origin), "/")
-	switch {
-	case strings.Contains(host, "github"):
-		return "ti-brand-github"
-	case strings.Contains(host, "gitlab"):
-		return "ti-brand-gitlab"
-	case strings.Contains(host, "bitbucket"):
-		return "ti-brand-bitbucket"
-	}
-	return "ti-world"
 }
 
 // BranchChoice is one branch a new worktree can stand on. Ref is what the
@@ -373,6 +357,40 @@ type ProjectRow struct {
 	// DockerContainers says the project has containers at all, up or down,
 	// which is what its deletion has to bring down first.
 	DockerContainers bool
+	// Forge is where the project is bound, nil without a binding, and
+	// ForgeBadge what the forge poller last read of its branch there.
+	Forge      *forge.Binding
+	ForgeBadge *ForgeBadge
+}
+
+// OriginIcon is the glyph the origin wears: the brand of the forge it binds
+// to, a globe for every other host. The origin is the one thing on the row
+// that lives somewhere else, and a globe reads better than a third git glyph
+// beside the branch and the worktree.
+func (r ProjectRow) OriginIcon() string {
+	if r.Forge != nil && r.Forge.Host.Kind.Icon != "" {
+		return r.Forge.Host.Kind.Icon
+	}
+	return "ti-world"
+}
+
+// OriginText names where the repository lives: its origin, or without one
+// the repository a binding by hand names.
+func (r ProjectRow) OriginText() string {
+	if r.GitOrigin == "" && r.Forge != nil {
+		return r.Forge.Address()
+	}
+	return r.GitOrigin
+}
+
+// OriginURL is where the origin leads. A bound origin opens the repository
+// on its forge's web address, which an alias host does not name, every other
+// one the address read off the url.
+func (r ProjectRow) OriginURL() string {
+	if r.Forge != nil {
+		return r.Forge.WebURL()
+	}
+	return r.GitOriginURL
 }
 
 // DeleteNote is the sentence under the delete confirm, the same one on the
@@ -510,8 +528,9 @@ func (d ProjectsListData) Rows() []ProjectRow {
 	return rows
 }
 
-// withRunState fills the row's running state from the page's own two answers:
-// the Working map keyed by terminal id, and the project's docker presence.
+// withRunState fills the row's running state from the page's own answers: the
+// Working map keyed by terminal id, the project's docker presence, its forge
+// binding and what the forge poller read of its branch.
 func (d ProjectsListData) withRunState(r ProjectRow) ProjectRow {
 	ids := make([]string, 0, len(r.ActiveRefs)+len(r.InactiveCoderRefs))
 	for _, ref := range r.ActiveRefs {
@@ -530,6 +549,12 @@ func (d ProjectsListData) withRunState(r ProjectRow) ProjectRow {
 	r.DockerUnwell = dock.AnyUnwell()
 	r.DockerWorking = dock.Working()
 	r.DockerContainers = len(dock.Containers) > 0
+	if b, ok := d.Forges[r.Name]; ok {
+		r.Forge = &b
+		if polled, ok := d.ForgePolled[r.Name]; ok {
+			r.ForgeBadge = NewForgeBadge(b, polled)
+		}
+	}
 	return r
 }
 
@@ -549,6 +574,11 @@ type ProjectsListData struct {
 	// Deleting holds the rows whose project is being deleted or whose
 	// deletion failed, keyed by project name. Nil while none is.
 	Deleting map[string]ProjectDelete
+	// Forges holds the forge binding of each bound project, keyed by
+	// project name, and ForgePolled what the forge poller read of the
+	// branch of each project it polls.
+	Forges      map[string]forge.Binding
+	ForgePolled map[string]forge.Polled
 }
 
 // TagsInUse is every tag the projects carry, what the tag filter offers.

@@ -36,7 +36,17 @@ func newTriggerNewCommand(opts *inspectOptions) *cobra.Command {
 			"alike; there is no narrower coder event, and which of the two arrived stands in the event's " +
 			"headline; and compose-ended every way a compose command you started ends, done, failed or " +
 			"declined, the three narrow compose events taking one each. A compose event is about a run " +
-			"and takes no `--terminal`. `--name` is optional, at most " + strconv.Itoa(assistant.MaxTriggerNameRunes) +
+			"and takes no `--terminal`. A pipeline event is the end of the pipeline of the branch a project " +
+			"has checked out, as the cockpit polls its forge: forge-pipeline-succeeded on one that passed, " +
+			"forge-pipeline-failed on one that failed, forge-pipeline-ended on every end. It takes `--project` and no " +
+			"`--terminal`, `--branch` narrows it to one branch while it is checked out. Each pipeline fires " +
+			"once per way it ends, across restarts, one that ended before the first read never. Its text " +
+			"names the branch, the change request, the pipeline's page and the failed jobs, `forge-show` " +
+			"reads the rest. forge-review-comment fires once per note somebody else wrote on that branch's change " +
+			"request, across restarts, never on a note of the token's account or one standing at the first " +
+			"read. It takes `--project` and `--branch` the same way and is read at most once a minute, every " +
+			"5 minutes on an idle branch. Its text quotes the note, `forge-show --threads` reads every " +
+			"thread. `--name` is optional, at most " + strconv.Itoa(assistant.MaxTriggerNameRunes) +
 			" runes; with one the row and `trigger-list` read by it. `--terminal` narrows a job or coder event to one " +
 			"terminal and may be repeated for several, left out it is any job of yours or any " +
 			"coder; a job event only ever reaches the assistant whose job it is. With several " +
@@ -70,9 +80,9 @@ func newTriggerNewCommand(opts *inspectOptions) *cobra.Command {
 }
 
 type triggerArgs struct {
-	event, name, spec, zone, task, until, batch, model string
-	terminals                                          []string
-	once, all                                          bool
+	event, name, spec, zone, task, until, batch, model, project, branch string
+	terminals                                                           []string
+	once, all                                                           bool
 }
 
 // triggerFlags are the fields of a trigger, the same set on the command that
@@ -83,6 +93,8 @@ func triggerFlags(cmd *cobra.Command, a *triggerArgs) {
 	cmd.Flags().StringVar(&a.name, "name", "", "a short name for the trigger, two or three words for what it is for; the row reads by it")
 	cmd.Flags().StringArrayVar(&a.terminals, "terminal", nil, "a terminal the event is about (job and coder events), repeatable, default any")
 	cmd.Flags().BoolVar(&a.all, "all", false, "fire once every named terminal produced an event, not on the first one")
+	cmd.Flags().StringVar(&a.project, "project", "", "the project a pipeline or review event is about (required on one)")
+	cmd.Flags().StringVar(&a.branch, "branch", "", "the branch a pipeline or review event is about (default: the one checked out; on an edit, empty resets it)")
 	cmd.Flags().StringVar(&a.spec, "cron", "", "the schedule of a cron event, five crontab fields like \"*/30 9-17 * * 1-5\"")
 	cmd.Flags().StringVar(&a.zone, "tz", "", "the zone a schedule's times are read in, an IANA name like Europe/Berlin (default: the stored zone, see timezone-set)")
 	cmd.Flags().StringVar(&a.task, "task", "", "what to do when the event fires (required)")
@@ -133,6 +145,12 @@ func runTriggerNew(out io.Writer, opts inspectOptions, a triggerArgs) error {
 		"task":     {strings.TrimSpace(a.task)},
 		"until":    {strings.TrimSpace(a.until)},
 		"batch":    {strings.TrimSpace(a.batch)},
+	}
+	if project := strings.TrimSpace(a.project); project != "" {
+		form.Set("project", project)
+	}
+	if branch := strings.TrimSpace(a.branch); branch != "" {
+		form.Set("branch", branch)
 	}
 	// The terminals travel as the repeated field the page's multiple select
 	// posts, and the mode as the value its switch posts.
@@ -570,7 +588,9 @@ func newTriggerEditCommand(opts *inspectOptions) *cobra.Command {
 			"changed is the name with `--name` (an empty one takes the name away and the row reads by " +
 			"the event again), the model with `--model` (`--model default` clears it back to " +
 			"the assistant default, evaluated when it fires: your Triggers pick at the ring, else " +
-			"Same as chat) and everything else the flags below name. Moving " +
+			"Same as chat), the project of a pipeline or review event with `--project` and its branch with " +
+			"`--branch` (an empty one takes it back to whichever is checked out) and everything else " +
+			"the flags below name. Moving " +
 			"the schedule or its zone works the next tick out again and the answer names it; " +
 			"neither moves the stored zone, `timezone-set` is what does. What cannot is the event: " +
 			"another event is another trigger, so make one and remove this. A trigger " +
@@ -615,6 +635,12 @@ func runTriggerEdit(out io.Writer, opts inspectOptions, id string, a triggerArgs
 	if named("tz") {
 		form.Set("timezone", strings.TrimSpace(a.zone))
 	}
+	if named("project") {
+		form.Set("project", strings.TrimSpace(a.project))
+	}
+	if named("branch") {
+		form.Set("branch", strings.TrimSpace(a.branch))
+	}
 	if named("until") {
 		form.Set("until", strings.TrimSpace(a.until))
 	}
@@ -646,7 +672,7 @@ func runTriggerEdit(out io.Writer, opts inspectOptions, id string, a triggerArgs
 	// form holds the action and the id and nothing else: nothing was named, so
 	// there is nothing to change and no call to make.
 	if len(form) == 2 {
-		return fmt.Errorf("Name what to change: --name, --task, --model, --terminal, --all, --cron, --tz, --once, --until or --batch.")
+		return fmt.Errorf("Name what to change: --name, --task, --model, --terminal, --all, --project, --branch, --cron, --tz, --once, --until or --batch.")
 	}
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {

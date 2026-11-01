@@ -1,0 +1,3 @@
+On {{.Forge}} {{md .Address}} {{if .Job}}the job "{{md .Job}}" of {{md .Pipeline}} of {{md .Branch}} in {{md .Project}} runs again{{else}}the failed jobs of {{md .Pipeline}} of {{md .Branch}} in {{md .Project}} run again{{end}}{{with .URL}}: {{.}}{{end}}.
+{{- with .LeftOut}}
+Not run again: {{md .}}{{end}}

@@ -15,6 +15,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/linecomment"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/share"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -30,13 +31,16 @@ type commentGuests struct {
 	anna  string
 	bert  string
 	links map[string]share.Share
-	owner lineComment
+	owner linecomment.Comment
+	state string
+	news  []GuestComment
 }
 
 func newCommentGuests(t *testing.T) *commentGuests {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	root := t.TempDir()
+	state := t.TempDir()
 	for _, name := range []string{"shop", "blog"} {
 		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
 			t.Fatal(err)
@@ -49,7 +53,7 @@ func newCommentGuests(t *testing.T) *commentGuests {
 		projects:     project.NewRepository(root, nil),
 		shares:       share.NewStore(t.TempDir()),
 		activity:     activity.NewTracker(),
-		lineComments: newLineComments(t.TempDir()),
+		lineComments: linecomment.New(state),
 		bus:          eventbus.New(),
 		quickOpen:    filesystem.NewQuickOpenCache(),
 	}
@@ -60,7 +64,11 @@ func newCommentGuests(t *testing.T) *commentGuests {
 	r.POST("/projects/:name/editor/comments", s.handleEditorCommentSave)
 	r.POST("/projects/:name/editor/comments/delete", s.handleEditorCommentsDelete)
 	r.POST("/projects/:name/editor/comments/move", s.handleEditorCommentsMove)
-	f := &commentGuests{s: s, r: r, links: map[string]share.Share{}}
+	r.POST("/projects/:name/editor/comments/reply", s.handleEditorCommentReply)
+	r.POST("/projects/:name/editor/comments/reply/delete", s.handleEditorCommentReplyDelete)
+	r.POST("/projects/:name/editor/comments/resolve", s.handleEditorCommentResolve)
+	f := &commentGuests{s: s, r: r, links: map[string]share.Share{}, state: state}
+	s.SetGuestComment(func(note GuestComment) { f.news = append(f.news, note) })
 	for name, rs := range map[string][]share.Resource{
 		"Anna": {
 			{Kind: share.KindProject, Target: "shop", Permissions: []share.Permission{share.Comments}},
@@ -79,7 +87,7 @@ func newCommentGuests(t *testing.T) *commentGuests {
 			f.bert = token
 		}
 	}
-	owner, _, err := s.lineComments.Save("shop", lineComment{Path: "a.txt", Line: 1, LineText: "one", Text: "the owner's"}, commentWriter{})
+	owner, _, err := s.lineComments.Save("shop", linecomment.Comment{Path: "a.txt", Line: 1, LineText: "one", Text: "the owner's"}, linecomment.Writer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,14 +127,14 @@ func (f *commentGuests) read(t *testing.T, token string) (string, []lineCommentV
 	return rec.Body.String(), answer.Comments
 }
 
-func (f *commentGuests) note(t *testing.T, id string) (lineComment, bool) {
+func (f *commentGuests) note(t *testing.T, id string) (linecomment.Comment, bool) {
 	t.Helper()
 	for _, c := range f.s.lineComments.List("shop") {
 		if c.ID == id {
 			return c, true
 		}
 	}
-	return lineComment{}, false
+	return linecomment.Comment{}, false
 }
 
 func savedComment(t *testing.T, rec *httptest.ResponseRecorder) lineCommentView {
@@ -159,9 +167,10 @@ func TestAGuestCommentsWhereItsLinkGrantsComment(t *testing.T) {
 	if list := f.s.lineComments.List("shop"); len(list) != 1 || list[0].Line != 1 {
 		t.Fatalf("a read only link changed the notes: %+v", list)
 	}
-	added := savedComment(t, f.send(f.anna, shopComments, map[string]any{"path": "a.txt", "line": 2, "lineText": "two", "text": "anna's"}))
-	if added.Author != "Anna" || !added.Mine || added.Link != "" {
-		t.Fatalf("the guest's note reads %+v", added)
+	rec := f.send(f.anna, shopComments, map[string]any{"path": "a.txt", "line": 2, "lineText": "two", "text": "anna's"})
+	added := savedComment(t, rec)
+	if added.Author != "Anna" || !added.Mine || strings.Contains(rec.Body.String(), f.links["Anna"].ID) {
+		t.Fatalf("the guest's note reads %s", rec.Body.String())
 	}
 	if stored, _ := f.note(t, added.ID); stored.Link != f.links["Anna"].ID || stored.Author != "Anna" {
 		t.Fatalf("the guest's note is stored as %+v", stored)
@@ -220,7 +229,7 @@ func TestAGuestChangesOnlyTheNotesOfItsOwnLink(t *testing.T) {
 	} {
 		f.send(f.anna, shopComments+"/delete", body)
 	}
-	for _, want := range []lineComment{f.owner, {ID: bert.ID, Line: 2, Text: "bert's", Author: "Bert"}} {
+	for _, want := range []linecomment.Comment{f.owner, {ID: bert.ID, Line: 2, Text: "bert's", Author: "Bert"}} {
 		got, ok := f.note(t, want.ID)
 		if !ok || got.Line != want.Line || got.Text != want.Text || got.Author != want.Author {
 			t.Fatalf("Anna reached %+v: %+v, %v", want, got, ok)
@@ -288,5 +297,83 @@ func TestAGuestsCommentEndsWithItsGrant(t *testing.T) {
 	}
 	if rec := f.send(f.anna, "/projects/blog/editor/comments", add); rec.Code != http.StatusNotFound {
 		t.Fatalf("after the revoke = %d", rec.Code)
+	}
+}
+
+// A guest whose link grants Comment replies to every thread under the link's
+// name, edits and deletes its own replies alone, resolves only a thread it
+// opened and deletes one only while every note of it is its own; each new
+// thread and reply of a guest is news for the owner, an edit, a resolve and
+// the owner's own notes are none. A read only link replies to nothing, and a
+// reply to a thread gone answers gone.
+func TestAGuestRepliesWhereItsLinkGrantsComment(t *testing.T) {
+	f := newCommentGuests(t)
+	reply := shopComments + "/reply"
+	if rec := f.send(f.bert, reply, map[string]any{"thread": f.owner.ID, "text": "bert's"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("a read only link's reply = %d %s", rec.Code, rec.Body.String())
+	}
+	answered := savedComment(t, f.send(f.anna, reply, map[string]any{"thread": f.owner.ID, "text": "anna's reply"}))
+	if len(answered.Replies) != 1 || answered.Replies[0].Author != "Anna" || !answered.Replies[0].Mine || answered.Mine {
+		t.Fatalf("the reply reads %+v", answered)
+	}
+	annasReply := answered.Replies[0].ID
+	ownerReply := savedComment(t, f.send("", reply, map[string]any{"thread": f.owner.ID, "text": "the owner's answer"})).Replies[1].ID
+	if rec := f.send(f.anna, reply, map[string]any{"thread": f.owner.ID, "id": ownerReply, "text": "taken"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("Anna's edit of the owner's reply = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.send(f.anna, reply+"/delete", map[string]any{"thread": f.owner.ID, "id": ownerReply}); rec.Code != http.StatusForbidden {
+		t.Fatalf("Anna's delete of the owner's reply = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.send(f.anna, shopComments+"/resolve", map[string]any{"id": f.owner.ID, "resolved": true}); rec.Code != http.StatusForbidden {
+		t.Fatalf("Anna's resolve of the owner's thread = %d %s", rec.Code, rec.Body.String())
+	}
+	edited := savedComment(t, f.send(f.anna, reply, map[string]any{"thread": f.owner.ID, "id": annasReply, "text": "anna's reply, edited"}))
+	if edited.Replies[0].Text != "anna's reply, edited" || edited.Replies[0].Author != "Anna" {
+		t.Fatalf("Anna's edit reads %+v", edited.Replies)
+	}
+	opened := savedComment(t, f.send(f.anna, shopComments, map[string]any{"path": "a.txt", "line": 2, "text": "anna's thread"}))
+	resolved := savedComment(t, f.send(f.anna, shopComments+"/resolve", map[string]any{"id": opened.ID, "resolved": true}))
+	if !resolved.Resolved {
+		t.Fatalf("Anna's resolve of her thread reads %+v", resolved)
+	}
+	savedComment(t, f.send("", reply, map[string]any{"thread": opened.ID, "text": "the owner joins"}))
+	if rec := f.send(f.anna, shopComments+"/delete", map[string]any{"ids": []string{opened.ID}}); !strings.Contains(rec.Body.String(), `"removed":0`) {
+		t.Fatalf("Anna's delete of a thread the owner answered = %s", rec.Body.String())
+	}
+	if after := savedComment(t, f.send(f.anna, reply+"/delete", map[string]any{"thread": f.owner.ID, "id": annasReply})); len(after.Replies) != 1 || after.Replies[0].ID != ownerReply {
+		t.Fatalf("Anna's delete of her reply leaves %+v", after.Replies)
+	}
+	want := []GuestComment{
+		{Project: "shop", Guest: "Anna", Path: "a.txt", Line: 1, Text: "anna's reply", Reply: true},
+		{Project: "shop", Guest: "Anna", Path: "a.txt", Line: 2, Text: "anna's thread"},
+	}
+	if len(f.news) != len(want) || f.news[0] != want[0] || f.news[1] != want[1] {
+		t.Fatalf("the news reads %+v", f.news)
+	}
+	raw, list := f.read(t, f.bert)
+	if strings.Contains(raw, f.links["Anna"].ID) || strings.Contains(raw, `"link"`) || len(list) != 2 {
+		t.Fatalf("Bert reads %s", raw)
+	}
+	for _, c := range list {
+		for _, r := range c.Replies {
+			if r.Mine {
+				t.Fatalf("Bert reads a reply as his own: %+v", r)
+			}
+		}
+	}
+	for name, body := range map[string]map[string]any{
+		"an empty reply":       {"thread": f.owner.ID, "text": "  "},
+		"a reply too long":     {"thread": f.owner.ID, "text": strings.Repeat("x", linecomment.MaxText+1)},
+		"a reply to no thread": {"text": "x"},
+	} {
+		if rec := f.send(f.anna, reply, body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s = %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := f.send(f.anna, reply, map[string]any{"thread": "gone", "text": "x"}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"gone":true`) {
+		t.Fatalf("a reply to a thread gone = %d %s", rec.Code, rec.Body.String())
+	}
+	if len(f.news) != 2 {
+		t.Fatalf("a refused or owner's write rang: %+v", f.news)
 	}
 }

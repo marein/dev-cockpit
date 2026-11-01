@@ -1,0 +1,53 @@
+{{define "forge_branch.gohtml"}}
+{{- $badge := .Badge}}
+{{- if or $badge .Offer}}
+<div data-forge-summary data-forge-label="{{.Kind.Label}}">
+  {{- with $badge}}
+  <div class="px-3 py-2 d-flex flex-wrap align-items-center gap-2 min-w-0" data-editor-sheet-head data-forge-head>
+    {{template "forge_badge.gohtml" .}}
+    {{- with .Change}}<span class="small text-secondary text-truncate mw-100" data-forge-title>{{.Title}}</span>{{end}}
+    {{- with .Problem}}<span class="small text-warning w-100 text-break" data-forge-problem-text>{{.}}</span>{{end}}
+  </div>
+  {{- if .Jobs}}
+  <button type="button" class="dropdown-item d-flex align-items-center gap-2" data-forge-jobs>
+    <i class="ti ti-list-details" aria-hidden="true"></i>
+    <span class="d-flex flex-column min-w-0 text-start"><span>Jobs</span><span class="small text-secondary text-truncate">{{.JobsSummary}}</span></span>
+  </button>
+  {{- end}}
+  {{- range .FailedLogs}}{{template "forge_job.gohtml" (dict "Job" . "Log" true)}}{{end}}
+  {{- with .Retry}}{{template "forge_retry.gohtml" (dict "Retry" . "Pin" false)}}{{end}}
+  {{- end}}
+  {{- with .Offer}}
+  <a class="dropdown-item d-flex align-items-center gap-2" href="{{.URL}}" data-forge-change-new>
+    <i class="ti ti-git-pull-request" aria-hidden="true"></i>
+    <span class="d-flex flex-column min-w-0 text-start"><span>{{.Label}}</span><span class="small text-secondary text-truncate">{{.Sub}}</span></span>
+  </a>
+  {{- end}}
+</div>
+<span hidden data-forge-bar data-forge-bar-title="{{.Kind.Label}}: {{.Lead}}"><i class="ti {{.Kind.Icon}} dc-ink-icon" aria-hidden="true"></i>
+  {{- with $badge}}
+  {{- with .Change}}<span class="dc-ink-cap">{{$badge.ChangeRef}}</span>{{end}}
+  {{- with .Pipeline}}<i class="ti {{$badge.PipelineIcon}} text-{{$badge.PipelineColor}} dc-ink-icon" aria-hidden="true" data-forge-bar-pipeline="{{.Status}}"></i>{{end}}
+  {{- with .Problem}}<i class="ti ti-alert-triangle text-warning dc-ink-icon" aria-hidden="true" data-forge-bar-problem></i>{{end}}
+  {{- end}}
+</span>
+{{- end}}
+{{- with .Publish}}
+<span hidden data-forge-publish data-forge-publish-forge="{{.Forge}}" data-forge-publish-noun="{{.Noun}}" data-forge-publish-ref="{{.Ref}}"></span>
+{{- end}}
+{{- with .Threads}}
+<span hidden data-forge-threads data-forge-threads-forge="{{.Forge}}" data-forge-threads-noun="{{.Noun}}" data-forge-threads-ref="{{.Ref}}"{{if .Reply}} data-forge-threads-reply{{end}}{{if .Resolve}} data-forge-threads-resolve{{end}}></span>
+{{- end}}
+{{- with $badge}}{{with .Pipeline}}
+<div data-forge-jobs-level data-forge-level-title="{{$badge.PipelineTitle}}">
+  {{- with .URL}}
+  <a class="dropdown-item d-flex align-items-center gap-2" href="{{.}}" target="_blank" rel="noopener" data-editor-sheet-pin data-forge-pipeline-page>
+    <i class="ti ti-external-link" aria-hidden="true"></i>
+    <span class="d-flex flex-column min-w-0 text-start"><span>Open on {{$badge.Kind.Label}}</span><span class="small text-secondary text-truncate">{{$badge.PipelineTitle}}</span></span>
+  </a>
+  {{- end}}
+  {{- with $badge.Retry}}{{template "forge_retry.gohtml" (dict "Retry" . "Pin" true)}}{{end}}
+  {{- range $badge.Jobs}}{{template "forge_job.gohtml" (dict "Job" . "Log" false)}}{{end}}
+</div>
+{{- end}}{{end}}
+{{end}}

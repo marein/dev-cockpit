@@ -6,8 +6,8 @@ import { growTextarea, keepGrown } from "@dc/dom";
 // so nothing fills a form here and there is one reading of a stand.
 //
 // What is left is the switching and the zone list: the picked event decides
-// which target field shows, the jobs of the assistant, the running coders or a cron schedule, and
-// only the shown one posts. Both target fields take several terminals, so the
+// which target field shows, the jobs of the assistant, the running coders, the
+// project of a pipeline or review event or a cron schedule, and only the shown one posts. Both target fields take several terminals, so the
 // mode beside them shows wherever they do and nowhere else: any of them fires
 // it, or every one has to, and a compose run has no terminal. The batch window goes the other way round and stands for everything
 // but a schedule, which has no window to fold anything into. The expiry's unit

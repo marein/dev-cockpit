@@ -259,6 +259,14 @@ func tagsRouter(t *testing.T, projects *project.Repository) func(path string, fo
 // CSRF token in the header, so the body can be of any shape.
 func tagsSession(t *testing.T, projects *project.Repository) func(method, path, contentType, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	_, send := ownerPages(t, projects)
+	return send
+}
+
+// ownerPages serves the owner's routes over the projects in a signed in
+// session and hands out the server, which a test gives what it needs more.
+func ownerPages(t *testing.T, projects *project.Repository) (*Server, func(method, path, contentType, body string) *httptest.ResponseRecorder) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	assets, err := newStaticAssetManifest(nil)
 	if err != nil {
@@ -293,7 +301,7 @@ func tagsSession(t *testing.T, projects *project.Repository) func(method, path, 
 	if session == "" || token == "" {
 		t.Fatal("the sign-in answered no session")
 	}
-	return func(method, path, contentType, body string) *httptest.ResponseRecorder {
+	return s, func(method, path, contentType, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)

@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -108,4 +109,65 @@ func (r *Repo) Log(ctx context.Context, file string, skip, limit int) (LogPage, 
 		page.More = true
 	}
 	return page, nil
+}
+
+// Message is what a commit says: its subject, the first line of its message,
+// and the body below it.
+type Message struct {
+	Subject string
+	Body    string
+}
+
+// Carried answers what the commits say that head holds and the branch target
+// of remote does not, as this repository last saw that branch, oldest first,
+// and how many they are: at most limit of them, the oldest ones, each by its
+// subject and a lone one with its body too. It reports whether it knew
+// target: without a remote tracking ref of it nothing tells where head left
+// it, and head alone answers. head is a commit by its full hash.
+func (r *Repo) Carried(ctx context.Context, remote, target, head string, limit int) ([]Message, int, bool, error) {
+	if !fullHash(head) {
+		return nil, 0, false, fmt.Errorf("%q is no commit hash.", head)
+	}
+	base, err := r.exactRef(ctx, "refs/remotes/"+remote+"/"+target, "%(objectname)")
+	if err != nil {
+		return nil, 0, false, err
+	}
+	revs, count := []string{head}, 1
+	if base != "" {
+		revs = append(revs, "^"+base)
+		out, err := r.run(ctx, append([]string{"rev-list", "--count"}, revs...), nil)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		if count, err = strconv.Atoi(strings.TrimSpace(string(out))); err != nil {
+			return nil, 0, false, fmt.Errorf("git counted %q.", out)
+		}
+	}
+	if count == 0 {
+		return nil, 0, true, nil
+	}
+	format := "--format=%s"
+	if count == 1 {
+		format = "--format=%s%n%b"
+	}
+	read := min(count, max(limit, 1))
+	args := append([]string{"log", "--no-show-signature", "-z", "--reverse", format, "--skip=" + strconv.Itoa(count-read), "-n", strconv.Itoa(read)}, revs...)
+	out, err := r.run(ctx, args, nil)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	var messages []Message
+	for _, record := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		subject, body, _ := strings.Cut(record, "\n")
+		messages = append(messages, Message{Subject: subject, Body: strings.TrimSpace(body)})
+	}
+	return messages, count, base != "", nil
+}
+
+// fullHash reports whether s is a commit's full hash, SHA-1 or SHA-256.
+func fullHash(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	return strings.Trim(s, "0123456789abcdef") == ""
 }

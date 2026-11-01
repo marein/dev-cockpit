@@ -25,6 +25,7 @@ type Project struct {
 	GitBranch         string
 	GitOrigin         string
 	GitOriginURL      string
+	GitOriginRaw      string // the origin remote's url as the config writes it, what a forge binding resolves from
 	GitRepo           bool
 	GitWorktree       bool          // .git is a gitdir pointer file of a linked worktree
 	GitWorktreeOf     string        // main repository's project name, "" when it is no project under the root
@@ -210,6 +211,7 @@ func (r *Repository) enrichProjects(projects []Project) {
 		projects[i].GitBranch = meta.Branch
 		projects[i].GitOrigin = gitfacts.OriginName(meta.Origin)
 		projects[i].GitOriginURL = gitfacts.OriginWebURL(meta.Origin)
+		projects[i].GitOriginRaw = meta.Origin
 		projects[i].GitWorktree = meta.Worktree
 		projects[i].GitWorktreeOf = r.rootProjectName(meta.WorktreeMain)
 		projects[i].GitWorktreeMain = meta.WorktreeMain
@@ -274,6 +276,7 @@ func (r *Repository) Find(raw string) (Project, error) {
 		GitBranch:       meta.Branch,
 		GitOrigin:       gitfacts.OriginName(meta.Origin),
 		GitOriginURL:    gitfacts.OriginWebURL(meta.Origin),
+		GitOriginRaw:    meta.Origin,
 		GitRepo:         meta.Repo,
 		GitWorktree:     meta.Worktree,
 		GitWorktreeOf:   r.rootProjectName(meta.WorktreeMain),

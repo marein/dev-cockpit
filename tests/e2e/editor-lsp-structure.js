@@ -650,7 +650,7 @@ L.runFeature("EDITOR-LSP-STRUCTURE", async ({ engine, page, run, mobilePage }) =
     assert(item && item.keys === "Ctrl+Alt+O", `the docs item: ${JSON.stringify(item)}`);
     assert(item.desc === "Opens a sheet with the types, functions, methods, properties and constants of the open file with its unsaved changes, nested in file order, each with its kind, the signature or type the language server gives and its line. A markdown file lists its headings, nested by level. Structure in the menu of a tab or of a file in the tree opens it too, for a closed file after opening it. It opens on the innermost symbol the cursor stands in. Typing narrows the list, Enter jumps to the line, in a diff on the working copy, and scrolls a shown preview to the heading. PHP answers while it still indexes, Go once its index stands.", `the docs text: ${item.desc}`);
     const sheets = items.find((i) => i.title === "The sheets take the keyboard");
-    assert(sheets.desc.startsWith("The git sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor:"), `the sheets' text: ${sheets.desc}`);
+    assert(sheets.desc.startsWith("The git sheet, the forge sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor:"), `the sheets' text: ${sheets.desc}`);
     assert(items.filter((i) => `${i.keys} ${i.desc}`.includes("Alt+O")).length === 1, "another docs item names Ctrl+Alt+O");
   });
 

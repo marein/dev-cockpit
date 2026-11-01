@@ -696,7 +696,7 @@ L.runFeature("PROJECT-SHARE", async ({ browser, page, run, bag, mobilePage }) =>
       return `kept ${kept.status}, ${refused.trim()}`;
     });
 
-    await run("dead links answer the 404 of an address that does not exist", async () => {
+    await run("dead links answer the 404 of an address that does not exist, the revoke's popup gone before the next dialog", async () => {
       const nothing = await fetchRaw(`${BASE}/no/such/page`);
       const unknown = await fetchRaw(`${BASE}/share/${"A".repeat(43)}`);
       await editLink(page, fx.teamId);
@@ -708,6 +708,12 @@ L.runFeature("PROJECT-SHARE", async ({ browser, page, run, bag, mobilePage }) =>
       await page.waitForSelector(`[data-share-row="${fx.teamId}"]`, { state: "detached", timeout: 10000 });
       await waitText(() => page.$$eval(".dc-notice", (els) => els.map((el) => el.textContent).join(" ")), "Link revoked.", "the revoke's notice");
       assert(!(await page.$(DIALOG)), "the revoke left the dialog standing");
+      await page.waitForFunction(() => !document.querySelector(".swal2-container"), null, { timeout: 3000 }).catch(() => {});
+      await page.click("[data-share-new-link]");
+      await page.waitForSelector(`${DIALOG} [data-share-new]`, { timeout: 10000 });
+      const stale = await page.$$eval(".swal2-container", (els) => els.map((el) => el.textContent.trim()));
+      assert(!stale.length, `the New link after the revoke holds the popup ${JSON.stringify(stale)}`);
+      await page.click(`${DIALOG} .btn-close`);
       const wait = 62000 - (Date.now() - fx.expiringAt);
       if (wait > 0) await sleep(wait);
       const answers = {};

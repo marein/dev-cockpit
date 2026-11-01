@@ -60,6 +60,9 @@
           <button type="button" class="dropdown-item" data-editor-git-item hidden>
             <i class="ti ti-git-branch me-2"></i>Git<span class="badge bg-secondary-lt ms-2" data-editor-git-item-count hidden></span>
           </button>
+          {{if not .Editor.Access.Guest}}<button type="button" class="dropdown-item" data-editor-forge-item hidden>
+            <i class="ti ti-git-pull-request me-2"></i>Forge
+          </button>{{end}}
           {{if .Editor.Access.Can "files"}}<div class="dropdown-divider"></div>
           <button type="button" class="dropdown-item" data-editor-save-all disabled>
             <i class="ti ti-device-floppy me-2"></i>Save all
@@ -119,6 +122,8 @@
         <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>K</kbd> commit</span>{{end}}
         <span class="mx-1 d-none d-md-inline">·</span>
         <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> git</span>
+        {{if not .Editor.Access.Guest}}<span class="mx-1 d-none d-md-inline">·</span>
+        <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> forge</span>{{end}}
         <span class="mx-1 d-none d-md-inline">·</span>
         <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>J</kbd> terminal</span>
         <span class="mx-1 d-none d-md-inline">·</span>

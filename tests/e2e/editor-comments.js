@@ -1,6 +1,7 @@
 const L = require("./lib");
 const { assert, sleep, BASE } = L;
 const { guestChecks } = require("./editor-comments-guest");
+const { threadChecks } = require("./editor-comments-threads");
 
 // Line comments in the editor: notes pinned to single lines. Routes: GET
 // /projects/:name/editor/comments (the project's notes, ordered by file then
@@ -17,21 +18,24 @@ const { guestChecks } = require("./editor-comments-guest");
 // gutterLineClass, so the mark spans the line numbers AND the gutters beside
 // them). The line's menu opens on a plain click anywhere in the gutter, on a
 // right click and on a touch long press (wireRowMenus), and holds in this
-// order: add or edit the comment, Delete comment on a commented line, Copy
-// path:line, and the blame toggle (only in a git repository, blameMenuItem
-// answers null without one, so this runner's scratch project shows a bare
-// line's menu with two entries). The note's dialog is a Bootstrap modal
-// (data-editor-comment-modal, its host moved to document.body like the
-// terminal panel's modals): textarea with a dimmed form-hint under it, Cancel,
-// Save or Add, an empty save marks the field is-invalid, Ctrl/Cmd+Enter saves
-// like the commit message; the dialog only creates and edits, every delete
-// lives in the menus behind a swal confirm. Ctrl+Alt+C comments the cursor
-// line, Ctrl+Shift+C toggles the Line comments sheet, and the menu badges
+// order: add the comment or open its thread, Delete comment on a commented
+// line, Copy path:line, and the blame toggle (only in a git repository,
+// blameMenuItem answers null without one, so this runner's scratch project
+// shows a bare line's menu with two entries). The note's dialog is a
+// Bootstrap modal (data-editor-comment-modal, its host moved to document.body
+// like the terminal panel's modals): textarea with a dimmed form-hint under
+// it, Cancel, Add, an empty add marks the field is-invalid, Ctrl/Cmd+Enter
+// saves like the commit message. A commented line opens its thread in the
+// same dialog: the conversation, a pencil on each note to edit it in the
+// field, the field for a reply and the resolve switch, the threads' checks
+// standing in editor-comments-threads.js; every delete lives in the menus
+// behind a swal confirm. Ctrl+Alt+C comments the cursor line or opens its
+// thread, Ctrl+Shift+C toggles the Line comments sheet, and the menu badges
 // (Line comments, Git) hide at zero instead of standing as an empty pill. The
 // sheet follows the git history's shape: one cell per comment, the sheet's
 // own row, in a row-deck grid (col-12 col-lg-6, two per line from lg up), the
 // whole cell is the control and a click on it opens the app's menu over it (Go
-// to line jumps there, Edit opens the note's dialog, Delete is the danger
+// to line jumps there, Open thread opens the thread, Delete is the danger
 // entry), anchored at the click or at the cell when Enter got there; the sheet
 // stands behind that menu. The head actions close the sheet themselves: Copy
 // as text (built by GET .../comments/text: heading "Line comments in
@@ -368,27 +372,31 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     assert(await badge(page) === "2", "the badge does not count both notes");
   });
 
-  await run("Ctrl+Alt+C opens the existing note, a right click opens the menu too", async () => {
+  await run("Ctrl+Alt+C opens the existing note's thread, a right click opens the menu too", async () => {
     await page.click(".cm-content");
     await page.keyboard.press("Control+Home");
     await page.keyboard.press("Control+Alt+C");
     await commentDialogShown(page);
-    assert(await page.locator("[data-editor-comment-title]").textContent() === "Edit line comment", "the shortcut does not open the existing note");
-    assert(await page.locator("[data-editor-comment-text]").inputValue() === "cursor note", "the dialog does not hold the note");
+    assert(await page.locator("[data-editor-comment-title]").textContent() === "Line comment", "the shortcut does not open the existing note");
+    assert(await page.locator("[data-editor-comment-thread] [data-comment-note-text]").allTextContents().then((t) => t.join("|")) === "cursor note", "the thread does not hold the note");
+    assert(await page.locator("[data-editor-comment-text]").inputValue() === "" && await page.locator("[data-editor-comment-save]").textContent() === "Reply", "the thread does not offer a reply");
     await page.click("[data-editor-comment-cancel]");
     await commentDialogGone(page);
     await openLineMenu(page, 1, { button: "right" });
     const labels = await menuLabels(page);
-    assert(labels.join("|") === "Edit comment|Delete comment|Copy path:line", `marked line menu reads ${labels.join(", ")}`);
+    assert(labels.join("|") === "Open thread|Delete comment|Copy path:line", `marked line menu reads ${labels.join(", ")}`);
     await page.keyboard.press("Escape");
     await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
   });
 
-  await run("the dialog saves on Ctrl+Enter, the line menu's Delete comment confirms and removes", async () => {
+  await run("the pencil edits the note and saves on Ctrl+Enter, the line menu's Delete comment confirms and removes", async () => {
     await openLineMenu(page, 1);
-    await pickMenuItem(page, "Edit comment");
+    await pickMenuItem(page, "Open thread");
     await commentDialogShown(page);
     assert(await page.locator("[data-editor-comment-delete]").count() === 0, "the dialog still carries a Delete button");
+    await page.click('[data-editor-comment-thread] button[aria-label="Edit comment"]');
+    assert(await page.locator("[data-editor-comment-title]").textContent() === "Edit line comment", "the pencil does not edit the note");
+    assert(await page.locator("[data-editor-comment-text]").inputValue() === "cursor note" && await page.locator("[data-editor-comment-save]").textContent() === "Save", "the field does not hold the note to edit");
     await page.fill("[data-editor-comment-text]", "cursor note, edited");
     await page.locator("[data-editor-comment-text]").press("Control+Enter");
     await commentDialogGone(page);
@@ -436,7 +444,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await cell.click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     const labels = await menuLabels(page);
-    assert(labels.join("|") === "Go to line|Edit|Delete", `cell menu reads ${labels.join(", ")}`);
+    assert(labels.join("|") === "Go to line|Open thread|Delete", `cell menu reads ${labels.join(", ")}`);
     assert(await page.locator(".dc-context-menu .dropdown-item.text-danger", { hasText: "Delete" }).count() === 1, "Delete is not the danger entry");
     assert(await page.locator("[data-editor-sheet]:not([hidden])").count() === 1, "the sheet does not stand behind the menu");
     await pickMenuItem(page, "Go to line");
@@ -465,9 +473,9 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await sleep(400);
     await sheetCell(page, "temp note").click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
-    await pickMenuItem(page, "Edit");
+    await pickMenuItem(page, "Open thread");
     await commentDialogShown(page);
-    assert(await page.locator("[data-editor-comment-text]").inputValue() === "temp note", "Edit does not hold the note");
+    assert(await page.locator("[data-editor-comment-thread] [data-comment-note-text]").first().textContent() === "temp note", "Open thread does not hold the note");
     await page.click("[data-editor-comment-cancel]");
     await commentDialogGone(page);
     assert(await page.locator("[data-editor-sheet]:not([hidden])").count() === 1, "the sheet went away under the dialog");
@@ -532,7 +540,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await page.keyboard.press("Enter");
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     const labels = await menuLabels(page);
-    assert(labels.join("|") === "Go to line|Edit|Delete", `Enter opened ${labels.join(", ")}`);
+    assert(labels.join("|") === "Go to line|Open thread|Delete", `Enter opened ${labels.join(", ")}`);
     await page.keyboard.press("Escape");
     await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
     await sleep(400);
@@ -765,6 +773,8 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await page.evaluate((p) => fetch(p, { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content }, body: JSON.stringify({ all: true }) }), `/projects/${encodeURIComponent(scratch)}/editor/comments/delete`);
     await saveFile(CONTENT);
   });
+
+  await threadChecks({ page, run, scratch, file: FILE, openEditor, openFile, openLineMenu, menuLabels, pickMenuItem, waitMarked, getComments, openSheet, sheetCell, commentDialogShown, commentDialogGone, confirmDialogGone });
 
   await guestChecks({ engine, browser, page, run, mobilePage, bag, scratch, file: FILE, openEditor, openFile, openSheet, commentDialogShown, commentDialogGone });
 

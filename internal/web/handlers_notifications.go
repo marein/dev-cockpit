@@ -56,7 +56,7 @@ const hostSampleTTL = 4 * time.Second
 // element can subscribe. On connect, including every EventSource reconnect, it
 // pushes a snapshot of the current state (unread notifications, the terminals,
 // projects and docker signals, the draft and assistant ones, the open backup
-// reviews, the host reading),
+// reviews, the costs and forge signals, the host reading),
 // so a freshly attached or a woken background page catches up in one shot.
 func (s *Server) handleEventStream(c *gin.Context) {
 	w := c.Writer
@@ -175,6 +175,12 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	// A bare costs signal: the cost item and the cost page pull their numbers,
 	// a booking made while the socket was down included.
 	if err := writeEnvelope(w, eventbus.Event{Type: "costs"}); err != nil {
+		return
+	}
+	// A bare forge signal, no project named: a status the poller read while
+	// the socket was down is published never again, so every surface that
+	// shows one pulls its own.
+	if err := writeEnvelope(w, eventbus.Event{Type: "forge", Data: map[string]string{"project": ""}}); err != nil {
 		return
 	}
 	// The host reading rides the stream: it goes out on connect and then on its
@@ -307,6 +313,13 @@ func (s *Server) publishSearchDraft(projectName string) {
 // the list itself.
 func (s *Server) publishLineComments(projectName string) {
 	s.bus.Publish(eventbus.Event{Type: "linecomments", Data: map[string]string{"project": projectName}})
+}
+
+// PublishForge signals that what the forge poller read of one project's
+// branch moved. Like the git event it carries the movement and never the
+// state, every surface that shows it pulls its own.
+func (s *Server) PublishForge(projectName string) {
+	s.bus.Publish(eventbus.Event{Type: "forge", Data: map[string]string{"project": projectName}})
 }
 
 // publishGitPrompt signals that the standing askpass questions moved: one was

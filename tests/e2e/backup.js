@@ -93,6 +93,10 @@ L.runFeature("BACKUP", async ({ page, run }) => {
     }
     const disabled = await page.locator('input[name="sections"]:disabled').count();
     assert(disabled > 0, "fresh instance should show unavailable sections as disabled");
+    const cockpit = page.locator("dc-backup-sections .col-12", { has: page.locator(".form-label", { hasText: "Cockpit" }) });
+    assert(await cockpit.locator('.form-check:has(input[value="forges"]) .form-check-label', { hasText: "Forges" }).isVisible(), "the Forges section is not in the Cockpit group");
+    const tokensText = await page.locator('.form-check:has(input[value="forge-tokens"])').textContent();
+    assert(tokensText.includes("Needs Forges."), `forge tokens dependency line missing: ${tokensText.trim().slice(0, 160)}`);
   });
 
   await run("section dependencies select and deselect each other", async () => {

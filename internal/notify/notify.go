@@ -131,6 +131,16 @@ func ApprovalTargetID(targetID string) string {
 // reports under.
 func WorktreeTarget(project string) string { return "worktree:" + project }
 
+// PipelineTarget is the target id a project's failed pipelines report under,
+// one per project like the docker targets: the forge keeps one branch of a
+// project, and two projects failing at the same moment are two pieces of
+// news.
+func PipelineTarget(project string) string { return "pipeline:" + project }
+
+// CommentsTarget is the target id the line comments guests write on a
+// project report under, one per project like the pipelines.
+func CommentsTarget(project string) string { return "comments:" + project }
+
 // TargetInfo carries display context resolved at ingest time.
 type TargetInfo struct {
 	Name    string

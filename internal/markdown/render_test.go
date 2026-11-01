@@ -46,3 +46,31 @@ func TestSpeechDropsCodeBlocksAndAddresses(t *testing.T) {
 		}
 	}
 }
+
+// An escaped value reads on the page and in Plain as it was written: no tag
+// vanishes, nothing turns bold, struck or linked, and an entity it holds stays
+// the text it was.
+func TestAnEscapedValueReadsAsWritten(t *testing.T) {
+	value := "Fix <form> in __init__ *now* ~~old~~ [x](y) `a` &amp; a|b \\n"
+	page, err := RenderGFM("Title: " + Escape(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "<p>Title: Fix &lt;form&gt; in __init__ *now* ~~old~~ [x](y) `a` &amp;amp; a|b \\n</p>\n"; page != want {
+		t.Fatalf("the page reads %q, want %q", page, want)
+	}
+	if got := Plain("Title: " + Escape(value)); got != "Title: "+value {
+		t.Fatalf("Plain reads %q", got)
+	}
+}
+
+// Plain reads an escape and an entity as the character the page shows, and a
+// code span as written.
+func TestPlainReadsEscapesAsThePageDoes(t *testing.T) {
+	if got, want := Plain("\\_\\_tests\\_\\_ a &lt;b&gt; &#65; \\&lt; `x\\_y &lt;`"), "__tests__ a <b> A &lt; x\\_y &lt;"; got != want {
+		t.Fatalf("Plain reads %q, want %q", got, want)
+	}
+	if got, want := Speech("\\*not bold\\* &amp; more"), "*not bold* & more"; got != want {
+		t.Fatalf("Speech reads %q, want %q", got, want)
+	}
+}

@@ -9,6 +9,7 @@ package statefile
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -82,11 +84,30 @@ func Write(path string, mode os.FileMode, v any) error {
 	return nil
 }
 
+const idBytes = 8
+
 // NewID returns a short random identifier for state entries.
 func NewID() string {
-	var raw [8]byte
+	var raw [idBytes]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return hex.EncodeToString([]byte(time.Now().Format("150405.000000000")))
 	}
 	return hex.EncodeToString(raw[:])
+}
+
+// DerivedID returns an identifier shaped like NewID for an entry that leaves
+// and comes back, the same parts give the same one again. One that taken
+// holds moves it to the next derivation, so it never takes another entry's.
+func DerivedID(taken map[string]bool, parts ...string) string {
+	for n := 0; ; n++ {
+		h := sha256.New()
+		h.Write([]byte(strconv.Itoa(n)))
+		for _, part := range parts {
+			h.Write([]byte{0})
+			h.Write([]byte(part))
+		}
+		if id := hex.EncodeToString(h.Sum(nil)[:idBytes]); !taken[id] {
+			return id
+		}
+	}
 }

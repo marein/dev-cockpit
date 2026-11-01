@@ -1,0 +1,13 @@
+{{define "forge_badge.gohtml"}}
+<span class="badge {{.Tone}} d-inline-flex align-items-center gap-2 text-nowrap" data-forge-badge{{with .Pipeline}} data-forge-pipeline="{{.Status}}"{{end}}>
+  {{- with .Change}}
+  {{- if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" class="text-reset text-decoration-none d-inline-flex align-items-center gap-1" title="{{$.ChangeTitle}}" data-forge-change><i class="ti {{$.ChangeIcon}} dc-ink-icon" aria-hidden="true"></i><span class="dc-ink-cap">{{$.ChangeRef}}</span></a>
+  {{- else}}<span class="d-inline-flex align-items-center gap-1" title="{{$.ChangeTitle}}" data-forge-change><i class="ti {{$.ChangeIcon}} dc-ink-icon" aria-hidden="true"></i><span class="dc-ink-cap">{{$.ChangeRef}}</span></span>{{end}}
+  {{- end}}
+  {{- with .Pipeline}}
+  {{- if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" class="text-reset text-decoration-none d-inline-flex align-items-center gap-1" title="{{$.PipelineTitle}}" data-forge-status><i class="ti {{$.PipelineIcon}} dc-ink-icon" aria-hidden="true"></i><span class="dc-ink-cap text-capitalize">{{.Status}}</span></a>
+  {{- else}}<span class="d-inline-flex align-items-center gap-1" title="{{$.PipelineTitle}}" data-forge-status><i class="ti {{$.PipelineIcon}} dc-ink-icon" aria-hidden="true"></i><span class="dc-ink-cap text-capitalize">{{.Status}}</span></span>{{end}}
+  {{- end}}
+  {{- with .Problem}}<i class="ti ti-alert-triangle dc-ink-icon" role="img" title="{{.}}" aria-label="{{.}}" data-forge-problem></i>{{end}}
+</span>
+{{end}}

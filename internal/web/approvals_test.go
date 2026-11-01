@@ -56,6 +56,10 @@ func TestTheApprovalsAreKinds(t *testing.T) {
 		approvalCoderDelete:        "Coder delete approval",
 		approvalAssistantDelete:    "Assistant delete approval",
 		approvalWorktreePostScript: "Worktree post script approval",
+		approvalForgeRetry:         "Pipeline retry approval",
+		approvalForgeChange:        "Change request approval",
+		approvalForgePublish:       "Review comment approval",
+		approvalForgeThread:        "Review thread approval",
 	}
 	for _, kind := range approvalKinds {
 		if want[kind.ID] != kind.Label {
@@ -64,7 +68,8 @@ func TestTheApprovalsAreKinds(t *testing.T) {
 		delete(want, kind.ID)
 	}
 	if len(want) != 0 || approvalKey(approvalComposeActions) != "assistant-approval-compose-actions" || approvalKey(approvalProjectDelete) != "assistant-approval-project-delete" ||
-		approvalKey(approvalCoderDelete) != "assistant-approval-coder-delete" || approvalKey(approvalAssistantDelete) != "assistant-approval-assistant-delete" {
+		approvalKey(approvalCoderDelete) != "assistant-approval-coder-delete" || approvalKey(approvalAssistantDelete) != "assistant-approval-assistant-delete" ||
+		approvalKey(approvalForgeRetry) != "assistant-approval-forge-retry" || approvalKey(approvalForgeThread) != "assistant-approval-forge-thread" {
 		t.Fatalf("the kinds read %+v", approvalKinds)
 	}
 }

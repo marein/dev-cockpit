@@ -203,22 +203,22 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       assert(!(await gp.textContent("[data-editor-sheet-body]")).includes("Delete all comments"), "the comments offer a delete");
       await gp.click("[data-editor-sheet-close]");
       await waitText(() => marked(gp), /^2$/, "the gutter's comment marks");
-      noneOf(await lineMenu(gp, 1), ["Show comment", "Add line comment"], "an uncommented line's menu");
+      noneOf(await lineMenu(gp, 1), ["Open thread", "Add line comment"], "an uncommented line's menu");
       await closeMenu(gp);
       const labels = await lineMenu(gp, 2);
-      noneOf(labels, ["Add line comment", "Edit comment", "Delete comment"], "a line's menu");
-      assert(labels.includes("Show comment"), `the commented line's menu reads ${JSON.stringify(labels)}`);
-      await gp.locator(".dc-context-menu .dropdown-item", { hasText: /^Show comment$/ }).click();
+      noneOf(labels, ["Add line comment", "Delete comment"], "a line's menu");
+      assert(labels.includes("Open thread"), `the commented line's menu reads ${JSON.stringify(labels)}`);
+      await gp.locator(".dc-context-menu .dropdown-item", { hasText: /^Open thread$/ }).click();
       await gp.waitForSelector("[data-editor-comment-modal].show", { timeout: 6000 });
       await sleep(500);
       const shown = await gp.$eval("[data-editor-comment-modal]", (el) => ({
         title: el.querySelector("[data-editor-comment-title]").textContent.trim(),
         place: el.querySelector("[data-editor-comment-place]").textContent.trim(),
-        text: el.querySelector("[data-editor-comment-text]").value,
-        readOnly: el.querySelector("[data-editor-comment-text]").readOnly,
-        writes: el.querySelectorAll("[data-editor-comment-save], .form-hint").length,
+        notes: [...el.querySelectorAll("[data-comment-note]")].map((n) => `${n.querySelector("[data-comment-note-author]").textContent}: ${n.querySelector("[data-comment-note-text]").textContent}`).join("|"),
+        field: getComputedStyle(el.querySelector("[data-editor-comment-text]")).display !== "none",
+        writes: el.querySelectorAll("[data-editor-comment-save], .form-hint, [data-editor-comment-resolve-row], [data-comment-note] button").length,
       }));
-      const want = { title: "Line comment", place: "README.md:2", text: `owner-note-${fx.tag}`, readOnly: true, writes: 0 };
+      const want = { title: "Line comment", place: "README.md:2", notes: `Owner: owner-note-${fx.tag}`, field: false, writes: 0 };
       assert(JSON.stringify(shown) === JSON.stringify(want), `the comment shows as ${JSON.stringify(shown)}`);
       await gp.keyboard.press("Control+Enter");
       await gp.click("[data-editor-comment-cancel]");
@@ -592,7 +592,7 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       const writes = [
         `${p}/editor/file`, `${p}/editor/create`, `${p}/editor/mkdir`, `${p}/editor/delete`, `${p}/editor/rename`, `${p}/editor/move`,
         `${p}/editor/copy`, `${p}/editor/extract`, `${p}/editor/upload`, `${p}/editor/replace`, `${p}/editor/comments`, `${p}/editor/comments/delete`,
-        `${p}/editor/comments/move`, `${p}/editor/git/commit`, `${p}/editor/git/commit-draft`, `${p}/editor/git/push`, `${p}/editor/git/fetch`,
+        `${p}/editor/comments/move`, `${p}/editor/comments/reply`, `${p}/editor/comments/reply/delete`, `${p}/editor/comments/resolve`, `${p}/editor/git/commit`, `${p}/editor/git/commit-draft`, `${p}/editor/git/push`, `${p}/editor/git/fetch`,
         `${p}/editor/git/pull`, `${p}/editor/git/checkout`, `${p}/editor/git/branch`, `${p}/editor/git/tag`, `${p}/editor/git/revert`,
         `${p}/editor/git/clone`, `${p}/editor/search-draft`, `${p}/editor/lsp/reindex`, `${p}/editor/lsp/source`, `${p}/docker/compose`, `${p}/docker/logs`, `${p}/tags`,
         `/coders/${fx.coder}/delete`, `/shells/${fx.shell}/delete`, `/coders/delete`, `/coders/${fx.coder}/stop`, `/coders/${fx.coder}/input`,
@@ -604,7 +604,7 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       const headers = { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-Token": csrf, Accept: "application/json" };
       const body = new URLSearchParams({ path: "README.md", content: "guest", project: fx.project, ids: fx.shell, stack: "", action: "up" }).toString();
       const notes = (await getAs(page, `${p}/editor/comments`)).text;
-      const granted = (path) => /\/editor\/comments(\/delete|\/move)?$/.test(path);
+      const granted = (path) => /\/editor\/comments(\/delete|\/move|\/reply|\/reply\/delete|\/resolve)?$/.test(path);
       for (const path of writes) {
         const viaLink = await fetchRaw(at(path), { method: "POST", body, headers });
         assert(granted(path) ? viaLink.status === 403 : viaLink.status === 404 || viaLink.status === 405, `${path} under the link answered ${viaLink.status}`);
@@ -618,6 +618,9 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
         ["/comments/move", { path: "README.md", comments: [{ id, line: 3, lineText: "guest" }] }],
         ["/comments/delete", { ids: [id] }],
         ["/comments/delete", { all: true }],
+        ["/comments/reply", { thread: id, text: "guest" }],
+        ["/comments/reply/delete", { thread: id, id: "any" }],
+        ["/comments/resolve", { id, resolved: true }],
       ]) {
         const res = await fetchRaw(at(`${p}/editor${path}`), { method: "POST", body: JSON.stringify(json), headers: { ...headers, "Content-Type": "application/json" } });
         assert(res.status === 403 && res.body.includes("The link does not allow that."), `${path} with ${JSON.stringify(json)} under the link answered ${res.status}`);

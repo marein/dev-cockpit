@@ -1,11 +1,14 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/marein/dev-cockpit/internal/linecomment"
 )
 
 // A comment stored by a released build loads, edits and moves as before
@@ -22,7 +25,7 @@ func TestAReleasedCommentWithAnEscapeInItsQuoteEditsAndMoves(t *testing.T) {
 		t.Fatal(err)
 	}
 	released := `[{"id":"old1","path":"esc.txt","line":2,"lineText":"\u001b[31mred\u001b[0m\f","text":"keep the color","updatedAt":"2026-10-01T08:00:00Z"}]`
-	state := f.s.lineComments.file("shop")
+	state := filepath.Join(f.state, "line-comments", "shop.json")
 	if err := os.WriteFile(state, []byte(released), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +68,7 @@ func TestALineCommentStoresWhatItGetsAndBoundsOnlyThePath(t *testing.T) {
 			t.Fatalf("the note is stored as %+v", stored)
 		}
 	}
-	long := strings.Repeat("d/", maxLineCommentPath/2) + "a.txt"
+	long := strings.Repeat("d/", linecomment.MaxPath/2) + "a.txt"
 	for _, token := range []string{"", f.anna} {
 		rec := f.send(token, shopComments, map[string]any{"path": long, "line": 1, "text": "too far"})
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "too long") {
@@ -75,7 +78,7 @@ func TestALineCommentStoresWhatItGetsAndBoundsOnlyThePath(t *testing.T) {
 	if rec := f.send("", shopComments, map[string]any{"id": f.owner.ID, "path": long, "line": 1, "text": "moved far"}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("moving a note onto a %d byte path = %d %s", len(long), rec.Code, rec.Body.String())
 	}
-	held, _, err := f.s.lineComments.Save("shop", lineComment{Path: "a.txt", Line: 1, Text: "held"}, commentWriter{})
+	held, _, err := f.s.lineComments.Save("shop", linecomment.Comment{Path: "a.txt", Line: 1, Text: "held"}, linecomment.Writer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +88,10 @@ func TestALineCommentStoresWhatItGetsAndBoundsOnlyThePath(t *testing.T) {
 			list[i].Path = long
 		}
 	}
-	f.s.lineComments.store("shop", list)
+	data, _ := json.Marshal(list)
+	if err := os.WriteFile(filepath.Join(f.state, "line-comments", "shop.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if edited := savedComment(t, f.send("", shopComments, map[string]any{"id": held.ID, "path": long, "line": 1, "text": "held, edited"})); edited.Text != "held, edited" {
 		t.Fatalf("the edit of a released long path stored %+v", edited)
 	}
@@ -121,12 +127,12 @@ func TestALineCommentCutsTheCarriageReturnOfAWindowsLine(t *testing.T) {
 			t.Fatalf("a quote of the Windows file reads outdated: %+v", v)
 		}
 	}
-	legacy, _, err := f.s.lineComments.Save("shop", lineComment{Path: "win.txt", Line: 2, LineText: "two\r", Text: "a released build's quote"}, commentWriter{})
+	legacy, _, err := f.s.lineComments.Save("shop", linecomment.Comment{Path: "win.txt", Line: 2, LineText: "two\r", Text: "a released build's quote"}, linecomment.Writer{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, _ = reconcileLineComments(p.Path, []lineComment{legacy})
-	if views[0].Outdated || views[0].Line != 2 {
-		t.Fatalf("a stored quote with its carriage return reads %+v", views[0])
+	judged, _ := linecomment.Reconcile(p.Path, []linecomment.Comment{legacy})
+	if judged[0].Outdated || judged[0].Line != 2 {
+		t.Fatalf("a stored quote with its carriage return reads %+v", judged[0])
 	}
 }

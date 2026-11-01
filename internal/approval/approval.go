@@ -16,8 +16,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/statefile"
@@ -32,6 +34,15 @@ const Timeout = 30 * time.Minute
 // once. Every one of them is a question on every page and on the phone, and
 // the bound is what keeps a turn in a loop from burying the user in them.
 const MaxPerOwner = 100
+
+// The bounds of what a row of the dialog shows of its value. A reply, a
+// description or a comment of many KiB says what it is in its start, and
+// every page and the phone carry the question; the run takes the whole
+// value all the same.
+const (
+	maxDetailRunes = 1000
+	maxDetailLines = 20
+)
 
 // The verdicts an approval ends in: approved and the run went through,
 // approved and the run failed, or never run.
@@ -149,7 +160,7 @@ func (s *Service) Ask(req Request) (waiting bool, err error) {
 		Kind:      req.Kind,
 		Key:       req.Key,
 		What:      req.What,
-		Details:   req.Details,
+		Details:   shown(req.Details),
 		Command:   req.Command,
 		Dir:       req.Dir,
 		Projects:  req.Projects,
@@ -161,6 +172,27 @@ func (s *Service) Ask(req Request) (waiting bool, err error) {
 	}
 	go s.await(a, bridge, req.Run)
 	return true, nil
+}
+
+// shown are the rows the way the dialog shows them, each value within the
+// bounds of a row and, where cut, with how long it is in all.
+func shown(details []askpass.Detail) []askpass.Detail {
+	out := make([]askpass.Detail, 0, len(details))
+	for _, d := range details {
+		runes := utf8.RuneCountInString(d.Value)
+		cut := d.Value
+		if runes > maxDetailRunes {
+			cut = string([]rune(cut)[:maxDetailRunes])
+		}
+		if lines := strings.SplitAfterN(cut, "\n", maxDetailLines+1); len(lines) > maxDetailLines {
+			cut = strings.TrimSuffix(strings.Join(lines[:maxDetailLines], ""), "\n")
+		}
+		if cut != d.Value {
+			d.Value = fmt.Sprintf("%s… (%d characters in all)", cut, runes)
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // park registers the approval and puts its bridge up under one lock, so a

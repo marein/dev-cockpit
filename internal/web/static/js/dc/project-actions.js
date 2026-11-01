@@ -124,6 +124,10 @@ export function gitMenuItems(holder, { icon } = {}) {
   items.push({ label: "Fetch", icon: "ti-refresh", action: () => void fetchProject(holder, icon) });
   items.push({ label: "Commit changes", icon: "ti-git-commit", href: holder.dataset.gitCommit });
   items.push({ label: "Compare", icon: "ti-git-compare", href: holder.dataset.gitCompare });
+  if (holder.dataset.gitRetry) {
+    items.push({ label: holder.dataset.gitRetryLabel, icon: "ti-reload", action: () => void retryPipeline(holder, icon) });
+  }
+  items.push({ label: "Forge", icon: "ti-git-pull-request", href: holder.dataset.gitForge });
   return items;
 }
 
@@ -145,6 +149,32 @@ export async function fetchProject(holder, icon = holder.querySelector(".ti")) {
     const message = data.message || (data.fetched ? `Fetched "${project}".` : `"${project}" has no remote to fetch from.`);
     if (data.fetched) notifySuccess(message);
     else notifyInfo(message);
+  } catch (error) {
+    notifyError(error.message);
+  } finally {
+    holder.disabled = false;
+    holder.removeAttribute("aria-busy");
+    icon?.classList.remove("dc-git-working");
+  }
+}
+
+// retryPipeline runs the failed jobs of the pipeline the row's badge shows
+// again, the one of the branch at the commit the holder names: one that
+// moved on since is refused, and the forge event brings the row's new badge.
+export async function retryPipeline(holder, icon = holder.querySelector(".ti")) {
+  if (holder.getAttribute("aria-busy") === "true") return;
+  const project = holder.dataset.gitProject || "";
+  holder.disabled = true;
+  holder.setAttribute("aria-busy", "true");
+  icon?.classList.add("dc-git-working");
+  try {
+    const response = await postForm(holder.dataset.gitRetry, {
+      branch: holder.dataset.gitRetryBranch || "",
+      head: holder.dataset.gitRetryHead || "",
+      pipeline: holder.dataset.gitRetryPipeline || "",
+    });
+    await ensureOk(response, `The failed jobs of "${project}" could not run again.`);
+    notifySuccess((await response.json()).message);
   } catch (error) {
     notifyError(error.message);
   } finally {

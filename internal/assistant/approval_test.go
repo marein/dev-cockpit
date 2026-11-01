@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/marein/dev-cockpit/internal/approval"
+	"github.com/marein/dev-cockpit/internal/markdown"
 )
 
 // Every end of an approval is one note, whatever the kind: the verdict and
@@ -87,5 +88,56 @@ func TestTheKindOutcomesRead(t *testing.T) {
 	}
 	if got := ProjectDeleted("shop", nil, true); got != "Project shop is being deleted, its terminals stopped and its containers going down first." {
 		t.Fatalf("the running delete outcome reads %q", got)
+	}
+}
+
+// What a forge or a repository wrote into an outcome note reads on the page
+// as it was written: a tag shaped word does not vanish with the HTML the
+// renderer drops and an underscore makes nothing bold, the same for a
+// refusal's sentence.
+func TestAForgeOutcomeReadsAsWrittenOnThePage(t *testing.T) {
+	title, branch, path := "Fix <form> in __init__", "fix/<b>_x_", "src/<i>.go"
+	shown := []string{"Fix &lt;form&gt; in __init__", "fix/&lt;b&gt;_x_"}
+	for name, c := range map[string]struct {
+		note string
+		want []string
+	}{
+		"changed":   {ForgeChanged(ForgeChange{Forge: "GitLab", Address: "gitlab.example.com/a_b", Noun: "merge request", Ref: "!4", Title: title, Branch: branch, Project: "shop", Target: "main", URL: "https://gitlab.example.com/a/-/merge_requests/4"}).Note, shown},
+		"published": {ForgePublished(ForgePublish{Forge: "GitLab", Noun: "merge request", Ref: "!4", Title: title, Branch: branch, Project: "shop", Notes: []ForgePublishedNote{{Path: path, Line: 3, URL: "https://x.test/n"}}}).Note, append(shown, "src/&lt;i&gt;.go:3")},
+		"thread":    {ForgeThreadWritten(ForgeThread{Forge: "GitLab", Noun: "merge request", Ref: "!4", Title: title, Branch: branch, Project: "shop", Path: path, Line: 3, Replied: true}).Note, append(shown, "src/&lt;i&gt;.go:3")},
+		"retried":   {ForgeRetried(ForgeRetry{Forge: "GitLab", Pipeline: "pipeline #7", Branch: branch, Project: "shop", Job: "__tests__ <e2e>"}).Note, []string{"fix/&lt;b&gt;_x_", "__tests__ &lt;e2e&gt;"}},
+		"failed":    {render("approval_note.md.tmpl", approvalNoteData{Verdict: approval.Failed, Text: "GitLab refused to comment: <form> is __bad__"}), []string{"&lt;form&gt; is __bad__"}},
+	} {
+		page, err := markdown.RenderGFM(c.note)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range c.want {
+			if !strings.Contains(page, want) {
+				t.Errorf("the %s note %q reads %q on the page, without %q", name, c.note, page, want)
+			}
+		}
+		if strings.Contains(page, "<strong>") || strings.Contains(page, "<em>") {
+			t.Errorf("the %s note turns bold on the page: %q", name, page)
+		}
+	}
+}
+
+// The same outcome in the answer the CLI prints is plain text: a name an
+// assistant reuses reads as it was written, with no backslash before a mark.
+func TestAForgeOutcomeReadsAsWrittenInTheCLI(t *testing.T) {
+	title, branch, project, path := "Fix <form> in __init__", "fix_login", "p17b_ui", "src/log_in.go"
+	for name, c := range map[string]struct {
+		said ForgeOutcome
+		want string
+	}{
+		"changed":   {ForgeChanged(ForgeChange{Forge: "GitLab", Address: "gitlab.example.com/a_b", Noun: "merge request", Ref: "!4", Title: title, Branch: branch, Project: project, Target: "main", URL: "https://gitlab.example.com/a_b/-/merge_requests/4"}), `On GitLab gitlab.example.com/a_b the merge request !4 "Fix <form> in __init__" of fix_login into main in p17b_ui is open: https://gitlab.example.com/a_b/-/merge_requests/4.`},
+		"published": {ForgePublished(ForgePublish{Forge: "GitLab", Address: "gitlab.example.com/a_b", Noun: "merge request", Ref: "!4", Title: title, Branch: branch, Project: project, Notes: []ForgePublishedNote{{Path: path, Line: 3, URL: "https://x.test/n_1"}, {Path: "__init__.py", Line: 9, URL: "https://x.test/n_2"}}}), "On GitLab gitlab.example.com/a_b 2 line comments of fix_login in p17b_ui are published on the merge request !4 \"Fix <form> in __init__\", each a review thread of its own:\n- src/log_in.go:3 https://x.test/n_1\n- __init__.py:9 https://x.test/n_2"},
+		"thread":    {ForgeThreadWritten(ForgeThread{Forge: "GitLab", Address: "gitlab.example.com/a_b", Noun: "merge request", Ref: "!4", Title: title, Branch: branch, Project: project, Path: path, Line: 3, Replied: true}), `On GitLab gitlab.example.com/a_b the review thread on src/log_in.go:3 of the merge request !4 "Fix <form> in __init__" of fix_login in p17b_ui holds your reply.`},
+		"retried":   {ForgeRetried(ForgeRetry{Forge: "GitLab", Address: "gitlab.example.com/a_b", Pipeline: "pipeline #7", Branch: branch, Project: project, Job: "__tests__ <e2e>"}), `On GitLab gitlab.example.com/a_b the job "__tests__ <e2e>" of pipeline #7 of fix_login in p17b_ui runs again.`},
+	} {
+		if c.said.Plain != c.want {
+			t.Errorf("the %s answer reads %q, want %q", name, c.said.Plain, c.want)
+		}
 	}
 }

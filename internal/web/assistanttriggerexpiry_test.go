@@ -105,5 +105,5 @@ func triggerSpec(form url.Values) (assistant.TriggerSpec, error) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, assistantTriggersPath, strings.NewReader(form.Encode()))
 	c.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	return (&Server{}).assistantTriggerSpec(c, assistant.EventJob, nil)
+	return (&Server{}).assistantTriggerSpec(c, assistant.Trigger{Source: assistant.EventJob})
 }

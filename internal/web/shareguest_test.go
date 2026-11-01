@@ -17,6 +17,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/linecomment"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/share"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -40,9 +41,12 @@ func TestGuestRoutesNeverReachWhatNoLinkMay(t *testing.T) {
 		"/projects/:name/docker/logs/output": true,
 	}
 	granted := map[string]bool{
-		"POST /projects/:name/editor/comments":        true,
-		"POST /projects/:name/editor/comments/delete": true,
-		"POST /projects/:name/editor/comments/move":   true,
+		"POST /projects/:name/editor/comments":              true,
+		"POST /projects/:name/editor/comments/delete":       true,
+		"POST /projects/:name/editor/comments/move":         true,
+		"POST /projects/:name/editor/comments/reply":        true,
+		"POST /projects/:name/editor/comments/reply/delete": true,
+		"POST /projects/:name/editor/comments/resolve":      true,
 	}
 	routes := guestRouteTable(t)
 	if len(routes) == 0 {
@@ -83,7 +87,8 @@ func TestGuestRoutesRefuseEveryTerminalDeletion(t *testing.T) {
 		"/coders/:id/delete", "/shells/:id/delete", "/coders/delete",
 		"/coders/:id/resize", "/shells/:id/resize", "/terminal-theme",
 		"/terminal-tabs/order", "/terminal-tabs/group", "/splits/:id",
-		"/projects/delete", "/projects/:name/tags", "/settings/general", "/assistants/:id",
+		"/projects/delete", "/projects/:name/tags", "/projects/:name/forge", "/projects/:name/forge/status",
+		"/projects/:name/forge/branch", "/projects/:name/forge/log", "/projects/:name/forge/retry", "/projects/:name/forge/change", "/projects/:name/forge/publish", "/settings/general", "/assistants/:id",
 		"/git/prompt", "/projects", "/editor",
 		"/assistants/memory", "/assistants/triggers", "/assistants/jobs", "/assistants/:id/draft",
 		"/assistants/:id/user-upload", "/assistants/:id/stt", "/assistants/:id/messages/:messageId/audio",
@@ -305,13 +310,13 @@ func TestAGuestReadsTheSourceRootsOfItsLinksProjectsAlone(t *testing.T) {
 // alone, and those of a project off the link not at all.
 func TestAGuestReadsTheLineCommentsOfEveryProjectOnItsLink(t *testing.T) {
 	f := newGuestFixture(t)
-	f.s.lineComments = newLineComments(t.TempDir())
+	f.s.lineComments = linecomment.New(t.TempDir())
 	guestRoutes{group: f.r.Group(sharePathPrefix+":token", f.s.openShare)}.read(http.MethodGet, "/projects/:name/editor/comments", f.s.handleEditorComments)
 	for _, name := range []string{"shop", "blog", "other"} {
 		if err := os.WriteFile(filepath.Join(f.root, name, "a.txt"), []byte("one\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := f.s.lineComments.Save(name, lineComment{Path: "a.txt", Line: 1, LineText: "one", Text: "note of " + name}, commentWriter{}); err != nil {
+		if _, _, err := f.s.lineComments.Save(name, linecomment.Comment{Path: "a.txt", Line: 1, LineText: "one", Text: "note of " + name}, linecomment.Writer{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -405,6 +410,7 @@ func TestAGuestsEventStreamCarriesOnlyItsProjectsSignals(t *testing.T) {
 		{eventbus.Event{Type: "searchdraft", Data: map[string]string{"project": "shop"}}, false},
 		{eventbus.Event{Type: "assistant", Data: map[string]string{}}, false},
 		{eventbus.Event{Type: "host"}, false},
+		{eventbus.Event{Type: "forge", Data: map[string]string{"project": "shop"}}, false},
 		{eventbus.Event{Type: "something-new"}, false},
 	}
 	for _, tc := range cases {

@@ -116,6 +116,10 @@ type Service struct {
 	// reviewsChanged hears the open review count after every write of the
 	// review list, so a surface showing it follows without a reload.
 	reviewsChanged func(count int)
+	// restored hears the sections an import wrote into once the whole
+	// archive is on disk, so what one section holds is checked against what
+	// the others brought along.
+	restored func(sections []string)
 }
 
 // New builds the service for the given state and projects directories, so
@@ -566,8 +570,20 @@ func (s *Service) Apply(id string, ids []string) (ApplyResult, error) {
 	res.Sections = len(applied)
 	res.Overwritten = len(overwritten)
 	s.reviewAdd(overwritten)
+	if s.restored != nil && len(applied) > 0 {
+		var sections []string
+		for _, sec := range s.sections {
+			if applied[sec.ID] {
+				sections = append(sections, sec.ID)
+			}
+		}
+		s.restored(sections)
+	}
 	return res, nil
 }
+
+// SetRestored sets who hears the sections an import wrote into.
+func (s *Service) SetRestored(listen func(sections []string)) { s.restored = listen }
 
 func newReviewEntry(target, section string) ReviewEntry {
 	return ReviewEntry{ID: statefile.NewID(), Path: target, Section: section, CreatedAt: time.Now()}

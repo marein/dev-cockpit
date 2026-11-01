@@ -1,0 +1,10 @@
+{{define "forge_job.gohtml"}}
+{{- $j := .Job}}
+{{- if not $j.NoLog}}<button type="button" class="dropdown-item d-flex align-items-center gap-2" data-forge-job="{{$j.ID}}" data-forge-job-name="{{$j.Name}}" data-forge-job-status="{{$j.Status}}">
+{{- else if $j.URL}}<a class="dropdown-item d-flex align-items-center gap-2" href="{{$j.URL}}" target="_blank" rel="noopener" title="{{$j.NoLog}}" data-forge-job-page>
+{{- else}}<button type="button" class="dropdown-item d-flex align-items-center gap-2" title="{{$j.NoLog}}" disabled>
+{{- end}}
+  <i class="ti {{$j.Icon}} text-{{$j.Color}}" aria-hidden="true"></i>
+  <span class="d-flex flex-column min-w-0 text-start"><span class="text-truncate">{{if .Log}}Log of {{end}}{{$j.Name}}</span><span class="small text-secondary text-truncate">{{$j.Sub}}</span></span>
+{{if and $j.NoLog $j.URL}}</a>{{else}}</button>{{end}}
+{{end}}

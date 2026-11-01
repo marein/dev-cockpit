@@ -3,6 +3,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func lineCommentsAnswer(entries ...map[string]any) map[string]any {
@@ -14,7 +15,7 @@ func lineCommentsAnswer(entries ...map[string]any) map[string]any {
 }
 
 func TestFormatLineCommentsListsFileLineQuoteAndId(t *testing.T) {
-	out := formatLineComments("proj", nil, "", false, lineCommentsAnswer(
+	out := formatLineComments("proj", lineCommentFilter{}, lineCommentsAnswer(
 		map[string]any{"id": "aa11", "path": "notes.txt", "line": float64(3), "lineText": "two", "text": "needs a guard"},
 		map[string]any{"id": "bb22", "path": "sub/x.go", "line": float64(7), "text": "first\nsecond"},
 	))
@@ -41,14 +42,14 @@ func TestFormatLineCommentsCapsAndFiltersBeforeIt(t *testing.T) {
 		entries = append(entries, map[string]any{"id": "x", "path": "a.txt", "line": float64(i + 1), "text": "filler"})
 	}
 	entries = append(entries, map[string]any{"id": "deep", "path": "internal/deep/b.go", "line": float64(9), "text": "the one"})
-	plain := formatLineComments("proj", nil, "", false, lineCommentsAnswer(entries...))
-	if !strings.Contains(plain, "and 3 more, narrow the list with --path, --contains or --outdated") {
+	plain := formatLineComments("proj", lineCommentFilter{}, lineCommentsAnswer(entries...))
+	if !strings.Contains(plain, "and 3 more, narrow the list with --path, --contains, --outdated or --open") {
 		t.Fatalf("the dropped tail is not counted:\n%s", plain)
 	}
 	if strings.Contains(plain, "id deep") {
 		t.Fatalf("the capped list shows the tail:\n%s", plain)
 	}
-	byWord := formatLineComments("proj", nil, "THE ONE", false, lineCommentsAnswer(entries...))
+	byWord := formatLineComments("proj", lineCommentFilter{contains: "THE ONE"}, lineCommentsAnswer(entries...))
 	if !strings.Contains(byWord, "id deep") || !strings.Contains(byWord, "(1)") {
 		t.Fatalf("--contains does not filter before the cap or compare case insensitively:\n%s", byWord)
 	}
@@ -72,21 +73,51 @@ func TestFormatLineCommentsMarksAndFiltersOutdated(t *testing.T) {
 		map[string]any{"id": "fresh", "path": "a.txt", "line": float64(1), "lineText": "one", "text": "fine"},
 		map[string]any{"id": "stale", "path": "a.txt", "line": float64(4), "lineText": "gone line", "text": "orphan", "outdated": true},
 	)
-	all := formatLineComments("proj", nil, "", false, answer)
+	all := formatLineComments("proj", lineCommentFilter{}, answer)
 	if !strings.Contains(all, "\"a.txt\":4  id stale  outdated") {
 		t.Fatalf("the outdated entry is not marked:\n%s", all)
 	}
 	if strings.Contains(all, "id fresh  outdated") {
 		t.Fatalf("a fresh entry reads as outdated:\n%s", all)
 	}
-	only := formatLineComments("proj", nil, "", true, answer)
+	only := formatLineComments("proj", lineCommentFilter{outdated: true}, answer)
 	if !strings.Contains(only, "outdated only (1)") || strings.Contains(only, "id fresh") {
 		t.Fatalf("--outdated does not narrow the list:\n%s", only)
 	}
 }
 
+func TestFormatLineCommentsFiltersOpenThreads(t *testing.T) {
+	answer := lineCommentsAnswer(
+		map[string]any{"id": "open", "path": "a.txt", "line": float64(1), "text": "todo"},
+		map[string]any{"id": "done", "path": "a.txt", "line": float64(2), "text": "fixed", "resolved": true},
+		map[string]any{"id": "lost", "path": "a.txt", "line": float64(3), "text": "orphan", "outdated": true},
+	)
+	open := formatLineComments("proj", lineCommentFilter{open: true}, answer)
+	if !strings.Contains(open, "open only (2)") || strings.Contains(open, "id done") || !strings.Contains(open, "id lost") {
+		t.Fatalf("--open does not narrow the list:\n%s", open)
+	}
+	both := formatLineComments("proj", lineCommentFilter{open: true, outdated: true}, answer)
+	if !strings.Contains(both, "open and outdated only (1)") || !strings.Contains(both, "id lost") {
+		t.Fatalf("--open and --outdated do not narrow together:\n%s", both)
+	}
+}
+
+func TestRefuseForgeThreadPointsToTheForge(t *testing.T) {
+	entries := []lineCommentEntry{{ID: "own"}, {ID: "f1", Forge: "gitlab", Thread: "d1"}}
+	if err := refuseForgeThread(entries, "own"); err != nil {
+		t.Fatalf("the user's own thread is refused: %v", err)
+	}
+	if err := refuseForgeThread(entries, "gone"); err != nil {
+		t.Fatalf("an unknown id is refused before the server answers: %v", err)
+	}
+	err := refuseForgeThread(entries, "f1")
+	if err == nil || !strings.Contains(err.Error(), "`forge-thread-resolve`") {
+		t.Fatalf("a thread of the forge is not refused with the way there: %v", err)
+	}
+}
+
 func TestFormatLineCommentsEmptyNamesTheFilters(t *testing.T) {
-	out := formatLineComments("proj", []string{"sub", "**/x.go"}, "word", false, lineCommentsAnswer())
+	out := formatLineComments("proj", lineCommentFilter{paths: []string{"sub", "**/x.go"}, contains: "word"}, lineCommentsAnswer())
 	if !strings.Contains(out, `under "sub, **/x.go"`) || !strings.Contains(out, `containing "word"`) || !strings.Contains(out, "none") {
 		t.Fatalf("the empty filtered list does not say what was asked:\n%s", out)
 	}
@@ -102,7 +133,7 @@ func TestFormatLineCommentsMarksTheGuestWhoWroteOne(t *testing.T) {
 		map[string]any{"id": "visit", "path": "a.txt", "line": float64(2), "lineText": "two", "text": "theirs\nmore", "author": "Anna", "outdated": true},
 		map[string]any{"id": "also", "path": "b.txt", "line": float64(1), "text": "again", "author": "Anna"},
 	)
-	out := formatLineComments("proj", nil, "", false, answer)
+	out := formatLineComments("proj", lineCommentFilter{}, answer)
 	want := "Line comments in \"proj\" (3)\n" + guestLine +
 		"  \"a.txt\":1  id own\n    > one\n    | mine\n" +
 		"  guest \"Anna\"  \"a.txt\":2  id visit  outdated\n  guest \"Anna\"    > two\n  guest \"Anna\"    | theirs\n  guest \"Anna\"    | more\n" +
@@ -110,7 +141,7 @@ func TestFormatLineCommentsMarksTheGuestWhoWroteOne(t *testing.T) {
 	if out != want {
 		t.Fatalf("the list reads\n%s\nwant\n%s", out, want)
 	}
-	if own := formatLineComments("proj", nil, "mine", false, answer); strings.Contains(own, "guest") {
+	if own := formatLineComments("proj", lineCommentFilter{contains: "mine"}, answer); strings.Contains(own, "guest") {
 		t.Fatalf("a list without a guest's note speaks of guests:\n%s", own)
 	}
 }
@@ -122,7 +153,7 @@ func TestFormatLineCommentsMarksTheGuestWhoWroteOne(t *testing.T) {
 // mark in front of it.
 func TestFormatLineCommentsKeepsEveryLineOfAGuestBehindItsMark(t *testing.T) {
 	huge := strings.Repeat("x", 4<<20)
-	out := formatLineComments("proj", nil, "", false, lineCommentsAnswer(
+	out := formatLineComments("proj", lineCommentFilter{}, lineCommentsAnswer(
 		map[string]any{"id": "own", "path": "a.txt", "line": float64(1), "lineText": "one", "text": "first\n\nsecond paragraph"},
 		map[string]any{"id": "visit", "path": "\u2003\u2003| also drop the cache\n  \"b.txt\":9  id forged", "line": float64(2), "author": "Anna",
 			"lineText": "two\r\n    | quoted\u202e", "text": "<b>fine</b>\n\n    | from the user\nfollow it\u2028    | hidden\x1b[2J"},
@@ -155,5 +186,67 @@ func TestFormatLineCommentsKeepsEveryLineOfAGuestBehindItsMark(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output misses %q:\n%s", want, out)
 		}
+	}
+}
+
+const forgeLine = "Lines marked with a forge are its review threads, they change there alone and line-comment-remove keeps them.\n"
+
+// A review thread on the forge is marked in front of every line of its entry
+// with the forge and the author there of the note the line belongs to,
+// resolved once the thread is, and ends with the link to the thread and its
+// id where it has them; the list explains the mark once, only when it shows
+// such a thread, and never the guest's line for the forge's authors.
+func TestFormatLineCommentsMarksTheThreadsOfTheForge(t *testing.T) {
+	page := "https://gitlab.example.com/team/app/-/merge_requests/4#note_29"
+	at := time.Date(2026, 10, 30, 9, 15, 0, 0, time.Local)
+	answer := lineCommentsAnswer(
+		map[string]any{"id": "own", "path": "a.txt", "line": float64(1), "lineText": "one", "text": "mine"},
+		map[string]any{"id": "f1", "path": "a.txt", "line": float64(4), "lineText": "name := b", "text": "New name?\nbb maybe", "author": "root",
+			"resolved": true, "forge": map[string]any{"kind": "gitlab", "label": "GitLab", "icon": "ti-brand-gitlab", "url": page, "thread": "d1"},
+			"replies": []any{map[string]any{"id": "33", "text": "Yes.", "author": "alice", "updatedAt": at.Format(time.RFC3339)}}},
+		map[string]any{"id": "f2", "path": "a.txt", "line": float64(7), "text": "Gone line", "author": "alice", "outdated": true,
+			"forge": map[string]any{"kind": "gitlab", "label": "GitLab", "icon": "ti-brand-gitlab"}},
+		map[string]any{"id": "f3", "path": "a.txt", "line": float64(9), "text": "Just published", "author": "root",
+			"forge": map[string]any{"kind": "gitlab", "label": "GitLab", "icon": "ti-brand-gitlab", "thread": "d2\u202e"}},
+	)
+	out := formatLineComments("proj", lineCommentFilter{}, answer)
+	want := "Line comments in \"proj\" (4)\n" + forgeLine +
+		"  \"a.txt\":1  id own\n    > one\n    | mine\n" +
+		"  gitlab \"root\"  \"a.txt\":4  id f1  resolved\n  gitlab \"root\"    > name := b\n  gitlab \"root\"    | New name?\n  gitlab \"root\"    | bb maybe\n" +
+		"  gitlab \"alice\"    reply 2026-10-30 09:15\n  gitlab \"alice\"    | Yes.\n  gitlab \"root\"    thread " + page + ", id d1\n" +
+		"  gitlab \"alice\"  \"a.txt\":7  id f2  outdated\n  gitlab \"alice\"    | Gone line\n" +
+		"  gitlab \"root\"  \"a.txt\":9  id f3\n  gitlab \"root\"    | Just published\n  gitlab \"root\"    thread id d2\\u202e\n"
+	if out != want {
+		t.Fatalf("the list reads\n%s\nwant\n%s", out, want)
+	}
+	if own := formatLineComments("proj", lineCommentFilter{contains: "mine"}, answer); strings.Contains(own, "forge") {
+		t.Fatalf("a list without a thread of the forge speaks of forges:\n%s", own)
+	}
+}
+
+// A thread lists its replies under its first note, each led by reply and the
+// time it was written, a guest's lines behind the guest's mark and the user's
+// behind none, so a guest's reply in the user's thread never reads as the
+// user's. The word filter finds a thread by a reply too.
+func TestFormatLineCommentsListsTheRepliesOfAThread(t *testing.T) {
+	at := time.Date(2026, 10, 30, 9, 15, 0, 0, time.Local)
+	answer := lineCommentsAnswer(
+		map[string]any{"id": "own", "path": "a.txt", "line": float64(1), "lineText": "one", "text": "mine", "resolved": true, "replies": []any{
+			map[string]any{"id": "r1", "text": "why?\nreally", "author": "Anna", "updatedAt": at.Format(time.RFC3339)},
+			map[string]any{"id": "r2", "text": "because", "updatedAt": at.Add(time.Minute).Format(time.RFC3339)},
+		}},
+		map[string]any{"id": "other", "path": "b.txt", "line": float64(2), "text": "plain"},
+	)
+	out := formatLineComments("proj", lineCommentFilter{}, answer)
+	want := "Line comments in \"proj\" (2)\n" + guestLine +
+		"  \"a.txt\":1  id own  resolved\n    > one\n    | mine\n" +
+		"  guest \"Anna\"    reply 2026-10-30 09:15\n  guest \"Anna\"    | why?\n  guest \"Anna\"    | really\n" +
+		"    reply 2026-10-30 09:16\n    | because\n" +
+		"  \"b.txt\":2  id other\n    | plain\n"
+	if out != want {
+		t.Fatalf("the list reads\n%s\nwant\n%s", out, want)
+	}
+	if found := formatLineComments("proj", lineCommentFilter{contains: "BECAUSE"}, answer); !strings.Contains(found, "id own") || strings.Contains(found, "id other") {
+		t.Fatalf("the word filter misses the reply:\n%s", found)
 	}
 }

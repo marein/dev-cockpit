@@ -64,6 +64,15 @@ func (s *Server) handleProjectEditor(c *gin.Context) {
 	}
 	s.projects.Touch(p.Name)
 	s.notifier.MarkTargetRead(notify.WorktreeTarget(p.Name))
+	// The editor opened on the pipeline is where a failed pipeline's news
+	// leads, and on the line comments where a guest's comment does, and being
+	// there is seeing it; the plain editor shows neither and reads nothing.
+	switch editorView(c.Query("view")) {
+	case editorViewPipeline:
+		s.notifier.MarkTargetRead(notify.PipelineTarget(p.Name))
+	case editorViewComments:
+		s.notifier.MarkTargetRead(notify.CommentsTarget(p.Name))
+	}
 	// Exactly the project name, nothing of what stands open in it: the entry
 	// has to answer "where was I", and a file or a scroll position is the
 	// page's own state, not the area's.
@@ -111,14 +120,24 @@ func (s *Server) renderProjectEditor(c *gin.Context, p project.Project) {
 	c.HTML(http.StatusOK, "project_editor.gohtml", data)
 }
 
+// editorViewPipeline is the view a failed pipeline's news opens the editor
+// on: the forge sheet, which shows the pipeline of the branch with its jobs.
+// editorViewComments is the one a guest's comment opens it on, the Line
+// comments sheet.
+const (
+	editorViewPipeline = "pipeline"
+	editorViewComments = "comments"
+)
+
 // editorView reads the panel a deep link asks the editor to open on, the
 // commit view or the revision compare, which is where the projects page's git
-// menu leads. Anything else is nothing, so a stale link opens the plain
-// editor; the value rides into the page like the terminal id and is never read
-// out of the URL there.
+// menu leads, or the forge sheet with the pipeline or the Line comments sheet
+// a piece of news leads to. Anything else is nothing,
+// so a stale link opens the plain editor; the value rides into the page like
+// the terminal id and is never read out of the URL there.
 func editorView(raw string) string {
 	switch view := strings.TrimSpace(raw); view {
-	case "commit", "compare":
+	case "commit", "compare", editorViewPipeline, editorViewComments:
 		return view
 	}
 	return ""

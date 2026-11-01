@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marein/dev-cockpit/internal/forge"
+	"github.com/marein/dev-cockpit/internal/forge/github"
+	"github.com/marein/dev-cockpit/internal/forge/gitlab"
+	"github.com/marein/dev-cockpit/internal/gitfacts"
 	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/plugin"
@@ -132,6 +136,7 @@ func TestWorktreeRowCarriesItsMainInsteadOfTheOrigin(t *testing.T) {
 	}
 
 	p.GitWorktree, p.GitWorktreeOf, p.GitWorktreeMain = false, "", ""
+	data.Forges = map[string]forge.Binding{"app": {Host: github.Builtin(), Path: "marein/app"}}
 	out = renderProjects(t, data)
 	if strings.Contains(out, "data-project-worktree-of") || strings.Contains(out, "data-project-worktree") {
 		t.Fatal("a plain repository renders worktree state")
@@ -144,17 +149,61 @@ func TestWorktreeRowCarriesItsMainInsteadOfTheOrigin(t *testing.T) {
 	}
 }
 
-func TestOriginIconNamesTheForge(t *testing.T) {
-	for origin, want := range map[string]string{
-		"github.com/marein/app":     "ti-brand-github",
-		"gitlab.example.com/team/x": "ti-brand-gitlab",
-		"bitbucket.org/team/x":      "ti-brand-bitbucket",
-		"git.example.com/team/x":    "ti-world",
-		"":                          "ti-world",
-	} {
-		if got := OriginIcon(origin); got != want {
-			t.Errorf("OriginIcon(%q) = %q, want %q", origin, got, want)
+// The origin wears the brand of the forge it binds to and leads to the
+// repository's page there, also when the origin names an alias host or a
+// host the user added under a path of its own. An origin on a host no forge
+// is known on keeps the globe and the address read off its url.
+func TestOriginRowAsksTheForge(t *testing.T) {
+	forges := forge.Hosts{github.Builtin(), gitlab.Builtin(), {ID: "self", Kind: gitlab.Kind, WebURL: "https://git.example.com/gitlab", Aliases: []string{"gl"}}}
+	cases := []struct{ origin, icon, url string }{
+		{"git@github.com:marein/app.git", "ti-brand-github", "https://github.com/marein/app"},
+		{"ssh://git@ssh.github.com:443/marein/app.git", "ti-brand-github", "https://github.com/marein/app"},
+		{"https://user@gitlab.com/team/sub/app.git", "ti-brand-gitlab", "https://gitlab.com/team/sub/app"},
+		{"https://git.example.com/gitlab/team/app.git", "ti-brand-gitlab", "https://git.example.com/gitlab/team/app"},
+		{"gl:team/app.git", "ti-brand-gitlab", "https://git.example.com/gitlab/team/app"},
+		{"git@gitlab.example.com:team/app.git", "ti-world", "https://gitlab.example.com/team/app"},
+		{"git@bitbucket.org:team/app.git", "ti-world", "https://bitbucket.org/team/app"},
+		{"/srv/git/app.git", "ti-world", ""},
+	}
+	for _, c := range cases {
+		data := projectsData(nil)
+		p := &data.Projects[0]
+		p.GitRepo, p.GitOriginRaw = true, c.origin
+		p.GitOrigin, p.GitOriginURL = gitfacts.OriginName(c.origin), gitfacts.OriginWebURL(c.origin)
+		if b, ok := forges.Resolve(c.origin); ok {
+			data.Forges = map[string]forge.Binding{"app": b}
 		}
+		row := data.Rows()[0]
+		if row.OriginIcon() != c.icon || row.OriginURL() != c.url {
+			t.Errorf("%q: icon %q, url %q, want %q, %q", c.origin, row.OriginIcon(), row.OriginURL(), c.icon, c.url)
+		}
+		out := renderProjects(t, data)
+		if !strings.Contains(out, "ti "+c.icon+" icon icon-xs") {
+			t.Errorf("%q: the row does not wear %s", c.origin, c.icon)
+		}
+		if c.url != "" && !strings.Contains(out, `href="`+c.url+`"`) {
+			t.Errorf("%q: the row does not link %s", c.origin, c.url)
+		}
+	}
+	row := ProjectRow{Forge: &forge.Binding{Host: forge.Host{Kind: forge.Kind{ID: "plain"}, WebURL: "https://git.example.com"}, Path: "team/app"}}
+	if row.OriginIcon() != "ti-world" {
+		t.Errorf("a forge without a brand wears %q, want the globe", row.OriginIcon())
+	}
+}
+
+// A repository without an origin that is bound by hand names the repository
+// it is bound to, with the brand and the link, and without a binding it
+// names nothing.
+func TestABindingWithoutOriginNamesItsRepository(t *testing.T) {
+	data := projectsData(nil)
+	data.Projects[0].GitRepo = true
+	if out := renderProjects(t, data); strings.Contains(out, "data-project-origin") {
+		t.Fatal("a repository without origin and binding names one")
+	}
+	data.Forges = map[string]forge.Binding{"app": {Host: forge.Host{ID: "self", Kind: gitlab.Kind, WebURL: "http://git.example.com:8080/gitlab"}, Path: "team/app"}}
+	want := `<a href="http://git.example.com:8080/gitlab/team/app" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break" data-project-origin><i class="ti ti-brand-gitlab icon icon-xs" aria-hidden="true"></i> git.example.com:8080/gitlab/team/app</a>`
+	if out := renderProjects(t, data); !strings.Contains(out, want) {
+		t.Fatalf("the row does not name the repository it is bound to:\n%s", out)
 	}
 }
 

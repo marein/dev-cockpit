@@ -1,0 +1,65 @@
+{{define "forge_change.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="{{.Return}}" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title text-truncate">{{.Heading}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{template "forge_change_form.gohtml" .}}
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{define "forge_change_form.gohtml"}}
+{{- if or .Exists .Problem}}
+<div{{if .Modal}} data-form-view data-form-title="{{.Heading}}"{{end}} data-forge-change-view>
+  <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
+    {{- with .Exists}}
+    <p class="mb-2" data-forge-change-exists><code>{{$.Branch}}</code> has an open {{$.Kind.ChangeNoun}} already.</p>
+    {{- $badge := $.ExistsBadge}}
+    <a href="{{.URL}}" target="_blank" rel="noopener" class="d-flex align-items-baseline gap-2 min-w-0" data-forge-change-link>
+      <i class="ti {{$badge.ChangeIcon}} flex-none" aria-hidden="true"></i>
+      <span class="min-w-0 text-break">{{$badge.ChangeRef}} {{.Title}}</span>
+    </a>
+    <div class="small text-secondary mt-1">{{if .Draft}}Draft, {{end}}into <code>{{.Target}}</code> on {{$.Kind.Label}} · {{$.Address}}</div>
+    {{- else}}
+    <div class="text-break" data-forge-change-problem>{{.Problem}}</div>
+    {{- end}}
+  </div>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Close</button>{{else}}<a class="btn btn-ghost-secondary" href="{{.Return}}">Back</a>{{end}}
+  </div>
+</div>
+{{- else}}
+<form method="post" action="/projects/{{.Project}}/forge/change{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-forge-change-form{{if .Modal}} data-form-title="{{.Heading}}" data-form-wait="Opening the {{.Kind.ChangeNoun}}…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="branch" value="{{.Branch}}">
+  <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
+    <div class="small text-secondary text-break mb-3" data-forge-change-from>From <code>{{.Branch}}</code> at <code>{{.HeadShort}}</code> on {{.Kind.Label}} · {{.Address}}</div>
+    {{- if .Local}}
+    <div class="alert alert-{{.LocalLevel}} small py-2" data-forge-change-local>
+      <div class="text-break min-w-0">The local branch stands at <code>{{.LocalShort}}</code>, {{.LocalLine}}</div>
+    </div>
+    {{- end}}
+    <label class="form-label" for="forge-change-title">Title</label>
+    <input type="text" class="form-control" id="forge-change-title" name="title" value="{{.ChangeTitle}}" maxlength="{{.TitleMax}}" required autofocus data-forge-change-title>
+    <label class="form-label mt-3" for="forge-change-body">Description</label>
+    <textarea class="form-control" id="forge-change-body" name="body" rows="8" maxlength="{{.BodyMax}}" data-forge-change-body>{{.Body}}</textarea>
+    <div class="form-hint" data-forge-change-carried>{{.CarriedLine}}</div>
+    <label class="form-label mt-3" for="forge-change-target">Merge into</label>
+    <input type="text" class="form-control" id="forge-change-target" name="target" value="{{.Target}}" maxlength="{{.TargetMax}}" required autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-forge-change-target>
+    <label class="form-check mt-3 mb-0">
+      <input class="form-check-input" type="checkbox" name="draft" value="1"{{if .Draft}} checked{{end}} data-forge-change-draft>
+      <span class="form-check-label">Draft</span>
+      <span class="form-check-description">Not ready to merge until it is marked ready on {{.Kind.Label}}.</span>
+    </label>
+  </div>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>{{else}}<a class="btn btn-ghost-secondary" href="{{.Return}}">Cancel</a>{{end}}
+    <button type="submit" class="btn btn-primary" data-forge-change-open>Open {{.Kind.ChangeNoun}}</button>
+  </div>
+</form>
+{{- end}}
+{{end}}

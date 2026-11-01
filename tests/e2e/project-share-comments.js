@@ -11,12 +11,16 @@ const { guestPage, openCommentsSheet, menuLabels, closeMenu, openFile, marked, l
 // and switched on in its Edit, whose Add lists a pick with its switch before
 // the save. A guest
 // whose link grants it adds a line comment through the line's menu, edits
-// it, moves it (the route a save would call) and deletes it. The owner's
-// comment and one of another link show to it read only, in the line's menu,
-// the dialog and the sheet, and a hand built save, move or delete of them
-// changes nothing; a write needs the link's CSRF token and the local socket
-// is refused even with it. A guest's comment carries the link's name, shown
-// as text, in the owner's line menu, dialog and sheet, in every guest's sheet
+// it in its thread, moves it (the route a save would call) and deletes it.
+// The owner's comment and one of another link show to it unchanged, in the
+// line's menu, the thread and the sheet, the guest only replying to them, and
+// a hand built save, move, delete or resolve of them changes nothing; a write
+// needs the link's CSRF token and the local socket is refused even with it.
+// A guest's reply to the owner's thread is the owner's news, which opens the
+// Line comments sheet and reads there, and stands in the owner's thread under
+// the guest's name, its pencil and bin the guest's and the owner's, the
+// guest's bin taking it. A guest's comment carries the link's name, shown
+// as text, in the owner's line menu, thread and sheet, in every guest's sheet
 // and over the local API, which never names the link's id; the owner edits
 // and deletes it, the name staying. A guest's path led by Unicode spaces, its
 // quote with an escape and markup in its note are stored as sent and show as
@@ -75,6 +79,24 @@ async function dialog(gp) {
 
 async function dialogGone(gp) {
   await gp.waitForFunction(() => getComputedStyle(document.querySelector("[data-editor-comment-modal]")).display === "none", null, { timeout: 6000 });
+}
+
+// thread reads the open thread's notes, each as author: text with the
+// buttons it carries, and whether its reply field and resolve switch show.
+async function thread(gp) {
+  await gp.waitForSelector("[data-editor-comment-modal].show", { timeout: 6000 });
+  await sleep(500);
+  return gp.$eval("[data-editor-comment-modal]", (el) => {
+    const shows = (sel) => { const n = el.querySelector(sel); return !!n && getComputedStyle(n).display !== "none"; };
+    return {
+      notes: [...el.querySelectorAll("[data-comment-note]")].map((n) => {
+        const buttons = [...n.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")).join(",");
+        return `${n.querySelector("[data-comment-note-author]").textContent}: ${n.querySelector("[data-comment-note-text]").textContent}${buttons ? ` [${buttons}]` : ""}`;
+      }),
+      reply: shows("[data-editor-comment-text]") && shows("[data-editor-comment-save]") && el.querySelector("[data-editor-comment-save]").textContent === "Reply",
+      resolve: shows("[data-editor-comment-resolve-row]"),
+    };
+  });
 }
 
 async function write(gp, text) {
@@ -198,10 +220,13 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       const added = await noted(`anna-note-${fx.tag}`);
       assert(added && added.author === anna && added.line === 1 && !("link" in added) && !added.mine, `the owner reads ${JSON.stringify(added)}`);
       const own = await menuAt(gp, 1);
-      assert(own.includes(`Comment by ${anna}`) && own.includes("Edit comment") && own.includes("Delete comment"), `its own comment's menu reads ${JSON.stringify(own)}`);
-      await pick(gp, "Edit comment");
+      assert(own.includes(`Comment by ${anna}`) && own.includes("Open thread") && own.includes("Delete comment"), `its own comment's menu reads ${JSON.stringify(own)}`);
+      await pick(gp, "Open thread");
+      const opened = await thread(gp);
+      assert(opened.notes.join("|") === `You: anna-note-${fx.tag} [Edit comment]` && opened.reply && opened.resolve, `its own thread reads ${JSON.stringify(opened)}`);
+      await gp.click('[data-editor-comment-thread] button[aria-label="Edit comment"]');
       const editing = await dialog(gp);
-      assert(editing.title === "Edit line comment" && editing.author === `By ${anna}` && !editing.readOnly && editing.save && editing.hint, `editing reads ${JSON.stringify(editing)}`);
+      assert(editing.title === "Edit line comment" && !editing.readOnly && editing.save, `editing reads ${JSON.stringify(editing)}`);
       await write(gp, `anna-edited-${fx.tag}`);
       const edited = await waitText(async () => JSON.stringify(await noted(`anna-edited-${fx.tag}`) || ""), anna, "the edit");
       const id = JSON.parse(edited).id;
@@ -219,7 +244,7 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       assert(!(await noted(`anna-edited-${fx.tag}`)), "the guest's comment stands after its delete");
     });
 
-    await run("the owner's and another link's comments stay read only for the guest, by the page and by hand", async () => {
+    await run("the owner's and another link's comments stay unchanged for the guest, which only replies to them, by the page and by hand", async () => {
       const b = await openAs(links.bert);
       contexts.push(b.ctx);
       links.bert.page = b.page;
@@ -228,15 +253,15 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       const gp = links.anna.page;
       await waitText(() => marked(gp), /^1,2$/, "Anna's gutter after Bert's add");
       const others = await menuAt(gp, 1);
-      assert(others.includes(`Comment by ${bert}`) && others.includes("Show comment"), `another link's comment's menu reads ${JSON.stringify(others)}`);
-      assert(!others.some((l) => /^(Add line comment|Edit comment|Delete comment)$/.test(l)), `another link's comment offers ${JSON.stringify(others)}`);
-      await pick(gp, "Show comment");
-      const shown = await dialog(gp);
-      assert(shown.author === `By ${bert}` && shown.readOnly && !shown.save && !shown.hint && shown.close === "Close", `another link's comment shows as ${JSON.stringify(shown)}`);
+      assert(others.includes(`Comment by ${bert}`) && others.includes("Open thread"), `another link's comment's menu reads ${JSON.stringify(others)}`);
+      assert(!others.some((l) => /^(Add line comment|Delete comment)$/.test(l)), `another link's comment offers ${JSON.stringify(others)}`);
+      await pick(gp, "Open thread");
+      const shown = await thread(gp);
+      assert(shown.notes.join("|") === `${bert}: bert-note-${fx.tag}` && shown.reply && !shown.resolve, `another link's comment shows as ${JSON.stringify(shown)}`);
       await gp.click("[data-editor-comment-cancel]");
       await dialogGone(gp);
       const owners = await menuAt(gp, 2);
-      assert(owners.includes("Show comment") && !owners.some((l) => /^(Comment by|Edit comment|Delete comment)/.test(l)), `the owner's comment's menu reads ${JSON.stringify(owners)}`);
+      assert(owners.includes("Open thread") && !owners.some((l) => /^(Comment by|Delete comment)/.test(l)), `the owner's comment's menu reads ${JSON.stringify(owners)}`);
       await closeMenu(gp);
       await openCommentsSheet(gp);
       const sheet = await sheetLines(gp);
@@ -262,11 +287,51 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
         const del = await asGuest(links.anna, "/comments/delete", body);
         assert(del.status === 200 && JSON.parse(del.body).removed === 0, `deleting ${JSON.stringify(body)} answered ${del.status}: ${del.body}`);
       }
+      for (const target of [ownerNote, bertNote]) {
+        const resolve = await asGuest(links.anna, "/comments/resolve", { id: target.id, resolved: true });
+        assert(resolve.status === 403, `resolving ${target.text} answered ${resolve.status}`);
+      }
       const unsigned = await asGuest(links.anna, "/comments", { path: "README.md", line: 3, text: "unsigned" }, "");
       assert(unsigned.status === 403, `a write without the CSRF token answered ${unsigned.status}`);
       const local = await overSocket("POST", `${links.anna.base}/projects/${fx.project}/editor/comments`, { path: "README.md", line: 3, text: "local" }, { "X-CSRF-Token": links.anna.csrf });
       assert(local.status === 403 && local.body.includes("local socket"), `the local socket answered ${local.status}: ${local.body}`);
       assert(JSON.stringify(await notes()) === JSON.stringify(before), `the comments moved: ${JSON.stringify(await notes())}`);
+    });
+
+    await run("a guest's reply to the owner's thread is the owner's news and stands in the thread under its name", async () => {
+      const comments = async () => (JSON.parse((await getAs(page, "/notifications")).text).notifications || []).filter((n) => n.targetId === `comments:${fx.project}`);
+      await page.goto(`${BASE}/projects/${fx.project}/editor?view=comments`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 15000 });
+      assert(await page.locator("[data-editor-sheet-title]").textContent() === "Line comments", "the news' address does not open the Line comments sheet");
+      const before = await comments();
+      assert(before.length > 0 && before.every((n) => n.read) && before[0].title === "Guest commented.", `the guests' comments rang ${JSON.stringify(before)}`);
+      const gp = links.anna.page;
+      await menuAt(gp, 2);
+      await pick(gp, "Open thread");
+      await thread(gp);
+      await write(gp, `anna-reply-${fx.tag}`);
+      const replied = await waitText(async () => JSON.stringify(await comments()), "Guest replied.", "the owner's news of the reply");
+      const entry = JSON.parse(replied).find((n) => !n.read);
+      assert(entry && entry.title === "Guest replied." && entry.detail === `${anna} on README.md:2 in ${fx.project}: anna-reply-${fx.tag}` && entry.url === `/projects/${fx.project}/editor?view=comments`, `the news reads ${JSON.stringify(entry)}`);
+      const stored = (await noted(`owner-note-${fx.tag}`)).replies;
+      assert(stored.length === 1 && stored[0].author === anna && !("link" in stored[0]), `the reply is stored as ${JSON.stringify(stored)}`);
+      await page.goto(`${BASE}/projects/${fx.project}/editor`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".editor-file", { timeout: 15000 });
+      await openFile(page, "README.md");
+      await menuAt(page, 2);
+      await pick(page, "Open thread");
+      const owners = await thread(page);
+      assert(owners.notes.join("|") === `You: owner-note-${fx.tag} [Edit comment]|${anna}: anna-reply-${fx.tag} [Edit reply,Delete reply]` && owners.resolve, `the owner's thread reads ${JSON.stringify(owners)}`);
+      await page.click("[data-editor-comment-cancel]");
+      await dialogGone(page);
+      await menuAt(gp, 2);
+      await pick(gp, "Open thread");
+      const annas = await thread(gp);
+      assert(annas.notes.join("|") === `Owner: owner-note-${fx.tag}|You: anna-reply-${fx.tag} [Edit reply,Delete reply]` && !annas.resolve, `the guest's thread reads ${JSON.stringify(annas)}`);
+      await gp.click('[data-editor-comment-thread] button[aria-label="Delete reply"]');
+      await dialogGone(gp);
+      await L.confirmSwal(gp);
+      await waitText(async () => String((await noted(`owner-note-${fx.tag}`)).replies?.length || 0), "0", "the guest's delete of its reply");
     });
 
     await run("the author shows for the owner, every guest and the local API, the owner changes and deletes a guest's comment", async () => {
@@ -275,10 +340,13 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       await openFile(page, "README.md");
       await waitText(() => marked(page), /^1,2$/, "the owner's gutter");
       const items = await menuAt(page, 1);
-      assert(items.includes(`Comment by ${bert}`) && items.includes("Edit comment") && items.includes("Delete comment"), `the owner's menu of Bert's comment reads ${JSON.stringify(items)}`);
-      await pick(page, "Edit comment");
+      assert(items.includes(`Comment by ${bert}`) && items.includes("Open thread") && items.includes("Delete comment"), `the owner's menu of Bert's comment reads ${JSON.stringify(items)}`);
+      await pick(page, "Open thread");
+      const opened = await thread(page);
+      assert(opened.notes.join("|") === `${bert}: bert-note-${fx.tag} [Edit comment]`, `the owner's thread reads ${JSON.stringify(opened)}`);
+      await page.click('[data-editor-comment-thread] button[aria-label="Edit comment"]');
       const editing = await dialog(page);
-      assert(editing.author === `By ${bert}` && !editing.readOnly && editing.save, `the owner's dialog reads ${JSON.stringify(editing)}`);
+      assert(editing.title === "Edit line comment" && !editing.readOnly && editing.save, `the owner's dialog reads ${JSON.stringify(editing)}`);
       await write(page, `owner-edited-${fx.tag}`);
       const edited = await waitText(async () => JSON.stringify(await noted(`owner-edited-${fx.tag}`) || ""), "author", "the owner's edit");
       assert(JSON.parse(edited).author === bert, `the owner's edit left ${edited}`);
@@ -317,10 +385,10 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       await waitText(() => marked(page), /^1,2$/, "the owner's gutter");
       const items = await menuAt(page, 1);
       assert(items[0] === `Comment by ${anna}`, `the owner's line menu reads ${JSON.stringify(items)}`);
-      await pick(page, "Edit comment");
-      const shown = await dialog(page);
-      const body = await page.$eval("[data-editor-comment-modal] .modal-body", (el) => ({ text: el.querySelector("[data-editor-comment-text]").value, tags: el.querySelectorAll("b, i").length }));
-      assert(shown.author === `By ${anna}` && body.text === html && body.tags === 0, `the owner's dialog reads ${JSON.stringify({ shown, body })}`);
+      await pick(page, "Open thread");
+      const shown = await thread(page);
+      const body = await page.$eval("[data-editor-comment-modal] .modal-body", (el) => ({ tags: el.querySelectorAll("b, i:not(.ti)").length }));
+      assert(shown.notes.join("|") === `${anna}: ${html} [Edit comment]` && body.tags === 0, `the owner's thread reads ${JSON.stringify({ shown, body })}`);
       await page.click("[data-editor-comment-cancel]");
       await dialogGone(page);
       await openCommentsSheet(page);

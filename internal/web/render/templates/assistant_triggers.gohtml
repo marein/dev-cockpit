@@ -140,8 +140,9 @@
      what is saved.
 
      The event picks which target field shows: the owner's open jobs for a job
-     event, the running coders for a coder event, the schedule for cron; the
-     element dc-assistant-trigger switches them. On a change the event is
+     event, the running coders for a coder event, the project and its branch
+     for a pipeline or review event, the schedule for cron; the element
+     dc-assistant-trigger switches them. On a change the event is
      locked and posts nothing, because another event is another trigger.
 
      The hidden empty value in front of the terminal selects and the once box
@@ -201,6 +202,19 @@
         {{range .Coders}}<option value="{{.Terminal}}"{{if .Picked}} selected{{end}}>{{.Name}}{{if .Project}} · {{.Project}}{{end}}</option>{{end}}
       </select>
       <div class="form-hint">Nothing picked is any coder.</div>
+    </div>
+    {{/* The poll reads the pipeline and the change request of the branch a
+         project has checked out and of no other, so a branch named here
+         narrows the trigger to the time that branch is checked out. */}}
+    <div class="mb-2" data-trigger-target="forge" hidden>
+      <label class="form-label" for="assistant-trigger-project">Project</label>
+      <select class="form-select" name="project" id="assistant-trigger-project" required disabled data-trigger-project>
+        {{range .Projects}}<option value="{{.}}"{{if eq . $.Project}} selected{{end}}>{{.}}</option>{{end}}
+      </select>
+      <div class="form-hint">{{if .Projects}}A project bound to a forge, its host needs a token.{{else}}No project is bound to a forge yet.{{end}}</div>
+      <label class="form-label mt-2" for="assistant-trigger-branch">Branch</label>
+      <input type="text" class="form-control" name="branch" id="assistant-trigger-branch" value="{{.Branch}}" maxlength="{{.MaxBranch}}" placeholder="Any, the one checked out" autocapitalize="off" autocorrect="off" spellcheck="false" disabled data-trigger-branch>
+      <div class="form-hint">A named branch fires only while it is checked out.</div>
     </div>
     {{/* With several terminals picked the mode decides: any of them fires it,
          or every one has to, which is a barrier that answers once with every

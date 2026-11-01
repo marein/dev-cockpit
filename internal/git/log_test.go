@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -110,5 +111,44 @@ func TestLogNamesEachCommitsOwnFirstParent(t *testing.T) {
 	}
 	if file.Commits[0].Parent != onlyB.SHA || file.Commits[1].Parent != "" {
 		t.Fatalf("file history parents: %+v", file.Commits)
+	}
+}
+
+// What a branch carries since the target as the remote has it is read oldest
+// first and counted, the oldest ones where it carries more than the limit,
+// each by its subject and a lone one with its body; without the target's
+// remote tracking ref the head alone answers.
+func TestCarriedReadsTheCommitsSinceTheTarget(t *testing.T) {
+	dir := t.TempDir()
+	commitRepo(t, dir)
+	runGit(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
+	runGit(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	base := gitOut(t, dir, "rev-parse", "HEAD")
+	runGit(t, dir, "commit", "-q", "--allow-empty", "-m", "Add a", "-m", "Why a.\n\nAnd more.")
+	first := gitOut(t, dir, "rev-parse", "HEAD")
+	runGit(t, dir, "commit", "-q", "--allow-empty", "--allow-empty-message", "-m", "")
+	runGit(t, dir, "commit", "-q", "--allow-empty", "-m", "Fix a", "-m", "Why fix.")
+	head := gitOut(t, dir, "rev-parse", "HEAD")
+	ctx := context.Background()
+	for _, c := range []struct {
+		target, head string
+		limit        int
+		want         []Message
+		count        int
+		measured     bool
+	}{
+		{"main", head, 10, []Message{{"Add a", ""}, {"", ""}, {"Fix a", ""}}, 3, true},
+		{"main", head, 2, []Message{{"Add a", ""}, {"", ""}}, 3, true},
+		{"main", first, 10, []Message{{"Add a", "Why a.\n\nAnd more."}}, 1, true},
+		{"release", head, 10, []Message{{"Fix a", "Why fix."}}, 1, false},
+		{"main", base, 10, nil, 0, true},
+	} {
+		got, count, measured, err := New(dir).Carried(ctx, "origin", c.target, c.head, c.limit)
+		if err != nil || count != c.count || measured != c.measured || !slices.Equal(got, c.want) {
+			t.Fatalf("%s at %s carries %+v, %d, %t, %v", c.target, c.head, got, count, measured, err)
+		}
+	}
+	if _, _, _, err := New(dir).Carried(ctx, "origin", "main", "--all", 10); err == nil {
+		t.Fatal("an option passed for a commit")
 	}
 }

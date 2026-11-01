@@ -36,6 +36,9 @@ import (
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/eventbus"
+	"github.com/marein/dev-cockpit/internal/forge"
+	forgegithub "github.com/marein/dev-cockpit/internal/forge/github"
+	forgegitlab "github.com/marein/dev-cockpit/internal/forge/gitlab"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/markdown"
 	"github.com/marein/dev-cockpit/internal/notify"
@@ -291,7 +294,9 @@ func newAssistantCommand() *cobra.Command {
 		newProjectCommand(opts), newDeleteProjectCommand(opts), newProjectWorktreeNewCommand(opts), newProjectWorktreeListCommand(opts),
 		newProjectWorktreeScriptShowCommand(opts), newProjectWorktreeScriptSetCommand(opts),
 		newComposeListCommand(opts), newComposeStartCommand(opts), newComposeShowCommand(opts), newComposeStopCommand(opts),
-		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentRemoveCommand(opts),
+		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentResolveCommand(opts), newLineCommentRemoveCommand(opts),
+		newForgeShowCommand(opts), newForgePipelineRetryCommand(opts), newForgeChangeNewCommand(opts), newForgeCommentPublishCommand(opts),
+		newForgeThreadReplyCommand(opts), newForgeThreadResolveCommand(opts),
 		newOutputCommand(opts),
 		newRunTurnCommand(),
 	)
@@ -659,6 +664,11 @@ func runServe(opts serveOptions) error {
 		info.Title, info.Detail = postScriptNews(name, run)
 		notifier.AddResolved(notify.WorktreeTarget(name), info)
 	})
+	srv.SetGuestComment(func(note web.GuestComment) {
+		info := notify.TargetInfo{Name: note.Project, Project: note.Project, URL: "/projects/" + url.PathEscape(note.Project) + "/editor?view=comments"}
+		info.Title, info.Detail = commentNews(note)
+		notifier.AddResolved(notify.CommentsTarget(note.Project), info)
+	})
 	conversations.SetRenderer(markdown.RenderGFM)
 	notifier.SetSignal(watcher.Handle)
 	wireWorkingMark(notifier, tracker, turnReaders(coders))
@@ -730,6 +740,18 @@ func runServe(opts serveOptions) error {
 	srv.SetAskpass(askBroker, askScript)
 	costs.SetOnChange(func() { bus.Publish(eventbus.Event{Type: "costs"}) })
 	srv.SetCosts(costs, prices)
+	forgeService := forge.New(cfg.StateDir, []forge.Provider{forgegithub.Provider{}, forgegitlab.Provider{}}, forgegithub.Builtin(), forgegitlab.Builtin())
+	srv.SetForge(forgeService)
+	// The end of a pipeline of a bound project's checked out branch is an
+	// event the assistants may react to, once per pipeline and final status,
+	// and a failed one is news.
+	forgeService.OnPipelineEnd(pipelineEnded(events.Pipeline, notifier))
+	// The review threads of that branch's change request stand among the
+	// project's line comment threads, kept in step by the poller, and a new
+	// note somebody else wrote is an event, once per note.
+	forgeService.OnReview(srv.ForgeReview, srv.ForgeKept)
+	forgeService.OnReviewNote(func(n forge.ReviewNote) { events.ReviewComment(reviewReport(n)) })
+	backups.SetRestored(keepForgeOverrides(forgeService, projectRepo))
 
 	listener, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
@@ -780,6 +802,9 @@ func runServe(opts serveOptions) error {
 	go dockerService.Run(context.Background())
 	go costs.Run(costPollInterval, costOwners(coders, conversations))
 	go prices.Run(context.Background())
+	// The forge poller keeps the status of the bound projects' branches the
+	// pages and the local API read, and tells them when one moved.
+	go forgeService.Run(context.Background(), srv.ForgeWatches, srv.PublishForge)
 	// The project deletions the last process was in the middle of. Their rows
 	// already say they are working, that was read when the server was built;
 	// this is the work behind them starting again, and it waits for the docker
@@ -1083,6 +1108,37 @@ func postScriptNews(name string, run project.PostScriptRun) (title, detail strin
 	}
 	excerpt, _ := markdown.Excerpt(run.Err+": "+strings.Join(lines, " "), assistant.PreviewRunes)
 	return "Post script failed.", newsDetail(name, excerpt)
+}
+
+// pipelineNews is what a failed pipeline says: the branch it ran for in its
+// project with the change request, the way the assistants' event names them,
+// and after them the jobs that failed it. A job's name is no Markdown, the
+// excerpt reads it escaped, so __tests__ stays what it says.
+func pipelineNews(report assistant.PipelineReport) (title, detail string) {
+	ident := report.Branch + " in " + report.Project
+	if c := report.Change; c != nil {
+		ident += ", " + c.Noun + " " + c.Ref
+	}
+	names := make([]string, 0, len(report.Failing))
+	for _, name := range report.Failing {
+		names = append(names, markdown.Escape(name))
+	}
+	excerpt, _ := markdown.Excerpt(strings.Join(names, ", "), assistant.PreviewRunes)
+	return "Pipeline failed.", newsDetail(ident, excerpt)
+}
+
+// commentNews is what a guest's line comment says: who wrote it where, the
+// path cut like the note, and after them the start of what they wrote. A
+// comment is no Markdown, the excerpt reads it escaped, so it stays what it
+// says.
+func commentNews(note web.GuestComment) (title, detail string) {
+	title = "Guest commented."
+	if note.Reply {
+		title = "Guest replied."
+	}
+	ident := fmt.Sprintf("%s on %s:%d in %s", note.Guest, shorten(note.Path, assistant.PreviewRunes), note.Line, note.Project)
+	excerpt, _ := markdown.Excerpt(markdown.Escape(note.Text), assistant.PreviewRunes)
+	return title, newsDetail(ident, excerpt)
 }
 
 // assistantNewsName is the name a notification is rung under: what this

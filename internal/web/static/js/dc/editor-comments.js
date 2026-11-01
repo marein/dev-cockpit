@@ -47,19 +47,31 @@ export function visibleLine(text) {
 
 export const placeNodes = (path, line) => labelNodes({ head: visibleLine(path), tail: `:${line}` });
 
+export function noteStart(text, max) {
+  const line = flatLine(text).replace(/\s+/g, " ").trim();
+  return [...line].length > max ? `${[...line].slice(0, max - 1).join("")}…` : line;
+}
+
+export const resolved = (comment) => !!comment.resolved;
+
+const repliesOf = (comment) => comment.replies || [];
+
+export const replyCount = (n) => (n === 1 ? "1 reply" : `${n} replies`);
+
 // commentRow is what one entry of the Line comments sheet shows, as the
-// sheet's own row takes it: the path on one line and the note flattened to
-// one, so nothing a comment holds breaks out of its entry, and under an
-// outdated one the line it was made on.
+// sheet's own row takes it: the path on one line with the number of replies
+// behind it and the first note flattened to one, so nothing a comment holds
+// breaks out of its entry, and under an outdated one the line it was made on.
 export function commentRow(comment) {
   const note = flatLine(comment.text);
   const quote = String(comment.lineText || "").trim();
   const outdated = quote ? `Outdated · was: ${flatLine(quote)}` : "Outdated";
+  const replies = repliesOf(comment).length;
   const row = {
     icon: "ti-message-circle",
-    iconClass: comment.outdated ? "text-orange" : undefined,
-    label: { head: visibleLine(comment.path), tail: `:${comment.line}` },
-    title: [...noteLines(comment), ...(comment.outdated ? [outdated] : [])].join("\n"),
+    iconClass: comment.outdated ? "text-orange" : resolved(comment) ? "text-green" : undefined,
+    label: { head: visibleLine(comment.path), tail: `:${comment.line}${replies ? ` · ${replyCount(replies)}` : ""}` },
+    title: [...noteLines(comment), ...repliesOf(comment).flatMap(noteLines), ...(resolved(comment) ? ["Resolved"] : []), ...(comment.outdated ? [outdated] : [])].join("\n"),
   };
   if (!comment.outdated) return { ...row, sub: note };
   const old = el("span", { class: "text-orange text-truncate" }, quote ? ["Outdated · was: ", ...visibleLine(quote)] : outdated);
@@ -67,18 +79,39 @@ export function commentRow(comment) {
 }
 
 // authorHead gives the entry of a comment a guest wrote one more line at its
-// head, the person icon and the guest's name.
+// head, the person icon and the guest's name, and one of a review thread on
+// the forge the forge's icon, the author there or the forge's name, and
+// whether the thread is resolved.
 export function authorHead(row, comment) {
-  if (!comment.author) return row;
+  const forge = comment.forge;
+  if (!comment.author && !forge) return row;
   const own = el("span", { class: "d-flex align-items-center gap-2 min-w-0" }, ...row.childNodes);
   row.classList.replace("align-items-center", "align-items-stretch");
   row.classList.replace("gap-2", "gap-1");
   row.classList.add("flex-column");
   row.replaceChildren(el(
     "span",
-    { class: "d-flex align-items-center gap-2 min-w-0 text-secondary" },
-    el("i", { class: "ti ti-user", "aria-hidden": "true" }),
-    el("span", { class: "d-flex min-w-0" }, ...labelNodes({ head: visibleLine(comment.author) })),
+    { class: "d-flex align-items-center gap-2 min-w-0 text-secondary", "data-comment-author": "" },
+    el("i", { class: `ti ${forge ? forge.icon : "ti-user"}`, "aria-hidden": "true" }),
+    el("span", { class: "d-flex min-w-0" }, ...labelNodes({ head: visibleLine(comment.author || forge.label) })),
+    resolved(comment) ? el("span", { class: "text-green text-nowrap", "data-comment-resolved": "" }, "Resolved") : null,
   ), own);
   return row;
+}
+
+// noteEntry is one note of a thread in its dialog: who wrote it, when, the
+// buttons that change it, and the note as written.
+export function noteEntry({ name, when, text, buttons }) {
+  return el(
+    "div",
+    { class: "border-start border-2 ps-2 mt-2", "data-comment-note": "" },
+    el(
+      "div",
+      { class: "d-flex align-items-center gap-2 small text-secondary min-w-0" },
+      el("span", { class: "fw-medium text-body text-truncate", "data-comment-note-author": "" }, ...visibleLine(name)),
+      when,
+      buttons.length ? el("span", { class: "ms-auto d-flex gap-1" }, ...buttons) : null,
+    ),
+    el("div", { class: "dc-prompt-text", "data-comment-note-text": "" }, text),
+  );
 }

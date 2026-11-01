@@ -107,6 +107,22 @@ const approvalAssistantDelete = "assistant-delete"
 // an assistant asks for waits for the user's approval.
 const approvalWorktreePostScript = "worktree-post-script"
 
+// approvalForgeRetry is whether a run of failed jobs again on a forge an
+// assistant asks for waits for the user's approval.
+const approvalForgeRetry = "forge-retry"
+
+// approvalForgeChange is whether a change request an assistant wants to open
+// on a forge waits for the user's approval.
+const approvalForgeChange = "forge-change"
+
+// approvalForgePublish is whether line comments an assistant wants to publish
+// on a change request of a forge wait for the user's approval.
+const approvalForgePublish = "forge-publish"
+
+// approvalForgeThread is whether a reply or a resolve an assistant wants on a
+// review thread of a forge waits for the user's approval.
+const approvalForgeThread = "forge-thread"
+
 var approvalKinds = []approvalKind{{
 	ID:    approvalComposeActions,
 	Label: "Compose actions approval",
@@ -128,6 +144,22 @@ var approvalKinds = []approvalKind{{
 	ID:    approvalWorktreePostScript,
 	Label: "Worktree post script approval",
 	Hint:  "A worktree post script an assistant wants to set or delete under Settings › Projects stays as it is until you approve.",
+}, {
+	ID:    approvalForgeRetry,
+	Label: "Pipeline retry approval",
+	Hint:  "Failed jobs an assistant wants to run again on a forge stay as they are until you approve.",
+}, {
+	ID:    approvalForgeChange,
+	Label: "Change request approval",
+	Hint:  "A merge or pull request an assistant wants to open stays unopened until you approve.",
+}, {
+	ID:    approvalForgePublish,
+	Label: "Review comment approval",
+	Hint:  "Line comments an assistant wants to publish on a forge stay unpublished until you approve.",
+}, {
+	ID:    approvalForgeThread,
+	Label: "Review thread approval",
+	Hint:  "A reply or resolve an assistant wants on a forge's review thread waits until you approve.",
 }}
 
 // approvalKey is where one kind is stored.

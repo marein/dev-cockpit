@@ -84,6 +84,14 @@ export function showToast({ icon, title, detail, timer, onClick, onHidden } = {}
 
   toastContainer().appendChild(toast);
   const instance = new window.bootstrap.Toast(toast, { delay: duration, autohide: true });
+  // A second hide while the first one fades would run after the first
+  // disposed the toast and throw, as when a read closes the toast just as its
+  // timer runs out.
+  let hiding = false;
+  toast.addEventListener("hide.bs.toast", (event) => {
+    if (hiding) event.preventDefault();
+    hiding = true;
+  });
   toast.addEventListener("hidden.bs.toast", () => {
     instance.dispose();
     toast.remove();

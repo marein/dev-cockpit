@@ -14,8 +14,8 @@ const { assert, BASE } = L;
 // stays one line with every break shown as its escape in a code chip, the
 // note stays one line inside its entry. The owner's own entry is the sheet's
 // plain row. On a phone, light and dark, every entry stays inside its cell
-// and the sheet never scrolls sideways. The dialog keeps file and line, and
-// the quote, on one line the same way. Copy as text, built by the server
+// and the sheet never scrolls sideways. The thread keeps file and line, and
+// the quote, on one line the same way, its note under the guest's name. Copy as text, built by the server
 // (`.../editor/comments/text`), keeps indented code in a note as written,
 // every comment one entry, a guest's led by its name.
 
@@ -178,7 +178,7 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
   await run("the dialog keeps a guest's file, line and quote on one line", async () => {
     await page.locator("[data-editor-sheet-body] .row .dropdown-item", { hasText: "owner: fine" }).click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
-    await page.locator(".dc-context-menu .dropdown-item", { hasText: "Edit" }).click();
+    await page.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
     await commentDialogShown(page);
     const shown = await page.$eval("[data-editor-comment-modal]", (modal) => {
       const lines = (el) => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight);
@@ -191,10 +191,10 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
         placeChips: [...place.querySelectorAll("code")].map((c) => c.textContent).join(""),
         codeChips: [...code.querySelectorAll("code")].map((c) => c.textContent).join(""),
         tail: tail.right <= box.right + 0.5 && tail.width > 0,
-        author: modal.querySelector("[data-editor-comment-author]").textContent,
+        author: modal.querySelector("[data-comment-note-author]").textContent,
       };
     });
-    assert(shown.place < 1.3 && shown.code < 1.3 && shown.tail && shown.placeChips === escapes && shown.codeChips === "\\u2028" && shown.author === `By ${guest}`, `the dialog reads ${JSON.stringify(shown)}`);
+    assert(shown.place < 1.3 && shown.code < 1.3 && shown.tail && shown.placeChips === escapes && shown.codeChips === "\\u2028" && shown.author === guest, `the dialog reads ${JSON.stringify(shown)}`);
     await page.click("[data-editor-comment-cancel]");
     await commentDialogGone(page);
   });

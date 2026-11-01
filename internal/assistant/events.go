@@ -16,7 +16,9 @@ import (
 // react to. The type is small on purpose and open on purpose: a source that
 // wants to be reacted to publishes one line, and the reactor does the rest,
 // the matching, the bounds, the reaction and its answer. The sources so far
-// are a job's end, a coder's signal out of the notify inbox, and a cron tick.
+// are a job's end, a coder's signal out of the notify inbox, a cron tick, the
+// end of a compose run, and on a forge the end of a pipeline and a note on a
+// change request.
 type CockpitEvent struct {
 	Source string `json:"source"`
 	Kind   string `json:"kind"`
@@ -30,6 +32,9 @@ type CockpitEvent struct {
 	// Owner is the assistant the event belongs to, a job's owner, so only that
 	// assistant's triggers see it. Empty is everybody's, a coder's signal is.
 	Owner string `json:"owner,omitempty"`
+	// Project and Branch are what a forge event is about.
+	Project string `json:"project,omitempty"`
+	Branch  string `json:"branch,omitempty"`
 }
 
 // maxEventBodyRunes bounds what one event carries into a prompt. A job's

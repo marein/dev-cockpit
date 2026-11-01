@@ -31,6 +31,17 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 			Sources: []Source{
 				{Name: "settings.json", Path: st("settings.json")},
 				{Name: "worktree-post-script", Path: st("worktree-post-script")}}},
+		// The pipeline ends the forge poller published stay out,
+		// forge/pipelines.json: a host without them reads every branch
+		// afresh and publishes only what ends after that, never an old end
+		// twice. So do the review notes it read, forge/notes.json: a host
+		// without them reads every change request afresh and publishes only
+		// the notes written after that.
+		{ID: "forges", Group: "Cockpit", Label: "Forges",
+			Description: "The added forge hosts and the bindings set per project. An import drops a binding whose project this host lacks.",
+			Sources: []Source{
+				{Name: "hosts.json", Path: st("forge/hosts.json")},
+				{Name: "bindings.json", Path: st("forge/bindings.json")}}},
 		{ID: "push", Group: "Cockpit", Label: "Push channels",
 			Description: "Web push devices, webhooks, the VAPID keys and the base URL. Devices keep ringing without a new registration as long as Dev Cockpit keeps its address, under a new address every device must register again. The keys let anyone holding this file push to the devices, and an old installation left running rings the same phones twice.",
 			Sources: []Source{
@@ -136,6 +147,13 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 			Sources: []Source{
 				{Name: "gh", Path: hm(".config/gh")},
 				{Name: "glab-cli", Path: hm(".config/glab-cli")}}},
+		// The forge tokens travel apart from the hosts they belong to, like
+		// the gh and glab logins: whoever holds the file reads, and with a
+		// token that may write writes, on the forges as you.
+		{ID: "forge-tokens", Group: "Host", Label: "Forge tokens",
+			Description: "The tokens of the forge hosts in Settings, github.com and gitlab.com included. Whoever holds this file acts on the forges as you.",
+			Sources:     []Source{{Name: "tokens.json", Path: st("forge/tokens.json")}},
+			Requires:    []string{"forges"}},
 		{ID: "docker", Group: "Host", Label: "Docker login",
 			Description: "~/.docker/config.json with the registry logins, plus the docker contexts. A login held by a credential helper sits outside this file and does not travel.",
 			Sources: []Source{

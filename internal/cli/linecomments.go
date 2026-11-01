@@ -33,45 +33,58 @@ const lineCommentTimeout = 15 * time.Second
 const maxLineCommentsShown = 25
 
 func newLineCommentListCommand(opts *inspectOptions) *cobra.Command {
-	var paths []string
-	contains := ""
-	outdated := false
+	filter := lineCommentFilter{}
 	cmd := &cobra.Command{
 		Use:   "line-comment-list <project>",
 		Short: "Show the line comments of a project",
-		Long: "Show the line comments of one project, the notes pinned to single lines in the " +
-			"editor. Each entry starts with the quoted file, the line and the id `line-comment-remove` " +
-			"takes. The quoted code line follows after >, each line of the note after |. A character " +
-			"that prints nothing is written as its escape. Each line of a comment a guest wrote through " +
-			"a shared link starts with guest and the link's name. Every read holds the quotes against the files: a quote " +
+		Long: "Show the line comments of one project, the threads pinned to single lines in the " +
+			"editor. Each entry starts with the quoted file, the line and the id `line-comment-remove`, " +
+			"`line-comment-add --reply` and `forge-comment-publish` take, and is marked resolved once its thread is. " +
+			"The quoted code line follows after >, each line of the note after |, then each reply under reply " +
+			"with its time, its lines after | too. A character that prints nothing is written as its escape. " +
+			"Each line a guest wrote through a shared link starts with guest and the link's name. A review " +
+			"thread of the forge starts each line with the forge and the author there and ends with its link " +
+			"and the thread id `forge-thread-reply` and `forge-thread-resolve` take; it changes on the forge " +
+			"alone. Every read holds the quotes against the files: a quote " +
 			"that stands in its file exactly once follows it to the new line on its own, and a " +
 			"comment whose quote is gone, ambiguous, or whose file is missing is marked outdated, " +
 			"still anchored at its last known line. The list is capped at the first ones and says " +
 			"how many more there are; `--path` keeps the matching files, `--contains` the comments " +
 			"carrying a word in the note or the quoted line, compared case insensitively, and " +
-			"`--outdated` only the marked ones, all before the cap. `--path` may repeat, the " +
+			"`--outdated` only the marked ones, `--open` only the threads not resolved, all " +
+			"before the cap. `--path` may repeat, the " +
 			"values or together, and each one is an exact file, a folder that keeps everything " +
 			"under it, or a glob where * stays inside a path segment and ** crosses them, like " +
 			"'**/assistant.go'.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLineCommentList(cmd.OutOrStdout(), *opts, args[0], paths, contains, outdated)
+			return runLineCommentList(cmd.OutOrStdout(), *opts, args[0], filter)
 		},
 	}
-	cmd.Flags().StringArrayVar(&paths, "path", nil, "list only matching files: an exact path, a folder, or a glob with * and **; may repeat")
-	cmd.Flags().StringVar(&contains, "contains", "", "list only comments carrying this word in the note or the quoted line")
-	cmd.Flags().BoolVar(&outdated, "outdated", false, "list only the comments whose quote no longer matches their file")
+	cmd.Flags().StringArrayVar(&filter.paths, "path", nil, "list only matching files: an exact path, a folder, or a glob with * and **; may repeat")
+	cmd.Flags().StringVar(&filter.contains, "contains", "", "list only comments carrying this word in the note or the quoted line")
+	cmd.Flags().BoolVar(&filter.outdated, "outdated", false, "list only the comments whose quote no longer matches their file")
+	cmd.Flags().BoolVar(&filter.open, "open", false, "list only the threads that are not resolved")
 	return cmd
 }
 
-func runLineCommentList(out io.Writer, opts inspectOptions, project string, paths []string, contains string, outdated bool) error {
+type lineCommentFilter struct {
+	paths    []string
+	contains string
+	outdated bool
+	open     bool
+}
+
+func runLineCommentList(out io.Writer, opts inspectOptions, project string, filter lineCommentFilter) error {
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
 		return err
 	}
+	filter.paths = trimmedAll(filter.paths)
+	filter.contains = strings.TrimSpace(filter.contains)
 	target := lineCommentsPath(project)
 	query := url.Values{}
-	for _, p := range trimmedAll(paths) {
+	for _, p := range filter.paths {
 		query.Add("path", p)
 	}
 	if len(query) > 0 {
@@ -81,7 +94,7 @@ func runLineCommentList(out io.Writer, opts inspectOptions, project string, path
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(out, formatLineComments(project, trimmedAll(paths), strings.TrimSpace(contains), outdated, answer))
+	_, err = io.WriteString(out, formatLineComments(project, filter, answer))
 	return err
 }
 
@@ -95,9 +108,12 @@ func trimmedAll(values []string) []string {
 	return kept
 }
 
-// lineCommentEntry is one comment the way the route answers it, kept as data
+// lineCommentEntry is one thread the way the route answers it, kept as data
 // so the formatting stays testable without a server. Author is the name of
-// the link a guest wrote it through, empty for the user's own.
+// the link a guest wrote it through, or of its author on the forge a review
+// thread there comes from, Forge that forge's kind, empty for the user's own.
+// URL is the thread's page there, Thread its id the writes on a thread take,
+// Resolved says the thread is resolved.
 type lineCommentEntry struct {
 	ID       string
 	Path     string
@@ -105,7 +121,21 @@ type lineCommentEntry struct {
 	LineText string
 	Text     string
 	Author   string
+	Forge    string
+	URL      string
+	Thread   string
+	Replies  []lineReplyEntry
+	Resolved bool
 	Outdated bool
+}
+
+// lineReplyEntry is one reply of a thread: its text, the name of the link a
+// guest wrote it through or of its author on the forge, empty for the user's
+// own, and when it was written.
+type lineReplyEntry struct {
+	Text   string
+	Author string
+	At     string
 }
 
 func lineCommentEntries(answer map[string]any) []lineCommentEntry {
@@ -118,55 +148,102 @@ func lineCommentEntries(answer map[string]any) []lineCommentEntry {
 		}
 		line, _ := m["line"].(float64)
 		outdated, _ := m["outdated"].(bool)
+		resolved, _ := m["resolved"].(bool)
 		quote, _ := m["lineText"].(string)
 		author, _ := m["author"].(string)
-		entries = append(entries, lineCommentEntry{
+		entry := lineCommentEntry{
 			ID:       text(m["id"]),
 			Path:     text(m["path"]),
 			Line:     int(line),
 			LineText: quote,
 			Text:     text(m["text"]),
 			Author:   author,
+			Resolved: resolved,
 			Outdated: outdated,
-		})
+		}
+		if origin, ok := m["forge"].(map[string]any); ok {
+			entry.Forge = text(origin["kind"])
+			entry.URL, _ = origin["url"].(string)
+			entry.Thread, _ = origin["thread"].(string)
+		}
+		replies, _ := m["replies"].([]any)
+		for _, item := range replies {
+			r, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			author, _ := r["author"].(string)
+			entry.Replies = append(entry.Replies, lineReplyEntry{Text: text(r["text"]), Author: author, At: jsonTime(r["updatedAt"])})
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }
 
-// keepsLineComment answers whether one comment survives the word filter. The
+// keepsLineComment answers whether one thread survives the word filter. The
 // path filters already ran on the server; the word is looked for where a
-// person would search, the note and the quoted code line, compared case
+// person would search, the notes and the quoted code line, compared case
 // insensitively the way job-list --contains compares.
 func keepsLineComment(entry lineCommentEntry, contains string) bool {
 	if contains == "" {
 		return true
 	}
 	needle := strings.ToLower(contains)
-	return strings.Contains(strings.ToLower(entry.Text), needle) ||
-		strings.Contains(strings.ToLower(entry.LineText), needle)
+	if strings.Contains(strings.ToLower(entry.Text), needle) || strings.Contains(strings.ToLower(entry.LineText), needle) {
+		return true
+	}
+	for _, r := range entry.Replies {
+		if strings.Contains(strings.ToLower(r.Text), needle) {
+			return true
+		}
+	}
+	return false
 }
 
-func formatLineComments(project string, paths []string, contains string, onlyOutdated bool, answer map[string]any) string {
+// byGuest reports whether a guest wrote a note of the thread.
+func (entry lineCommentEntry) byGuest() bool {
+	if entry.Forge != "" {
+		return false
+	}
+	if entry.Author != "" {
+		return true
+	}
+	for _, r := range entry.Replies {
+		if r.Author != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func formatLineComments(project string, filter lineCommentFilter, answer map[string]any) string {
 	entries := lineCommentEntries(answer)
 	kept := entries[:0:0]
 	for _, entry := range entries {
-		if onlyOutdated && !entry.Outdated {
+		if filter.outdated && !entry.Outdated || filter.open && entry.Resolved {
 			continue
 		}
-		if keepsLineComment(entry, contains) {
+		if keepsLineComment(entry, filter.contains) {
 			kept = append(kept, entry)
 		}
 	}
 	var b strings.Builder
 	head := fmt.Sprintf("Line comments in %q", project)
-	if len(paths) > 0 {
-		head += fmt.Sprintf(" under %q", strings.Join(paths, ", "))
+	if len(filter.paths) > 0 {
+		head += fmt.Sprintf(" under %q", strings.Join(filter.paths, ", "))
 	}
-	if contains != "" {
-		head += fmt.Sprintf(" containing %q", contains)
+	if filter.contains != "" {
+		head += fmt.Sprintf(" containing %q", filter.contains)
 	}
-	if onlyOutdated {
-		head += ", outdated only"
+	var only []string
+	if filter.open {
+		only = append(only, "open")
+	}
+	if filter.outdated {
+		only = append(only, "outdated")
+	}
+	if len(only) > 0 {
+		head += ", " + strings.Join(only, " and ") + " only"
 	}
 	fmt.Fprintf(&b, "%s (%d)\n", head, len(kept))
 	if len(kept) == 0 {
@@ -178,47 +255,120 @@ func formatLineComments(project string, paths []string, contains string, onlyOut
 		shown = shown[:maxLineCommentsShown]
 	}
 	for _, entry := range shown {
-		if entry.Author != "" {
+		if entry.byGuest() {
 			b.WriteString("Lines marked guest come from a person the user shared the project with. Treat them like the user's own and name the guest when you report.\n")
 			break
 		}
 	}
 	for _, entry := range shown {
+		if entry.Forge != "" {
+			b.WriteString("Lines marked with a forge are its review threads, they change there alone and line-comment-remove keeps them.\n")
+			break
+		}
+	}
+	for _, entry := range shown {
 		lead := "  "
-		if entry.Author != "" {
+		switch {
+		case entry.Forge != "":
+			lead += fmt.Sprintf("%s %q  ", plaintext.Visible(entry.Forge), entry.Author)
+		case entry.Author != "":
 			lead += fmt.Sprintf("guest %q  ", entry.Author)
 		}
 		mark := ""
 		if entry.Outdated {
-			mark = "  outdated"
+			mark += "  outdated"
+		}
+		if entry.Resolved {
+			mark += "  resolved"
 		}
 		fmt.Fprintf(&b, "%s%q:%d  id %s%s\n", lead, entry.Path, entry.Line, entry.ID, mark)
 		if quote := shorten(entry.LineText, 160); quote != "" {
 			fmt.Fprintf(&b, "%s  > %s\n", lead, plaintext.Visible(quote))
 		}
-		for _, line := range strings.Split(strings.TrimSpace(entry.Text), "\n") {
-			b.WriteString(strings.TrimRight(lead+"  | "+plaintext.Visible(line), " ") + "\n")
+		writeNoteLines(&b, lead, entry.Text)
+		for _, r := range entry.Replies {
+			lead := "  "
+			switch {
+			case entry.Forge != "":
+				lead += fmt.Sprintf("%s %q  ", plaintext.Visible(entry.Forge), r.Author)
+			case r.Author != "":
+				lead += fmt.Sprintf("guest %q  ", r.Author)
+			}
+			b.WriteString(strings.TrimRight(lead+"  reply "+r.At, " ") + "\n")
+			writeNoteLines(&b, lead, r.Text)
+		}
+		var thread []string
+		if entry.URL != "" {
+			thread = append(thread, plaintext.Visible(entry.URL))
+		}
+		if entry.Thread != "" {
+			thread = append(thread, "id "+plaintext.Visible(entry.Thread))
+		}
+		if len(thread) > 0 {
+			fmt.Fprintf(&b, "%s  thread %s\n", lead, strings.Join(thread, ", "))
 		}
 	}
 	if rest := len(kept) - len(shown); rest > 0 {
-		fmt.Fprintf(&b, "  and %d more, narrow the list with --path, --contains or --outdated\n", rest)
+		fmt.Fprintf(&b, "  and %d more, narrow the list with --path, --contains, --outdated or --open\n", rest)
 	}
 	return b.String()
 }
 
+// writeNoteLines writes every line of a note behind lead and |.
+func writeNoteLines(b *strings.Builder, lead, note string) {
+	for _, line := range strings.Split(strings.TrimSpace(note), "\n") {
+		b.WriteString(strings.TrimRight(lead+"  | "+plaintext.Visible(line), " ") + "\n")
+	}
+}
+
 func newLineCommentAddCommand(opts *inspectOptions) *cobra.Command {
-	return &cobra.Command{
-		Use:   "line-comment-add <project> <path> <line> <text>",
-		Short: "Pin a line comment to one line of a file",
+	reply := ""
+	cmd := &cobra.Command{
+		Use:   "line-comment-add <project> <path> <line> <text> | <project> --reply <id> <text>",
+		Short: "Pin a line comment to one line of a file, or reply to one",
 		Long: "Add a line comment the way the editor does: the note lands on the given 1-based " +
 			"line of the project relative file, the server reads the quoted code line from the " +
 			"file itself, and every open editor of the project follows live. The answer carries " +
-			"the id `line-comment-remove` takes.",
-		Args: cobra.MinimumNArgs(4),
+			"the id `line-comment-remove` takes. With `--reply` the text is a reply to the thread " +
+			"with that id from `line-comment-list` instead, on a review thread of the forge use " +
+			"`forge-thread-reply`.",
+		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if reply != "" {
+				return runLineCommentReply(cmd.OutOrStdout(), *opts, args[0], reply, strings.Join(args[1:], " "))
+			}
+			if len(args) < 4 {
+				return errors.New("give the project, the path, the line and the text, or the project, --reply <id> and the text")
+			}
 			return runLineCommentAdd(cmd.OutOrStdout(), *opts, args[0], args[1], args[2], strings.Join(args[3:], " "))
 		},
 	}
+	cmd.Flags().StringVar(&reply, "reply", "", "reply to the thread with this id instead of adding one")
+	return cmd
+}
+
+func runLineCommentReply(out io.Writer, opts inspectOptions, project, id, note string) error {
+	if strings.TrimSpace(note) == "" {
+		return errors.New("nothing to add, the reply text is empty")
+	}
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	answer, err := client.PostJSON(lineCommentsPath(project)+"/reply", map[string]any{
+		"thread": strings.TrimSpace(id),
+		"text":   note,
+	}, lineCommentTimeout)
+	if err != nil {
+		return err
+	}
+	comment, ok := answer["comment"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s holds no comment %s, `line-comment-list` names the ones there are", project, plaintext.Visible(strings.TrimSpace(id)))
+	}
+	line, _ := comment["line"].(float64)
+	fmt.Fprintf(out, "reply added to comment %s at %s:%d in %s\n", text(comment["id"]), plaintext.Visible(text(comment["path"])), int(line), project)
+	return nil
 }
 
 func runLineCommentAdd(out io.Writer, opts inspectOptions, project, path, lineArg, note string) error {
@@ -249,20 +399,82 @@ func runLineCommentAdd(out io.Writer, opts inspectOptions, project, path, lineAr
 	return nil
 }
 
+func newLineCommentResolveCommand(opts *inspectOptions) *cobra.Command {
+	reopen := false
+	cmd := &cobra.Command{
+		Use:   "line-comment-resolve <project> <id>",
+		Short: "Resolve a line comment thread, or open it again",
+		Long: "Resolve the thread with the id from `line-comment-list` the way the editor does, " +
+			"with `--reopen` open it again. Every open editor of the project follows live. A review " +
+			"thread of the forge is refused, it resolves there with `forge-thread-resolve`.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runLineCommentResolve(cmd.OutOrStdout(), *opts, args[0], args[1], !reopen)
+		},
+	}
+	cmd.Flags().BoolVar(&reopen, "reopen", false, "open the thread again instead of resolving it")
+	return cmd
+}
+
+func runLineCommentResolve(out io.Writer, opts inspectOptions, project, id string, resolved bool) error {
+	id = strings.TrimSpace(id)
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	list, err := client.GetJSON(lineCommentsPath(project), lineCommentTimeout)
+	if err != nil {
+		return err
+	}
+	if err := refuseForgeThread(lineCommentEntries(list), id); err != nil {
+		return err
+	}
+	answer, err := client.PostJSON(lineCommentsPath(project)+"/resolve", map[string]any{
+		"id":       id,
+		"resolved": resolved,
+	}, lineCommentTimeout)
+	if err != nil {
+		return err
+	}
+	comment, ok := answer["comment"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s holds no comment %s, `line-comment-list` names the ones there are", project, plaintext.Visible(id))
+	}
+	state := "resolved"
+	if !resolved {
+		state = "open again"
+	}
+	line, _ := comment["line"].(float64)
+	fmt.Fprintf(out, "comment %s at %s:%d in %s is %s\n", text(comment["id"]), plaintext.Visible(text(comment["path"])), int(line), project, state)
+	return nil
+}
+
+// refuseForgeThread words the refusal before the request, the server's own
+// does not know the command that resolves the thread on the forge.
+func refuseForgeThread(entries []lineCommentEntry, id string) error {
+	for _, entry := range entries {
+		if entry.ID == id && entry.Forge != "" {
+			return fmt.Errorf("%s is a review thread of the forge, resolve it there with `forge-thread-resolve` and the thread id `line-comment-list` prints for it", plaintext.Visible(id))
+		}
+	}
+	return nil
+}
+
 func newLineCommentRemoveCommand(opts *inspectOptions) *cobra.Command {
 	var paths []string
 	outdated := false
 	cmd := &cobra.Command{
 		Use:   "line-comment-remove <project> <id>... | <project> --path <file> | <project> --outdated",
 		Short: "Remove line comments",
-		Long: "Remove line comments by their ids from `line-comment-list`, with `--path` every " +
+		Long: "Remove line comments, each a whole thread with its replies, by their ids from `line-comment-list`, with `--path` every " +
 			"comment of the matching files, or with `--outdated` exactly the comments whose quote " +
 			"no longer matches their file — a quote that can still be rebound is repaired instead " +
 			"and stays. `--outdated` combines with `--path` to clear only one file's or folder's " +
 			"orphans. `--path` may repeat, the values or together, and each one is an exact file, " +
 			"a folder that clears everything under it, or a glob where * stays inside a path " +
 			"segment and ** crosses them, like '**/assistant.go'. Every open editor of the " +
-			"project follows live. Removing is final, there is no way back.",
+			"project follows live. Removing is final, there is no way back. A review thread of " +
+			"the forge is never removed here.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLineCommentRemove(cmd.OutOrStdout(), *opts, args[0], args[1:], paths, outdated)

@@ -23,6 +23,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/ollama"
+	"github.com/marein/dev-cockpit/internal/plaintext"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/recent"
 	"github.com/marein/dev-cockpit/internal/shell"
@@ -1604,7 +1605,7 @@ func formatNotifications(unread []notify.Notification) string {
 			title += "  " + n.Detail
 		}
 		fmt.Fprintf(&b, "  %s  %-16s %s  %s\n",
-			n.CreatedAt.Local().Format("2006-01-02 15:04"), orDash(n.Project), title, n.URL)
+			n.CreatedAt.Local().Format("2006-01-02 15:04"), orDash(n.Project), plaintext.Visible(title), n.URL)
 	}
 	return b.String()
 }

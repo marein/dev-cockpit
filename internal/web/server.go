@@ -28,7 +28,9 @@ import (
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/forge"
 	"github.com/marein/dev-cockpit/internal/hostinfo"
+	"github.com/marein/dev-cockpit/internal/linecomment"
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/pluginhost"
@@ -108,9 +110,11 @@ type Server struct {
 	// lineComments is the editor's line comments per project, one note per
 	// file line, so a pass over the code survives a reload and a device
 	// switch.
-	lineComments *lineComments
+	lineComments *linecomment.Service
 	// postScriptFailed rings the news of a failed worktree post script.
 	postScriptFailed func(project string, run project.PostScriptRun)
+	// guestComment rings the news of a note a guest wrote.
+	guestComment func(GuestComment)
 	// editorRecent is where the editor was last opened, the projects by name,
 	// and terminalRecent the terminals last looked at, by id. They are what
 	// the two area entries of the rail resolve to, so a phone picked up in
@@ -174,8 +178,15 @@ type Server struct {
 	// user's approval.
 	approvals *approval.Service
 	// shares are the links a guest opens one project through.
-	shares  *share.Store
-	handler http.Handler
+	shares *share.Store
+	// forge answers which forge a project's origin lives on, and
+	// forgeHeads where the branches its poller keeps were last pushed.
+	forge      *forge.Service
+	forgeHeads *forgeHeads
+	// forgePublishMu holds one publish of line comments at a time, so a
+	// comment two of them name is posted once.
+	forgePublishMu sync.Mutex
+	handler        http.Handler
 }
 
 // localCallKey marks a request that arrived on the local socket, see
@@ -233,7 +244,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 		gitWrites:       newGitWrites(),
 		commitDrafts:    newCommitDrafts(cfg.StateDir),
 		searchDrafts:    newSearchDrafts(cfg.StateDir),
-		lineComments:    newLineComments(cfg.StateDir),
+		lineComments:    linecomment.New(cfg.StateDir),
 		editorRecent:    recent.NewCapped(filepath.Join(cfg.StateDir, "recent-editor-projects.json"), recentEntries),
 		terminalRecent:  recent.NewCapped(filepath.Join(cfg.StateDir, "recent-terminals.json"), recentEntries),
 		assistantRecent: recent.NewCapped(filepath.Join(cfg.StateDir, "recent-assistants.json"), recentEntries),

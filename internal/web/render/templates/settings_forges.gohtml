@@ -1,0 +1,160 @@
+{{/* Settings › Forges is the list of hosts a project's origin binds to: the
+     built in ones, which have no Edit, then those added here. Add host, an
+     added row's Edit and a row's token link open their forms in the create
+     dialog over the list and stand as pages of their own without scripts. A
+     row's Test posts to the host's Edit path and its outcome lands on the
+     row, what it found stays there until the host or its token changes or
+     the server restarts. */}}
+{{define "settings_forges.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Forges</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <p class="text-secondary">The GitLab and GitHub servers your origins are matched against. A host's token lets the cockpit act there as you.</p>
+  {{with .Pace}}<p class="text-secondary" data-forge-pace>Each project is checked on its own: every {{.Fast}} while a pipeline runs or {{.Moved}} after a push, every {{.Slow}} when idle. Review threads are read along with these checks, at most every {{.Review}}. After a failed check it waits longer, up to {{.Slow}}.</p>{{end}}
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <h3 class="card-title mb-0">Hosts</h3>
+    <span class="badge bg-secondary-lt">{{len .Hosts}}</span>
+    <a class="btn btn-primary ms-auto" href="/settings/forges/new" data-forge-add><i class="ti ti-plus me-1" aria-hidden="true"></i>Add host</a>
+  </div>
+  <div class="card">
+    <div class="card-header d-none d-md-block py-2 small text-secondary">
+      <div class="row g-2 align-items-center">
+        <div class="col-6">Host</div>
+        <div class="col">Alias hosts</div>
+      </div>
+    </div>
+    <div class="list-group list-group-flush">
+      {{range .Hosts}}
+      <div class="list-group-item py-2" id="{{.Anchor}}" data-forge-host="{{.WebURL}}">
+        <div class="row g-2 align-items-center">
+          <div class="col-12 col-md-6 min-w-0">
+            <div class="d-flex align-items-baseline gap-2 min-w-0">
+              <i class="ti {{.Icon}} flex-none" aria-hidden="true" data-forge-icon></i>
+              <a href="{{.WebURL}}" target="_blank" rel="noopener" class="text-reset text-break" data-forge-web>{{.WebURL}}</a>
+            </div>
+            <div class="small text-secondary"><span data-forge-kind>{{.Kind}}{{if .Builtin}}, built in{{end}}</span> · <span data-forge-token>{{if .TokenHint}}token …{{.TokenHint}}{{else if .Token}}token set{{else}}no token{{end}}</span>{{if .CABundle}} · <span data-forge-ca>own CA</span>{{end}} · <a href="{{.TokenURL}}" aria-label="{{if .Token}}Change the token of {{.WebURL}}{{else}}Add a token to {{.WebURL}}{{end}}" data-forge-token-link>{{if .Token}}change token{{else}}add token{{end}}</a></div>
+            {{with .Tested}}<div class="small text-secondary text-break" data-forge-tested>{{.}}</div>{{end}}
+          </div>
+          <div class="col col-md small text-secondary text-break" data-forge-aliases>{{join .Aliases ", "}}</div>
+          {{if or .Token (not .Builtin)}}
+          <div class="col-auto d-flex gap-1" data-forge-actions>
+            {{if .Token}}
+            <form method="post" action="{{.EditURL}}#{{.Anchor}}" class="m-0">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="form" value="test">
+              <button type="submit" class="btn btn-sm" aria-label="Test the token of {{.WebURL}}" data-forge-test><i class="ti ti-plug-connected me-1" aria-hidden="true"></i>Test</button>
+            </form>
+            {{end}}
+            {{if not .Builtin}}
+            <a class="btn btn-sm" href="{{.EditURL}}" aria-label="Edit {{.WebURL}}" data-forge-edit><i class="ti ti-pencil me-1" aria-hidden="true"></i>Edit</a>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+        {{if and (eq $.FlashProject .Anchor) $.Flash.Message}}<div class="mt-2" data-forge-test-result>{{template "notice.gohtml" (dict "Level" $.Flash.Level "Message" $.Flash.Message "Dismiss" true "Class" "mb-0")}}</div>{{end}}
+      </div>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{define "forge_host.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="/settings/forges" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title text-truncate">{{.Title}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{if .TokenStep}}{{template "forge_token_form.gohtml" .}}{{else}}{{template "forge_host_form.gohtml" .}}{{end}}
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* The form that adds a host and an added host's Edit, the host's own
+     fields alone. The add leads on to the token view, in the dialog at the
+     same height (data-form-fixed). Delete is a form of its own and asks
+     first; it posts without the dialog's marker, so its answer is the
+     redirect pe.js follows. */}}
+{{define "forge_host_form.gohtml"}}
+<form method="post" action="{{.Action}}{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-forge-host-form{{if .Modal}}{{if not .ID}} class="d-flex flex-column overflow-hidden flex-fill" data-form-scrollable data-form-fixed{{end}} data-form-title="{{.Title}}" data-form-wait="{{if .ID}}Saving the host…{{else}}Adding the host…{{end}}"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  {{if .ID}}<input type="hidden" name="form" value="save">{{end}}
+  <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
+    <div class="mb-3">
+      <label class="form-label required" for="forge-kind">Kind</label>
+      <select class="form-select" id="forge-kind" name="kind" required>
+        {{if not .ID}}<option value="" selected disabled>Pick the kind of forge</option>{{end}}
+        {{range .Kinds}}<option value="{{.ID}}"{{if .Picked}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </div>
+    <div class="mb-3">
+      <label class="form-label required" for="forge-web-url">Web address</label>
+      <input type="url" class="form-control" id="forge-web-url" name="web_url" value="{{.WebURL}}" maxlength="{{.WebURLMax}}" placeholder="https://git.example.com" required autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="form-hint">With its path, if any, like <code>https://example.com/gitlab</code>.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="forge-aliases">Alias hosts</label>
+      <input type="text" class="form-control" id="forge-aliases" name="aliases" value="{{.Aliases}}" placeholder="ssh.git.example.com gitlab-work" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="form-hint">Other names an origin uses for the server, like an SSH host or a <code>Host</code> of <code>~/.ssh/config</code>. Separated by spaces, at most {{.AliasesMax}}.</div>
+    </div>
+    <div>
+      <label class="form-label" for="forge-ca-bundle">CA bundle</label>
+      <textarea class="form-control font-monospace" id="forge-ca-bundle" name="ca_bundle" rows="3" maxlength="{{.CABundleMax}}" placeholder="-----BEGIN CERTIFICATE-----" autocomplete="off" autocapitalize="off" spellcheck="false">{{.CABundle}}</textarea>
+      <div class="form-hint">The PEM certificates of the internal CA that signed the server's certificate.</div>
+    </div>
+  </div>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if .ID}}<button type="submit" class="btn btn-outline-danger me-auto" form="forge-delete-{{.ID}}" data-forge-delete>Delete</button>{{end}}
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>{{else}}<a class="btn btn-ghost-secondary" href="/settings/forges">Cancel</a>{{end}}
+    <button type="submit" class="btn btn-primary" data-forge-save>{{if .ID}}Save{{else}}Add host{{end}}</button>
+  </div>
+</form>
+{{if .ID}}
+<form method="post" action="{{.Action}}" id="forge-delete-{{.ID}}" data-confirm="Delete the host {{.Title}} and its token?" data-confirm-button="Delete" hidden>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="delete">
+</form>
+{{end}}
+{{end}}
+
+{{/* A host's token view, which an add leads on to and the row opens: the
+     token alone, beside the link to the server's page that creates one.
+     Save and test keeps it and tests it, the test lands on the host's row
+     like the row's Test. With a token the view replaces it, or Remove takes
+     it away, a form of its own that asks first and posts without the
+     dialog's marker, so its answer is the redirect pe.js follows to the
+     host's row. A failed test keeps the token, so the view answers again,
+     in the dialog too, and names the token now set. However the dialog
+     closes, it leads to the host's row (data-form-leave), since the row
+     behind still shows the token before. */}}
+{{define "forge_token_form.gohtml"}}
+<form method="post" action="{{.Action}}{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-forge-token-form{{if .Modal}} class="d-flex flex-column overflow-hidden flex-fill" data-form-scrollable data-form-fixed data-form-leave="/settings/forges#{{.Anchor}}" data-form-title="{{.Title}}" data-form-wait="Testing the token…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
+    {{if and .Modal (eq .Page.Flash.Level "error")}}<div class="alert alert-danger" role="alert" data-form-modal-error>{{.Page.Flash.Message}}</div>{{end}}
+    <p class="text-secondary" data-forge-token-intro>{{if .Token}}A new token replaces the token of {{.KindLabel}} at {{.WebURL}}, Remove takes it away.{{else}}A token lets the cockpit act on {{.KindLabel}} at {{.WebURL}} as you, give it one now or later from its row.{{end}}</p>
+    <label class="form-label required" for="forge-token">Token{{with .TokenPage}}<span class="form-label-description"><a href="{{.}}" target="_blank" rel="noopener" data-forge-token-page>New token</a></span>{{end}}</label>
+    <input type="password" class="form-control" id="forge-token" name="token" maxlength="{{.TokenMax}}" placeholder="{{if .Token}}A new personal access token{{else}}A personal access token{{end}}" autocomplete="new-password" autocapitalize="off" spellcheck="false" required>
+    <div class="form-hint" data-forge-token-hint>{{if .Token}}A token is set{{if .TokenHint}}, it ends in <code>…{{.TokenHint}}</code>{{end}}.{{else}}A personal access token of your account on the server.{{end}}</div>
+  </div>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if .Token}}<button type="submit" class="btn btn-outline-danger me-auto" form="forge-token-remove-{{.ID}}" data-forge-token-remove>Remove</button>{{end}}
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal" data-forge-token-cancel>{{if .Token}}Cancel{{else}}Later{{end}}</button>{{else}}<a class="btn btn-ghost-secondary" href="/settings/forges#{{.Anchor}}" data-forge-token-cancel>{{if .Token}}Cancel{{else}}Later{{end}}</a>{{end}}
+    <button type="submit" class="btn btn-primary" data-forge-token-save>{{if .Token}}Replace and test{{else}}Save and test{{end}}</button>
+  </div>
+</form>
+{{if .Token}}
+<form method="post" action="{{.Action}}" id="forge-token-remove-{{.ID}}" data-confirm="Remove the token of {{.WebURL}}?" data-confirm-button="Remove" hidden>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="token_remove" value="1">
+</form>
+{{end}}
+{{end}}

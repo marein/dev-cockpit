@@ -1,0 +1,10 @@
+{{md .Author}} {{md .Did}} {{md .Where}} of the {{.Change.Noun}} {{.Change.Ref}} into {{md .Change.Target}}, {{.Change.State}}{{if .Change.Draft}}, a draft{{end}}: {{md .Change.Title}}{{with .URL}}
+{{.}}{{end}}{{if .Resolved}}
+The thread stands resolved.{{end}}
+
+{{.Text}}
+{{if .Cut}}The note goes on, forge-show reads it whole.
+{{end}}
+The branch {{md .Branch}} in {{md .Project}} on {{.Forge}} {{md .Address}}.
+`{{.Cockpit}} forge-show {{quote .Project}} --branch {{quote .Branch}} --threads` reads every thread while the branch has that {{.Change.Noun}}.{{with .Thread}}
+`{{$.Cockpit}} forge-thread-reply {{quote $.Project}} {{quote .}} --branch {{quote $.Branch}} <text>` answers this thread, `--resolve` resolves it too, once the user approves.{{end}}

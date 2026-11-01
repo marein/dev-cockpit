@@ -383,6 +383,27 @@ async function clockMarks(clocks, when, selectors, problems) {
   return seen;
 }
 
+// iconSpin reads an icon the way the cockpit turns one into a spinner
+// (.dc-icon-spinner): the glyph hidden, the ring of its ::after shown and
+// turning, on the document's clock (syncAnimations), so a repaint that swaps
+// the icon does not throw the ring back to its start. It runs in the page,
+// handed to evaluate on the icon.
+function iconSpin(icon) {
+  const ring = getComputedStyle(icon, "::after");
+  const turn = icon.getAnimations({ subtree: true }).find((a) => a.effect?.pseudoElement === "::after");
+  return {
+    spinner: icon.classList.contains("dc-icon-spinner"),
+    glyph: getComputedStyle(icon).visibility === "visible",
+    ring: ring.content !== "none" && ring.visibility === "visible",
+    turn: turn ? turn.animationName : "",
+    running: turn?.playState === "running",
+    synced: turn?.startTime === 0,
+  };
+}
+
+const spinning = (s) => s.spinner && !s.glyph && s.ring && s.turn === "dc-spin" && s.running && s.synced;
+const still = (s) => !s.spinner && s.glyph && !s.ring && !s.turn;
+
 // removeTags removes, through Settings › Projects › Tags, every tag that
 // match(name, id) picks by the name and id the page loaded it with. Tags
 // outlive their projects, so deleting its projects leaves a runner's tags.
@@ -577,6 +598,7 @@ module.exports = {
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
+  iconSpin, spinning, still,
   makeRunner, report, assert, assertNoLogin, recordCopies,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

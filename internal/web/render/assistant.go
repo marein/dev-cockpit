@@ -377,8 +377,18 @@ type AssistantTriggerFormData struct {
 	// saving does not drop it.
 	Jobs   []AssistantTriggerTarget
 	Coders []AssistantTriggerTarget
+	// Projects are the projects bound to a forge a pipeline or review event
+	// may be about, by name. A project the stand names that the list no longer
+	// holds rides along, so saving does not drop it.
+	Projects []string
 	// What every other field stands on.
 	Event string
+	// Project and Branch are what a pipeline or review event is about, the branch
+	// empty for whichever one is checked out, and MaxBranch how long a
+	// branch may be.
+	Project   string
+	Branch    string
+	MaxBranch int
 	// Name is the optional heading, and MaxName how long it may be, which is
 	// what the field's maxlength says before the server has to refuse it.
 	Name    string

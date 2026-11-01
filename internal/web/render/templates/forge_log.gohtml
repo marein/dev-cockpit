@@ -1,0 +1,21 @@
+{{define "forge_log.gohtml"}}
+<div data-forge-log-view data-forge-job="{{.Job.ID}}" data-forge-job-status="{{.Job.Status}}"{{with .Live}} data-forge-log-live="{{.Milliseconds}}"{{end}}>
+  {{- with .Job.URL}}
+  <a class="dropdown-item d-flex align-items-center gap-2" href="{{.}}" target="_blank" rel="noopener" data-forge-job-page>
+    <i class="ti ti-external-link" aria-hidden="true"></i>
+    <span class="d-flex flex-column min-w-0 text-start"><span>Open on {{$.Job.Forge}}</span><span class="small text-secondary text-truncate">{{$.Job.Name}} · {{$.Job.Sub}}</span></span>
+  </a>
+  {{- end}}
+  {{- with .Retry}}{{template "forge_retry.gohtml" (dict "Retry" . "Pin" false)}}{{end}}
+  {{- with .Err}}
+  <div class="alert alert-danger small mx-2 my-2 py-1 px-2 text-break" data-forge-log-error>{{.}}</div>
+  {{- else with .Later}}
+  <div class="small text-secondary px-3 py-2" data-forge-log-later>{{.}}</div>
+  {{- else}}
+  <div class="small text-secondary px-3 pt-2 pb-1" data-forge-log-head>{{.Head}}</div>
+  {{- if .Lines}}
+  <pre class="mb-0 mx-2 overflow-auto dc-run-output" data-forge-log-text>{{join .Lines "\n"}}</pre>
+  {{- end}}
+  {{- end}}
+</div>
+{{end}}

@@ -8,6 +8,7 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // gfm renders GitHub Flavored Markdown. Raw HTML rendering stays disabled (the
@@ -25,12 +26,30 @@ func RenderGFM(src string) (string, error) {
 	return buf.String(), nil
 }
 
+// Escape is a value the way a line of Markdown holds it as the text it is:
+// each ASCII mark that could open markup there, a tag, an emphasis, a strike,
+// a link, a code span, an entity or a table cell, stands behind a backslash,
+// so "Fix <form> in __init__" reads so on the page instead of losing a word
+// to the HTML the renderer drops or turning bold. A value inside a code span
+// is no text and is not escaped.
+func Escape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if strings.ContainsRune("\\`*_~[]<>&|", r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // Plain reduces Markdown to the words in it, for the places that show a piece
 // of an answer where no markup can be rendered: a notification title, a toast,
 // a push body. It walks what the parser understood instead of cutting markup
 // out with patterns, so a heading, a link, a list and a fenced block all come
-// out as what they say. Blocks and line breaks are kept as line breaks; the
-// caller decides what a line means where it shows the text.
+// out as what they say, and an escaped mark or an entity as the character the
+// page shows. Blocks and line breaks are kept as line breaks; the caller
+// decides what a line means where it shows the text.
 func Plain(src string) string {
 	source := []byte(src)
 	var b strings.Builder
@@ -38,7 +57,7 @@ func Plain(src string) string {
 		switch node := n.(type) {
 		case *ast.Text:
 			if entering {
-				b.Write(node.Segment.Value(source))
+				b.Write(words(node, source))
 				if node.SoftLineBreak() || node.HardLineBreak() {
 					b.WriteByte('\n')
 				}
@@ -85,7 +104,7 @@ func Speech(src string) string {
 		switch node := n.(type) {
 		case *ast.Text:
 			if entering {
-				b.Write(node.Segment.Value(source))
+				b.Write(words(node, source))
 				if node.SoftLineBreak() || node.HardLineBreak() {
 					b.WriteByte('\n')
 				}
@@ -104,4 +123,45 @@ func Speech(src string) string {
 		return ast.WalkContinue, nil
 	})
 	return strings.TrimSpace(b.String())
+}
+
+// words is what a run of text says on the page: escapes and entities read
+// as the characters they stand for, inside a code span as written.
+func words(node *ast.Text, source []byte) []byte {
+	segment := node.Segment.Value(source)
+	if parent := node.Parent(); parent != nil && parent.Kind() == ast.KindCodeSpan {
+		return segment
+	}
+	return unescaped(segment)
+}
+
+// unescaped is a run of text as the renderer writes it, in one pass: a
+// backslash before an ASCII mark stands for the mark, an entity for its
+// character, and an escaped ampersand opens no entity.
+func unescaped(src []byte) []byte {
+	out := make([]byte, 0, len(src))
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if c == '\\' && i+1 < len(src) && util.IsPunct(src[i+1]) {
+			out = append(out, src[i+1])
+			i++
+			continue
+		}
+		if c == '&' {
+			end := i + 1
+			for end < len(src) && (src[end] == '#' || util.IsAlphaNumeric(src[end])) {
+				end++
+			}
+			if end < len(src) && src[end] == ';' {
+				ref := src[i : end+1]
+				if resolved := util.ResolveEntityNames(util.ResolveNumericReferences(ref)); !bytes.Equal(resolved, ref) {
+					out = append(out, resolved...)
+					i = end
+					continue
+				}
+			}
+		}
+		out = append(out, c)
+	}
+	return out
 }

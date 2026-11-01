@@ -59,15 +59,16 @@
         <button type="button" class="project-chip project-chip-more project-worktrees-toggle" data-worktrees-toggle="{{.WorktreeCount}}"{{if .WorktreeActive}} data-worktrees-active{{end}} aria-expanded="false" aria-controls="{{.WorktreeIDs}}" aria-label="Show its {{.WorktreeCount}}" title="Show its {{.WorktreeCount}}"><i class="ti ti-git-fork" aria-hidden="true"></i>{{len .Worktrees}}<i class="ti ti-chevron-right" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Hidden" (not .WorktreeNews) "Scope" true "Projects" .WorktreeIDs "Label" "Something new in a worktree")}}</button>
         {{end}}
         {{if and .GitRepo .GitBranch}}
-        <span class="text-secondary small text-break"><i class="ti ti-git-branch icon icon-xs" aria-hidden="true"></i> {{.GitBranch}}</span>
+        <span class="text-secondary small text-break"><i class="ti ti-git-branch icon icon-xs" aria-hidden="true"></i> <bdi>{{.GitBranch}}</bdi></span>
         {{end}}
+        {{with .ForgeBadge}}{{template "forge_badge.gohtml" .}}{{end}}
         {{if .GitWorktree}}
         <span class="text-secondary small text-break" data-project-worktree title="Worktree of {{if .GitWorktreeOf}}{{.GitWorktreeOf}}{{else}}{{.GitWorktreeMain}}{{end}}"><i class="ti ti-git-fork icon icon-xs" aria-hidden="true"></i> {{if .GitWorktreeOf}}<a href="/projects#project-{{.GitWorktreeOf}}" class="link-secondary">{{.GitWorktreeOf}}</a>{{else}}{{.GitWorktreeMain}}{{end}}</span>
-        {{else if .GitOrigin}}
-        {{if .GitOriginURL}}
-        <a href="{{.GitOriginURL}}" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break"><i class="ti {{originIcon .GitOrigin}} icon icon-xs" aria-hidden="true"></i> {{.GitOrigin}}</a>
+        {{else if .OriginText}}
+        {{if .OriginURL}}
+        <a href="{{.OriginURL}}" target="_blank" rel="noopener" class="link-secondary small text-decoration-none text-break" data-project-origin><i class="ti {{.OriginIcon}} icon icon-xs" aria-hidden="true"></i> {{.OriginText}}</a>
         {{else}}
-        <span class="text-secondary small text-break"><i class="ti {{originIcon .GitOrigin}} icon icon-xs" aria-hidden="true"></i> {{.GitOrigin}}</span>
+        <span class="text-secondary small text-break" data-project-origin><i class="ti {{.OriginIcon}} icon icon-xs" aria-hidden="true"></i> {{.OriginText}}</span>
         {{end}}
         {{else if ne .Label .Name}}
         <span class="text-secondary small text-break">{{.Label}}</span>
@@ -89,7 +90,7 @@
         {{end}}{{end}}
         {{if .GitRepo}}
         {{$editorURL := print "/projects/" .Name "/editor"}}
-        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-git-project-menu data-git-project="{{$projectName}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}?view=commit" data-git-compare="{{$editorURL}}?view=compare" aria-label="Git actions for project {{$projectName}}" title="Git">
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-git-project-menu data-git-project="{{$projectName}}"{{if not .GitWorktree}} data-git-worktree="/projects/new?create={{urlquery (worktreeChoice .Name)}}"{{end}} data-git-fetch="/projects/{{.Name}}/fetch" data-git-commit="{{$editorURL}}?view=commit" data-git-compare="{{$editorURL}}?view=compare" data-git-forge="/projects/{{.Name}}/forge"{{with .ForgeBadge}}{{with .Retry}}{{if not .Blocked}} data-git-retry="/projects/{{$projectName}}/forge/retry" data-git-retry-label="{{.Label}}" data-git-retry-branch="{{.Branch}}" data-git-retry-head="{{.Head}}" data-git-retry-pipeline="{{.Pipeline}}"{{end}}{{end}}{{end}} aria-label="Git actions for project {{$projectName}}" title="Git">
           <i class="ti ti-brand-git icon"></i>
         </button>
         {{end}}

@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/marein/dev-cockpit/internal/clirun"
+	"github.com/marein/dev-cockpit/internal/markdown"
 )
 
 // The texts the cockpit writes for an assistant live next to the code as
@@ -24,14 +25,25 @@ var templates = template.Must(template.New("").Funcs(template.FuncMap{
 	"oneLine":      oneLine,
 	"doneWhenLine": DoneWhenLine,
 	"name":         jobName,
+	"md":           markdown.Escape,
 }).ParseFS(templateFS, "templates/*.tmpl"))
+
+// plainTemplates are the same texts for the CLI, which shows no Markdown: md
+// leaves a value there as it came.
+var plainTemplates = template.Must(templates.Clone()).Funcs(template.FuncMap{
+	"md": func(s string) string { return s },
+})
 
 // render fills one template. The templates are part of the binary and the
 // data is typed, so an execution error is a programming error: it is logged,
 // and what was rendered up to it is returned rather than nothing at all.
 func render(name string, data any) string {
+	return fill(templates, name, data)
+}
+
+func fill(set *template.Template, name string, data any) string {
 	var b strings.Builder
-	if err := templates.ExecuteTemplate(&b, name, data); err != nil {
+	if err := set.ExecuteTemplate(&b, name, data); err != nil {
 		log.Printf("assistant: render %s: %v", name, err)
 	}
 	return b.String()

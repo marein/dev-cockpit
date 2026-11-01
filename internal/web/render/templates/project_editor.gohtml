@@ -227,6 +227,7 @@
         <button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center gap-1 mw-100" data-editor-git-status aria-label="Git" hidden>
           <i class="ti ti-git-branch" aria-hidden="true" data-editor-git-icon></i><span class="spinner-border spinner-border-sm" style="width: 1em; height: 1em" data-editor-git-spin aria-hidden="true" hidden></span><span class="text-truncate" style="max-width: 9rem" data-editor-git-branch></span><span data-editor-git-ab hidden></span>
         </button>
+        {{if not .Access.Guest}}<button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center gap-1" data-editor-forge-status aria-label="Forge" hidden></button>{{end}}
         <button type="button" class="btn btn-sm p-0 border-0 bg-transparent text-secondary text-nowrap d-inline-flex align-items-center gap-1" data-editor-docker-status hidden>
           <i class="ti ti-brand-docker" aria-hidden="true"></i><span data-editor-docker-status-text hidden></span>
         </button>
@@ -366,9 +367,12 @@
             <div class="text-secondary small d-flex min-w-0" data-editor-comment-place></div>
             <div class="text-secondary small font-monospace text-truncate mt-1" data-editor-comment-code hidden></div>
             <div class="small fw-medium text-break mt-1" data-editor-comment-author hidden></div>
+            <a class="small d-inline-flex align-items-center gap-1 mt-1" href="#" target="_blank" rel="noopener" data-editor-comment-link hidden><i class="ti ti-external-link" aria-hidden="true"></i><span></span></a>
+            <div class="mt-2" data-editor-comment-thread hidden></div>
             {{if .Access.Can "comments"}}<textarea class="form-control mt-3" rows="4" data-editor-comment-text placeholder="What about this line?" aria-label="Comment"></textarea>
-            <div class="invalid-feedback">A comment is required.</div>
+            <div class="invalid-feedback" data-editor-comment-invalid>A comment is required.</div>
             <small class="form-hint mt-2" data-editor-comment-hint>The comment follows this line as the file changes, but works best when the line keeps its content.{{if not .Access.Guest}} The assistant can read and manage all line comments.{{end}}</small>
+            <label class="form-check mt-2 mb-0" data-editor-comment-resolve-row hidden><input class="form-check-input" type="checkbox" data-editor-comment-resolve><span class="form-check-label" data-editor-comment-resolve-label>Resolve the thread</span></label>
             {{else}}<textarea class="form-control mt-3" rows="4" data-editor-comment-text aria-label="Comment" readonly></textarea>{{end}}
           </div>
           <div class="modal-footer">

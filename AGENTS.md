@@ -37,10 +37,12 @@ cannot show stays at that function, within the comment rule below.
 - **All JSON state goes through `internal/statefile`.** It reads through
   on every call, writes atomically via a tmp file plus rename, and
   quarantines a corrupt file as `<path>.broken`. Never hand roll load and
-  save. Ids come from `statefile.NewID`. Anything that deletes based on a
-  read must treat an empty read as "unknown", never as "nothing there". A
-  read, modify and write that must not drop other entries reads with
-  `statefile.Read`, which reports a file it could not read.
+  save. Ids come from `statefile.NewID`, an entry that leaves and has to
+  come back under the id it had takes `statefile.DerivedID`. Anything that
+  deletes based on a read must treat an empty read as "unknown", never as
+  "nothing there". A read, modify and write that must not drop other
+  entries reads with `statefile.Read`, which reports a file it could not
+  read.
 - **One writer per state directory.** All state lives under one
   `--state-dir`, which belongs to one serve process. Other processes,
   including the assistant, never write state files, they call the server
@@ -109,14 +111,58 @@ cannot show stays at that function, within the comment rule below.
 - Paths from a request resolve under their root via `internal/filesystem`
   (`ResolveUnder`), including symlinks. Nothing reads outside an
   allowlisted root.
-- Secrets (webhook URLs, keys, passphrases) are stored 0600 outside the
-  shared settings store, or never stored and never logged.
-- HTTP to a user supplied URL (webhooks, Web Push, the Ollama host) never follows
-  redirects and refuses link local targets (`internal/netguard`).
+- Secrets (webhook URLs, keys, passphrases, forge tokens) are stored 0600
+  outside the shared settings store, or never stored and never logged.
+- HTTP to a user supplied URL (webhooks, Web Push, the Ollama host, the forge
+  hosts) never follows redirects and refuses link local targets
+  (`internal/netguard`). Every forge request goes through the one client in
+  `internal/forge`, which also carries the token in a header alone and backs
+  off from a server's rate limit.
 - Containers the cockpit runs are built locally from embedded build
   files and never pulled prebuilt. They run as the cockpit's own uid and
   carry a label with the owning instance. Sweeps only touch resources
   that carry this instance's label.
+
+### Security Approach
+
+This sets how the rules above are applied, so a change does not end in one
+finding per output.
+
+- **Threat model.** Untrusted: a share link guest, and everything that comes
+  from outside as content: answers of forges and other APIs, repository
+  content (branch names, commit messages, file contents, notes), webhook and
+  push targets. Trusted: the owner's session and local processes of the same
+  uid. Coders and assistants act only through the cockpit's commands, and the
+  actions listed in `internal/approval` only with the owner's approval.
+- **Identifiers are gated where they enter.** A value the cockpit uses as a
+  name or key (branch, ref, project, host, id) has one validator per kind,
+  applied at every entry, and a value that fails it is refused there with a
+  clear sentence. Control and invisible characters are never legitimate in an
+  identifier. "Never forbid a character a value can legitimately hold" is
+  about free text.
+- **Free text is escaped at the choke point of its format.** HTML through the
+  templates, Markdown through one escaper in the message and note builders,
+  plain text lines (CLI, notification titles and details, approval lines)
+  through one writer. A new output uses these and never escapes on its own.
+- **Bounds are central.** Every flash is cut in `putFlash`, every forge body in
+  the one HTTP door, every stored list by its store. A call site never has to
+  remember a bound.
+- **A finding names its class.** A raw value at an output, a missing bound or
+  an unchecked identifier is fixed at the choke point. A second finding of the
+  same class at another place means the choke point is missing, not that the
+  place needs a patch.
+- **What blocks.** A security finding blocks when it names the attacker from
+  the threat model, the entry they use and the harm beyond the cockpit's own
+  display: a token or secret leaks, auth or CSRF is bypassed, a request goes
+  where it must not (SSRF), code runs, a guest reaches what the link does not
+  grant, data is lost. Display glitches from hostile content, absurd sizes and
+  exotic input are hardening: they are collected and fixed together, and do not
+  block a change.
+- **Post, redirect, get.** A refused POST answers 4xx and renders the form
+  again with what was sent and the error at its field; it never redirects.
+  Only a POST that went through redirects, and its flash is a short fixed
+  sentence that echoes no value, the details stand on the page it lands on.
+  The flash is a success message, never an error and never data.
 
 ## Code Layout
 
@@ -135,15 +181,18 @@ The layers are listed top down, a layer imports only the layers below it.
    service and render, with no business rules and no file IO of state.
    `internal/web/render` holds the view models and templates. Every
    route is registered in `router.go`. A few small stores still live in
-   `web` (commit drafts, line comments, search drafts), new state goes
-   into a service.
+   `web` (commit drafts, search drafts), new state goes into a service.
 3. **Domain Services**: One package per subject, `assistant`, `approval`,
    `coder` (one subpackage per coder CLI: `claude`, `copilot`,
    `opencode`), `shell`, `terminal`, `share`, `project`, `docker`, `git`,
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
-   `update`, `askpass`, `activity`, `hostinfo`, `terminalstate` and `cost`
+   `linecomment` (the editor's line comments, a forge's review notes
+   among them),
+   `update`, `askpass`, `activity`, `hostinfo`, `terminalstate`, `cost`
    (one ledger for every coder CLI, one source per CLI under it, `claude`,
-   and the list prices by provider and model in `cost/price`).
+   and the list prices by provider and model in `cost/price`) and `forge`
+   (the forge a project's origin lives on, one subpackage per provider:
+   `github`, `gitlab`).
 4. **Infrastructure**: `statefile`, `settings`, `recent`, `eventbus`,
    `localapi`, `detach`, `tmux`, `proctree`, `clirun`, `filesystem`, `netguard`,
    `gitfacts`, `markdown`, `plaintext`, `keys` and `config`. It imports no service.
@@ -226,6 +275,11 @@ templates plus ES modules.
   same GET with `modal=1` and stay reachable as pages. A dialog view that
   changes while it stands, or leads to the next view, carries
   `data-form-fixed`: the dialog keeps one height and its body scrolls.
+  A view that follows something the dialog already made carries
+  `data-form-leave` with the page that shows it: however the dialog
+  closes there, it leads to that page. A refused dialog post answers
+  JSON and the dialog keeps what was typed, one that changed what its view
+  shows answers the view again as HTML under its 4xx.
 - **Custom Elements**: One per file in `static/js/components/`. Shared
   code lives in `static/js/dc/` and is imported as `@dc/<name>` (toast,
   dialog, contextmenu, http, dom, events, ctx, store, filter, rowdrag,

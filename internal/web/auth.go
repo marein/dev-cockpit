@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -232,15 +233,32 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	}
 }
 
+// maxFlashBytes bounds a flash. It rides the session cookie, which takes
+// 4096 bytes once its values are encoded, signed and encoded again, next to
+// the user, the CSRF token and the name of the row the flash belongs to.
+const maxFlashBytes = 1024
+
 func setFlash(sess ginsessions.Session, message, errMsg string) {
 	switch {
 	case message != "":
-		sess.Set(flashMessageKey, message)
-		sess.Set(flashLevelKey, "success")
+		putFlash(sess, message, "success")
 	case errMsg != "":
-		sess.Set(flashMessageKey, errMsg)
-		sess.Set(flashLevelKey, "error")
+		putFlash(sess, errMsg, "error")
 	}
+}
+
+// putFlash is where every flash enters the session, cut to maxFlashBytes so
+// no message overflows the cookie.
+func putFlash(sess ginsessions.Session, message, level string) {
+	if len(message) > maxFlashBytes {
+		end := maxFlashBytes - len("…")
+		for end > 0 && !utf8.RuneStart(message[end]) {
+			end--
+		}
+		message = message[:end] + "…"
+	}
+	sess.Set(flashMessageKey, message)
+	sess.Set(flashLevelKey, level)
 }
 
 func (s *Server) finishRedirect(c *gin.Context, sess ginsessions.Session, location string) {
@@ -262,8 +280,7 @@ func (s *Server) finishRedirect(c *gin.Context, sess ginsessions.Session, locati
 func (s *Server) redirectWithInfo(c *gin.Context, location, message string) {
 	sess := ginsessions.Default(c)
 	if message != "" {
-		sess.Set(flashMessageKey, message)
-		sess.Set(flashLevelKey, "info")
+		putFlash(sess, message, "info")
 	}
 	s.finishRedirect(c, sess, location)
 }
@@ -284,11 +301,11 @@ func (s *Server) redirectWithAnchoredFlash(c *gin.Context, path, anchor, message
 }
 
 // anchoredFlashResponse sets the anchored flash and either redirects (a
-// normal form post) or, for an XHR caller, returns the target as JSON so the
-// caller can navigate itself after showing upload progress. The flash sits
-// in the session either way, so the following GET renders it once.
+// normal form post) or, for an XHR caller or the create dialog, returns the
+// target as JSON so the caller can navigate itself. The flash sits in the
+// session either way, so the following GET renders it once.
 func (s *Server) anchoredFlashResponse(c *gin.Context, path, anchor, message, errMsg string) {
-	if !wantsJSON(c.Request) {
+	if !wantsJSON(c.Request) && !inFormModal(c) {
 		s.redirectWithAnchoredFlash(c, path, anchor, message, errMsg)
 		return
 	}

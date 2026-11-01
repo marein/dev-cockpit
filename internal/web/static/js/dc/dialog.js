@@ -25,6 +25,19 @@ function popupHost() {
   return modals.length ? modals[modals.length - 1] : undefined;
 }
 
+// A popup leaves its modal before the modal hides. SweetAlert removes a closed
+// popup only when its close animation ends, and a hidden modal stops that
+// animation, so an answered popup would stay in the hidden modal, still counted
+// as open, and stand again the next time the modal shows. Out where it stands
+// without a modal, it closes to the end whatever hides the modal, and one still
+// unanswered goes with the modal it asked about.
+document.addEventListener("hide.bs.modal", (event) => {
+  const container = window.Swal?.getContainer();
+  if (event.defaultPrevented || !container || !event.target.contains(container)) return;
+  document.body.append(container);
+  window.Swal.close();
+});
+
 export const CLOSED_EVENT = "dc:dialog-closed";
 
 function announcingClose(options) {

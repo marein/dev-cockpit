@@ -11,6 +11,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/linecomment"
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
 	"github.com/marein/dev-cockpit/internal/restore"
@@ -122,7 +123,7 @@ func deletionServer(t *testing.T, stateDir string, projects *project.Repository)
 		quickOpen:    filesystem.NewQuickOpenCache(),
 		commitDrafts: newCommitDrafts(stateDir),
 		searchDrafts: newSearchDrafts(stateDir),
-		lineComments: newLineComments(stateDir),
+		lineComments: linecomment.New(stateDir),
 		deletes:      newProjectDeletes(stateDir),
 		shares:       share.NewStore(stateDir),
 	}
@@ -310,7 +311,7 @@ func newDeleteFixture(t *testing.T) *composeFixture {
 	s.quickOpen = filesystem.NewQuickOpenCache()
 	s.commitDrafts = newCommitDrafts(f.stateDir)
 	s.searchDrafts = newSearchDrafts(f.stateDir)
-	s.lineComments = newLineComments(f.stateDir)
+	s.lineComments = linecomment.New(f.stateDir)
 	s.shares = share.NewStore(f.stateDir)
 	s.deletes = newProjectDeletes(f.stateDir)
 	s.restorer = restore.New(filepath.Join(f.stateDir, "terminal-restore.json"), func() bool { return false },

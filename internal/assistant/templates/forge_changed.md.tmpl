@@ -1,0 +1,1 @@
+On {{.Forge}} {{md .Address}} {{if .Existed}}{{md .Branch}} of {{md .Project}} has the open {{if .Draft}}draft {{end}}{{.Noun}} {{.Ref}} "{{md .Title}}" into {{md .Target}} already{{else}}the {{if .Draft}}draft {{end}}{{.Noun}} {{.Ref}} "{{md .Title}}" of {{md .Branch}} into {{md .Target}} in {{md .Project}} is open{{end}}: {{.URL}}.

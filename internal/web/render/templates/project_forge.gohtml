@@ -1,0 +1,72 @@
+{{define "project_forge.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="{{.Return}}" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title text-truncate">Forge of {{.Project}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{template "project_forge_form.gohtml" .}}
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* Where a project is bound, then how: by its origin, by hand where the
+     origin cannot tell, or not at all. The fields of the binding by hand only
+     count while it is picked (dc-forge-binding). A worktree shows its main
+     project's binding and changes nothing. */}}
+{{define "project_forge_form.gohtml"}}
+<form method="post" action="/projects/{{.Project}}/forge{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-project-forge-form{{if .Modal}} data-form-title="Forge of {{.Project}}" data-form-wait="Saving the binding…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <dc-forge-binding class="d-block {{if .Modal}}modal-body{{else}}card-body{{end}}">
+    <div class="form-label">Bound to</div>
+    {{with .Bound}}
+    <div class="d-flex align-items-baseline gap-2 min-w-0" data-forge-bound>
+      <i class="ti {{.Host.Kind.Icon}} flex-none" aria-hidden="true" data-forge-bound-icon></i>
+      <div class="min-w-0">
+        <a href="{{.WebURL}}" target="_blank" rel="noopener" class="text-break" data-forge-bound-link>{{.Path}}</a>
+        <div class="small text-secondary text-break" data-forge-bound-host>{{.Host.Kind.Label}} at {{.Host.WebURL}}</div>
+      </div>
+    </div>
+    {{else}}
+    <div class="text-secondary" data-forge-unbound>No forge.</div>
+    {{end}}
+    {{if .Worktree}}
+    <div class="form-hint mt-3" data-forge-worktree>A worktree binds like its main project{{with .Main}}, <a href="/projects/{{.}}/forge">{{.}}</a>{{end}}.</div>
+    {{else}}
+    <fieldset class="mt-3 mb-0">
+      <legend class="form-label">How it binds</legend>
+      <label class="form-check">
+        <input class="form-check-input" type="radio" name="how" value="origin"{{if eq .How "origin"}} checked{{end}}>
+        <span class="form-check-label">From the origin</span>
+        <span class="form-check-description text-break" data-forge-origin>{{if not .Origin}}The project has no origin.{{else if .OriginBound}}{{.OriginBound.Address}} on {{.OriginBound.Host.Kind.Label}}{{else}}{{.Origin}} names no host of <a href="/settings/forges">Settings › Forges</a>.{{end}}</span>
+      </label>
+      <label class="form-check mb-2">
+        <input class="form-check-input" type="radio" name="how" value="hand"{{if eq .How "hand"}} checked{{end}}>
+        <span class="form-check-label">Set by hand</span>
+      </label>
+      <fieldset class="ps-4 mb-3" data-forge-hand>
+        <label class="form-label" for="forge-binding-host">Host</label>
+        <select class="form-select" id="forge-binding-host" name="host">
+          <option value="" disabled{{if not .HostPicked}} selected{{end}}>Pick the host</option>
+          {{range .Hosts}}<option value="{{.ID}}"{{if .Picked}} selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+        <label class="form-label mt-3" for="forge-binding-path">Repository path</label>
+        <input type="text" class="form-control" id="forge-binding-path" name="path" value="{{.Path}}" maxlength="{{.PathMax}}" placeholder="group/app" autocapitalize="off" autocorrect="off" spellcheck="false" data-1p-ignore data-lpignore="true">
+        <div class="form-hint">Like <code>group/sub/app</code>.</div>
+      </fieldset>
+      <label class="form-check mb-0">
+        <input class="form-check-input" type="radio" name="how" value="off"{{if eq .How "off"}} checked{{end}}>
+        <span class="form-check-label">Off</span>
+        <span class="form-check-description">No forge for this project.</span>
+      </label>
+    </fieldset>
+    {{end}}
+  </dc-forge-binding>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">{{if .Worktree}}Close{{else}}Cancel{{end}}</button>{{else}}<a class="btn btn-ghost-secondary" href="{{.Return}}">{{if .Worktree}}Back{{else}}Cancel{{end}}</a>{{end}}
+    {{if not .Worktree}}<button type="submit" class="btn btn-primary" data-forge-binding-save>Save</button>{{end}}
+  </div>
+</form>
+{{end}}

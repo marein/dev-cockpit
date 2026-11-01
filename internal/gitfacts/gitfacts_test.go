@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -184,8 +185,28 @@ func TestPruneLeavesForeignRegistration(t *testing.T) {
 func TestOriginForms(t *testing.T) {
 	cases := []struct{ raw, name, web string }{
 		{"git@github.com:marein/x.git", "github.com/marein/x", "https://github.com/marein/x"},
+		{"git@github.com:marein/x", "github.com/marein/x", "https://github.com/marein/x"},
 		{"https://github.com/marein/x.git", "github.com/marein/x", "https://github.com/marein/x"},
+		{"https://github.com/marein/x", "github.com/marein/x", "https://github.com/marein/x"},
 		{"ssh://git@github.com/marein/x.git", "github.com/marein/x", "https://github.com/marein/x"},
+		{"git@gitlab.example.com:group/sub/deeper/repo.git", "gitlab.example.com/group/sub/deeper/repo", "https://gitlab.example.com/group/sub/deeper/repo"},
+		{"ssh://git@gitlab.example.com:2222/group/repo.git", "gitlab.example.com/group/repo", "https://gitlab.example.com/group/repo"},
+		{"ssh://gitlab.example.com:2222/group/repo", "gitlab.example.com/group/repo", "https://gitlab.example.com/group/repo"},
+		{"https://user@gitlab.example.com:8443/group/sub/repo.git", "gitlab.example.com/group/sub/repo", "https://gitlab.example.com:8443/group/sub/repo"},
+		{"https://oauth2:secret@gitlab.example.com/group/repo.git", "gitlab.example.com/group/repo", "https://gitlab.example.com/group/repo"},
+		{"http://127.0.0.1:8080/x.git", "127.0.0.1/x", "http://127.0.0.1:8080/x"},
+		{"git://git.example.com/group/repo.git/", "git.example.com/group/repo", "https://git.example.com/group/repo"},
+		{"git+ssh://git@git.example.com/group/repo.git", "git.example.com/group/repo", "https://git.example.com/group/repo"},
+		{"deploy@git.example.com:/srv/group/repo.git", "git.example.com/srv/group/repo", "https://git.example.com/srv/group/repo"},
+		{"git.example.com:group/repo.git", "git.example.com/group/repo", "https://git.example.com/group/repo"},
+		{"ssh://git@[2001:db8::1]:2222/group/repo.git", "2001:db8::1/group/repo", "https://[2001:db8::1]/group/repo"},
+		{"  git@GitHub.com:marein/x.git\n", "github.com/marein/x", "https://github.com/marein/x"},
+		{"/srv/git/repo.git", "/srv/git/repo", ""},
+		{"../repo", "../repo", ""},
+		{"./a:b", "./a:b", ""},
+		{"file:///srv/git/repo.git", "file:///srv/git/repo", ""},
+		{"https://github.com", "https://github.com", ""},
+		{"git@github.com:", "git@github.com:", ""},
 		{"", "", ""},
 	}
 	for _, c := range cases {
@@ -194,6 +215,105 @@ func TestOriginForms(t *testing.T) {
 		}
 		if got := OriginWebURL(c.raw); got != c.web {
 			t.Errorf("OriginWebURL(%q) = %q, want %q", c.raw, got, c.web)
+		}
+	}
+}
+
+func TestParseRemoteParts(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want Remote
+	}{
+		{"git@host:group/sub/repo.git", Remote{Scheme: "ssh", Host: "host", Path: "group/sub/repo"}},
+		{"ssh://git@host:2222/group/repo.git", Remote{Scheme: "ssh", Host: "host", Port: "2222", Path: "group/repo"}},
+		{"https://user@host:8443/group/sub/repo.git", Remote{Scheme: "https", Host: "host", Port: "8443", Path: "group/sub/repo"}},
+		{"HTTPS://Host/Group/Repo", Remote{Scheme: "https", Host: "host", Path: "Group/Repo"}},
+	}
+	for _, c := range cases {
+		got, ok := ParseRemote(c.raw)
+		if !ok || got != c.want {
+			t.Errorf("ParseRemote(%q) = %+v, %v, want %+v", c.raw, got, ok, c.want)
+		}
+	}
+	for _, raw := range []string{"", "/srv/repo.git", "file:///srv/repo.git", "./a:b", "host:", "https://host/", "ssh://git@host:~me/repo"} {
+		if got, ok := ParseRemote(raw); ok {
+			t.Errorf("ParseRemote(%q) = %+v, want no remote", raw, got)
+		}
+	}
+}
+
+// The stamp moves with HEAD, the config, the packed refs and the loose
+// tracking ref of HEAD's branch, in a linked worktree read from the main's
+// shared directory, and stays put while a file beside them changes.
+func TestRefStampMovesWithTheRefsOfHEADsBranch(t *testing.T) {
+	mainDir := filepath.Join(t.TempDir(), "main")
+	writeMainRepo(t, mainDir)
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	writeLinkedWorktree(t, mainDir, wtDir, "wt")
+	if got := RefStamp(t.TempDir(), "origin"); got != "" {
+		t.Fatalf("a directory without a repository stamps %q", got)
+	}
+	at := time.Now().Add(-time.Hour)
+	touch := func(path string) {
+		t.Helper()
+		writeTestFile(t, path, "0123456789abcdef0123456789abcdef01234567\n")
+		at = at.Add(time.Second)
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := filepath.Join(mainDir, ".git")
+	for _, c := range []struct {
+		dir, path string
+		moves     bool
+	}{
+		{mainDir, filepath.Join(git, "refs", "remotes", "origin", "master"), true},
+		{mainDir, filepath.Join(git, "refs", "remotes", "origin", "other"), false},
+		{mainDir, filepath.Join(git, "refs", "remotes", "upstream", "master"), false},
+		{mainDir, filepath.Join(git, "packed-refs"), true},
+		{mainDir, filepath.Join(git, "HEAD"), true},
+		{mainDir, filepath.Join(git, "FETCH_HEAD"), false},
+		{wtDir, filepath.Join(git, "refs", "remotes", "origin", "feature"), true},
+		{wtDir, filepath.Join(git, "refs", "remotes", "origin", "master"), false},
+		{wtDir, filepath.Join(git, "worktrees", "wt", "HEAD"), true},
+		{wtDir, filepath.Join(git, "config"), true},
+	} {
+		before := RefStamp(c.dir, "origin")
+		touch(c.path)
+		if moved := RefStamp(c.dir, "origin") != before; moved != c.moves {
+			t.Errorf("writing %s moved the stamp of %s: %v", c.path, c.dir, moved)
+		}
+	}
+}
+
+// A branch that tracks a branch of another name on the remote moves the stamp
+// with that branch's loose ref, one tracking another remote does not.
+func TestRefStampMovesWithTheUpstreamOfAnotherName(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repo")
+	git := filepath.Join(dir, ".git")
+	writeTestFile(t, filepath.Join(git, "HEAD"), "ref: refs/heads/fix\n")
+	writeTestFile(t, filepath.Join(git, "config"), "[remote \"origin\"]\n\turl = git@github.com:marein/main.git\n"+
+		"[branch \"fix\"]\n\tremote = origin\n\tmerge = refs/heads/team/fix-login\n"+
+		"[branch \"other\"]\n\tremote = fork\n\tmerge = refs/heads/team/other\n")
+	at := time.Now().Add(-time.Hour)
+	for _, c := range []struct {
+		head, path string
+		moves      bool
+	}{
+		{"fix", filepath.Join(git, "refs", "remotes", "origin", "team", "fix-login"), true},
+		{"fix", filepath.Join(git, "refs", "remotes", "origin", "fix"), true},
+		{"fix", filepath.Join(git, "refs", "remotes", "fork", "team", "fix-login"), false},
+		{"other", filepath.Join(git, "refs", "remotes", "origin", "team", "other"), false},
+	} {
+		writeTestFile(t, filepath.Join(git, "HEAD"), "ref: refs/heads/"+c.head+"\n")
+		before := RefStamp(dir, "origin")
+		writeTestFile(t, c.path, "0123456789abcdef0123456789abcdef01234567\n")
+		at = at.Add(time.Second)
+		if err := os.Chtimes(c.path, at, at); err != nil {
+			t.Fatal(err)
+		}
+		if moved := RefStamp(dir, "origin") != before; moved != c.moves {
+			t.Errorf("on %s writing %s moved the stamp: %v", c.head, c.path, moved)
 		}
 	}
 }

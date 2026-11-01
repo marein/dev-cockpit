@@ -281,14 +281,14 @@ func (s *Server) guestGranted(p share.Permission) gin.HandlerFunc {
 
 // neverTrees are the owner's addresses no link reaches, each with everything
 // below it, whatever the link grants: the settings, the assistants, a
-// project's deletion, tags and new worktrees, the tab order and groups, the
-// terminal theme, the notifications and the questions git asks.
+// project's deletion, tags, forge and new worktrees, the tab order and
+// groups, the terminal theme, the notifications and the questions git asks.
 var neverTrees = []string{
 	"/settings", "/assistants", "/assistant", "/mention", "/projects/new", "/projects/delete",
 	"/splits", "/terminal-theme", "/notifications", "/git", "/push", "/update", "/plugins",
 	"/docker/actions", "/docker/link-rules", "/coders/new", "/coders/delete",
 	"/terminal-tabs/order", "/terminal-tabs/group", "/terminal-tabs/ungroup",
-	"/projects/:name/tags", "/projects/:name/branches", "/projects/:name/fetch",
+	"/projects/:name/tags", "/projects/:name/forge", "/projects/:name/branches", "/projects/:name/fetch",
 }
 
 // guestAssistantReads are the reads of the assistants' tree a link reaches,
@@ -371,6 +371,9 @@ func (s *Server) registerShareRoutes(r *gin.Engine) {
 	editor.write(share.Comments, http.MethodPost, "/comments", s.handleEditorCommentSave)
 	editor.write(share.Comments, http.MethodPost, "/comments/delete", s.handleEditorCommentsDelete)
 	editor.write(share.Comments, http.MethodPost, "/comments/move", s.handleEditorCommentsMove)
+	editor.write(share.Comments, http.MethodPost, "/comments/reply", s.handleEditorCommentReply)
+	editor.write(share.Comments, http.MethodPost, "/comments/reply/delete", s.handleEditorCommentReplyDelete)
+	editor.write(share.Comments, http.MethodPost, "/comments/resolve", s.handleEditorCommentResolve)
 	editor.read(http.MethodGet, "/git/changes", s.handleEditorGitChanges)
 	editor.read(http.MethodGet, "/git/blame", s.handleEditorGitBlame)
 	editor.read(http.MethodGet, "/git/file", s.handleEditorGitFile)

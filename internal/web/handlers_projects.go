@@ -104,12 +104,15 @@ func (s *Server) handleProjectsList(c *gin.Context) {
 	}
 	s.shells.Invalidate()
 	projects := s.projectsWithRunners()
+	forges := s.forgeByProject(projects)
 	c.HTML(http.StatusOK, "projects_list.gohtml", render.ProjectsListData{
 		Page:          s.page(c, "Projects", "projects"),
 		Projects:      projects,
 		Docker:        s.dockerByProject(projects),
 		DockerActions: render.DockerButtons(s.composeActions()),
 		Deleting:      s.deletes.view(projects),
+		Forges:        forges,
+		ForgePolled:   s.forgePolled(projects, forges),
 	})
 }
 

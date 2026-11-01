@@ -15,6 +15,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/forge"
 	"github.com/marein/dev-cockpit/internal/markdown"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
@@ -85,6 +86,8 @@ func (s *Server) assistantTriggersJSON(c *gin.Context, owner string, all bool) {
 			"where":        view.Where,
 			"targets":      triggerTargets(trigger),
 			"all":          trigger.All,
+			"project":      trigger.Project,
+			"branch":       trigger.Branch,
 			"spec":         trigger.Spec,
 			"timezone":     trigger.Timezone,
 			"task":         trigger.Task,
@@ -187,6 +190,8 @@ func triggerCarries(trigger assistant.Trigger, contains string) bool {
 		trigger.Name,
 		assistant.EventLabel(trigger.Source, trigger.Kind),
 		triggerWhere(trigger),
+		trigger.Project,
+		trigger.Branch,
 		trigger.Spec,
 		trigger.Timezone,
 		trigger.Task,
@@ -227,7 +232,7 @@ func (s *Server) assistantTriggerNew(c *gin.Context) {
 		s.assistantJobError(c, err)
 		return
 	}
-	spec, err := s.assistantTriggerSpec(c, "", nil)
+	spec, err := s.assistantTriggerSpec(c, assistant.Trigger{})
 	if err != nil {
 		s.assistantJobError(c, err)
 		return
@@ -301,7 +306,7 @@ func (s *Server) assistantTriggerEdit(c *gin.Context) {
 		s.assistantJobError(c, errors.New("No trigger has that id."))
 		return
 	}
-	spec, err := s.assistantTriggerSpec(c, trigger.Source, trigger.Terminals())
+	spec, err := s.assistantTriggerSpec(c, trigger)
 	if err != nil {
 		s.assistantJobError(c, err)
 		return
@@ -358,12 +363,14 @@ func (s *Server) assistantTriggerSummary(trigger assistant.Trigger) string {
 // assistantTriggerSpec reads a trigger's fields out of the form both surfaces
 // post. A field the request does not carry is one nobody named, which on a
 // create takes the default and on an edit leaves what stands, so the two ways
-// in share one reading and one meaning. source is what the trigger reacts to
-// when the request does not say (an edit never moves it), and stood are the
-// terminals it already names: those keep the name they were stored with
-// instead of being looked up again, a coder that stopped is still a terminal
-// this trigger waits for.
-func (s *Server) assistantTriggerSpec(c *gin.Context, source string, stood []string) (assistant.TriggerSpec, error) {
+// in share one reading and one meaning. stood is the trigger an edit changes,
+// the zero one for a create: its source is what the trigger reacts to when the
+// request does not say (an edit never moves it), and the terminals and the
+// project it already names keep what they were stored with instead of being
+// looked up again, a coder that stopped is still a terminal this trigger
+// waits for and a project gone is still the one it waits on.
+func (s *Server) assistantTriggerSpec(c *gin.Context, stood assistant.Trigger) (assistant.TriggerSpec, error) {
+	source := stood.Source
 	spec := assistant.TriggerSpec{
 		Event:    c.PostForm("event"),
 		Spec:     c.PostForm("spec"),
@@ -395,6 +402,24 @@ func (s *Server) assistantTriggerSpec(c *gin.Context, source string, stood []str
 		spec.OnceSet = true
 		spec.Once = slices.ContainsFunc(raw, func(v string) bool { return strings.TrimSpace(v) != "" })
 	}
+	// A pipeline or review event names a project the cockpit binds to a
+	// forge, the one way its pipelines and its change requests are ever
+	// read. On any other event the reactor refuses the field, whatever it
+	// names.
+	if raw, ok := c.GetPostForm("project"); ok {
+		spec.Project = strings.TrimSpace(raw)
+		if source == assistant.EventForge && spec.Project != "" && spec.Project != stood.Project {
+			if err := s.triggerForgeProject(spec.Project); err != nil {
+				return spec, err
+			}
+		}
+	}
+	if raw, ok := c.GetPostForm("branch"); ok {
+		spec.Branch, spec.BranchSet = strings.TrimSpace(raw), true
+		if refusal := forge.BranchRefusal(spec.Branch); refusal != "" {
+			return spec, errors.New(refusal)
+		}
+	}
 	if raw, ok := c.GetPostFormArray("terminal"); ok {
 		spec.TargetsSet = true
 		for _, one := range raw {
@@ -405,7 +430,7 @@ func (s *Server) assistantTriggerSpec(c *gin.Context, source string, stood []str
 			target := assistant.TriggerTarget{Terminal: terminal}
 			// A coder target is named here, where the running coders are; a job
 			// target takes its name from the job, which the reactor reads.
-			if source == assistant.EventCoder && !slices.Contains(stood, terminal) {
+			if source == assistant.EventCoder && !slices.Contains(stood.Terminals(), terminal) {
 				running, err := s.assistantSteerTarget(terminal)
 				if err != nil {
 					return spec, err
@@ -447,6 +472,33 @@ func (s *Server) assistantTriggerSpec(c *gin.Context, source string, stood []str
 		spec.Batch, spec.BatchSet = batch, true
 	}
 	return spec, nil
+}
+
+// triggerForgeProject checks the project a forge trigger names: one the
+// cockpit knows by that name, bound to a forge by its origin or by hand.
+// A host without a token is no refusal, a token is added later.
+func (s *Server) triggerForgeProject(name string) error {
+	if len(name) > maxProjectName {
+		return fmt.Errorf("A project name has at most %d bytes.", maxProjectName)
+	}
+	p, err := s.projects.FindByName(name)
+	if err != nil || p.Name != name {
+		return fmt.Errorf("No project is called %q.", name)
+	}
+	if !p.GitRepo {
+		return errors.New(forgeRefused(p))
+	}
+	if s.forge == nil {
+		return errors.New("This cockpit binds no project to a forge.")
+	}
+	bindings, err := s.forge.Bindings()
+	if err != nil {
+		return err
+	}
+	if _, ok := bindings.Bind(forgeOwner(p), p.GitOriginRaw); !ok {
+		return forgeUnbound(p, bindings)
+	}
+	return nil
 }
 
 // assistantTriggerDelete removes one trigger, from the page or from
@@ -551,13 +603,14 @@ func (s *Server) assistantTriggersData(page render.Page, owner string, all bool)
 // a stand and it is the server's.
 func (s *Server) assistantTriggerForm(c *gin.Context, edit bool) {
 	data := render.AssistantTriggerFormData{
-		Modal:   inFormModal(c),
-		Owner:   strings.TrimSpace(c.Query("assistant")),
-		URL:     assistantTriggersPath,
-		Event:   assistant.EventOptions[0].Name(),
-		MaxName: assistant.MaxTriggerNameRunes,
-		Mode:    triggerMode(false),
-		Batch:   int(assistant.DefaultTriggerBatch / time.Second),
+		Modal:     inFormModal(c),
+		Owner:     strings.TrimSpace(c.Query("assistant")),
+		URL:       assistantTriggersPath,
+		Event:     assistant.EventOptions[0].Name(),
+		MaxName:   assistant.MaxTriggerNameRunes,
+		MaxBranch: forge.MaxBranch,
+		Mode:      triggerMode(false),
+		Batch:     int(assistant.DefaultTriggerBatch / time.Second),
 		// A new trigger expires never, which is what the select says over an
 		// empty number; a unit is picked the moment somebody wants one.
 		UntilUnit: triggerNoExpiry,
@@ -580,6 +633,7 @@ func (s *Server) assistantTriggerForm(c *gin.Context, edit bool) {
 		data.Event = assistant.EventOption{Source: trigger.Source, Kind: trigger.Kind}.Name()
 		data.Name = trigger.Name
 		data.Task, data.Spec, data.Once = trigger.Task, trigger.Spec, trigger.Once
+		data.Project, data.Branch = trigger.Project, trigger.Branch
 		data.Model.Current = trigger.Model
 		data.Timezone = trigger.Timezone
 		data.Mode = triggerMode(trigger.All)
@@ -625,6 +679,13 @@ func (s *Server) assistantTriggerForm(c *gin.Context, edit bool) {
 			})
 		}
 	}
+	for name := range s.forgeByProject(s.projects.List()) {
+		data.Projects = append(data.Projects, name)
+	}
+	if data.Project != "" && !slices.Contains(data.Projects, data.Project) {
+		data.Projects = append(data.Projects, data.Project)
+	}
+	slices.Sort(data.Projects)
 	data.Jobs = withStale(data.Jobs, picked, assistant.EventJob, data.Event)
 	data.Coders = withStale(data.Coders, picked, assistant.EventCoder, data.Event)
 	data.Return = "/assistants/" + data.Owner
@@ -741,6 +802,10 @@ func (s *Server) assistantTriggerView(trigger assistant.Trigger, owners bool) re
 		// A compose event is about a run and never a terminal: it fires on
 		// every compose command this assistant starts.
 		view.Where = "any compose run of mine"
+	case trigger.Source == assistant.EventForge && trigger.Branch != "":
+		view.Where = trigger.Branch + " in " + trigger.Project
+	case trigger.Source == assistant.EventForge:
+		view.Where = trigger.Project
 	case len(trigger.Targets) == 0 && trigger.Source == assistant.EventJob:
 		view.Where = "any job of mine"
 	case len(trigger.Targets) == 0:

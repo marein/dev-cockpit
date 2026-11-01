@@ -6,14 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
-	"strings"
+
+	"github.com/marein/dev-cockpit/internal/plaintext"
 )
 
 // Logs reads the last lines a container wrote, both of its streams in the
-// order they came, as plain text: the terminal's escape sequences a program
-// colours its output with are taken out, a page shows them as text.
+// order they came, as the plain text a terminal shows of them: a page would
+// show the escape sequences a program colours its output with as text.
 func (c *Client) Logs(ctx context.Context, id string, tail int) (string, error) {
 	query := url.Values{"stdout": {"1"}, "stderr": {"1"}, "tail": {strconv.Itoa(tail)}}
 	res, err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(id)+"/logs", query)
@@ -28,7 +28,7 @@ func (c *Client) Logs(ctx context.Context, id string, tail int) (string, error) 
 	if framed, ok := unframeLogs(raw); ok {
 		raw = framed
 	}
-	return strings.ToValidUTF8(logEscapes.ReplaceAllString(string(raw), ""), "�"), nil
+	return plaintext.Terminal(string(raw)), nil
 }
 
 // unframeLogs unwraps the log of a container without a tty: the daemon
@@ -51,7 +51,3 @@ func unframeLogs(raw []byte) ([]byte, bool) {
 	}
 	return out, true
 }
-
-// logEscapes are the terminal sequences a log line carries: the CSI ones
-// colours and cursor moves are made of, and the OSC ones a title or a link is.
-var logEscapes = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]`)

@@ -219,3 +219,26 @@ func TestTheRestoreResumesPlainCodersBeforeTheWait(t *testing.T) {
 		t.Fatalf("want the plain coder first and the launched one after the server answered, got %v", got)
 	}
 }
+
+// A project's news that is no terminal survives the startup prune while the
+// project is there, a failed pipeline's among it, and goes with the project.
+func TestThePruneKeepsTheNewsOfProjectsThatAreThere(t *testing.T) {
+	withTmuxRecordingSessions(t)
+	dir := t.TempDir()
+	notifier := notify.NewService(filepath.Join(dir, "notifications.json"), nil)
+	for _, target := range []string{notify.PipelineTarget("shop"), notify.DockerTarget("shop"), notify.PipelineTarget("gone")} {
+		notifier.AddResolved(target, notify.TargetInfo{Name: target})
+	}
+	projects := project.NewRepository(t.TempDir(), nil)
+	s := New(filepath.Join(dir, "terminal-restore.json"), func() bool { return false }, nil, shell.NewShells(config.Config{}, tmux.New(), projects, nil), tmux.New(),
+		notifier, nil, func() []string { return []string{"shop"} })
+	s.pruneDeadTargets()
+	var kept []string
+	for _, n := range notifier.List(0) {
+		kept = append(kept, n.TargetID)
+	}
+	slices.Sort(kept)
+	if want := []string{notify.DockerTarget("shop"), notify.PipelineTarget("shop")}; !slices.Equal(kept, want) {
+		t.Fatalf("want %v kept, got %v", want, kept)
+	}
+}

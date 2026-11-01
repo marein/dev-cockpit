@@ -16,7 +16,7 @@ import { errorText, notifySuccess } from "@dc/toast";
 // and a POST target of its own, and the app's pe.js glue already closes open
 // modals and drops their backdrop on every boosted navigation.
 const PATHS = ["/coders/new", "/shells/new", "/projects/new", "/assistants/triggers"];
-const PATTERNS = [/^\/projects\/[^/]+\/tags$/, /^\/settings\/sharing\/[^/]+$/];
+const PATTERNS = [/^\/projects\/[^/]+\/(tags|forge|forge\/change)$/, /^\/settings\/(sharing|forges)\/[^/]+$/, /^\/settings\/forges\/[^/]+\/token$/];
 
 // A touch keyboard must not jump up over the dialog the moment it opens, so
 // only a fine pointer gets the field focused, the same rule the editor's
@@ -65,6 +65,16 @@ function closeMenus() {
   }
 }
 
+// A page between the cockpit and the browser, a proxy's error above all, is
+// HTML too, and must not take the place of the form.
+async function refusedView(response) {
+  if (!(response.headers.get("Content-Type") || "").startsWith("text/html")) return "";
+  const html = await response.text();
+  const probe = document.createElement("template");
+  probe.innerHTML = html;
+  return probe.content.querySelector("form, [data-form-view]") ? html : "";
+}
+
 function navigate(url) {
   if (window.app?.navigate) Promise.resolve(window.app.navigate(url)).catch(() => {});
   else window.location.href = url;
@@ -87,6 +97,13 @@ class FormModal extends HTMLElement {
     // open dialog; what the server answers decides whether it stays.
     this.modal.addEventListener("submit", (e) => void this.send(e), { signal });
     this.modal.addEventListener("hidden.bs.modal", () => this.clear(), { signal });
+    // A navigation that closes the dialog goes where it goes, a view's own
+    // way out (data-form-leave) must not overtake it.
+    for (const type of ["pe:navigate", "pe:form"]) {
+      window.addEventListener(type, () => {
+        if (this.modal.classList.contains("show")) this.leaving = true;
+      }, { signal });
+    }
   }
 
   disconnectedCallback() {
@@ -148,11 +165,15 @@ class FormModal extends HTMLElement {
 
   // place shows a view the server rendered, a form or what a form led to
   // (data-form-view), under the title and the sub line it names, and answers
-  // it, or nothing when the answer holds neither.
+  // it, or nothing when the answer holds neither. A view that follows
+  // something already made names the page that shows it (data-form-leave),
+  // closing the dialog over it leads there, since the page behind still
+  // shows what stood before.
   async place(html) {
     this.reset();
     this.content.insertAdjacentHTML("beforeend", html);
     const view = this.content.querySelector("form, [data-form-view]");
+    this.after = view?.dataset.formLeave || "";
     if (!view) return null;
     if (this.titleEl) this.titleEl.textContent = view.dataset.formTitle || "";
     const sub = view.querySelector("template[data-form-sub]");
@@ -219,7 +240,13 @@ class FormModal extends HTMLElement {
         return;
       }
       if (!response.ok) {
-        // A refusal keeps the dialog standing over what was typed.
+        // A refusal keeps the dialog standing over what was typed, unless the
+        // post changed what the view shows, then the server answers it again.
+        const view = await refusedView(response);
+        if (view) {
+          this.focusFirst(await this.place(view));
+          return;
+        }
         restore();
         this.showError(await errorText(response, "The form could not be sent."));
         return;
@@ -290,8 +317,11 @@ class FormModal extends HTMLElement {
   clear() {
     this.reset();
     const trigger = this.trigger;
+    const after = this.leaving ? "" : this.after;
     this.trigger = null;
-    if (!this.leaving && trigger?.isConnected) trigger.focus({ preventScroll: true });
+    this.after = "";
+    if (after) navigate(after);
+    else if (!this.leaving && trigger?.isConnected) trigger.focus({ preventScroll: true });
     this.leaving = false;
   }
 }

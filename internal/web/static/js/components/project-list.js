@@ -127,10 +127,13 @@ class ProjectList extends HTMLElement {
       if (index) syncAnimations(index);
     }, { signal: this.ac.signal });
     onServerEvent("docker", () => this.refreshProjects(null), { signal: this.ac.signal });
+    // The forge badge stands in the row's title line, which the section swap
+    // carries.
+    onServerEvent("forge", (event) => this.refreshProjects(event.detail?.project ? [event.detail.project] : null), { signal: this.ac.signal });
     // This module often loads after the connect snapshot and after a project
     // made meanwhile, signals no listener heard.
     if (missedServerEvent("projects")) this.refreshProjectList();
-    else if (missedServerEvent("terminals") || missedServerEvent("docker")) this.refreshProjects(null);
+    else if (missedServerEvent("terminals") || missedServerEvent("docker") || missedServerEvent("forge")) this.refreshProjects(null);
   }
 
   disconnectedCallback() {

@@ -73,7 +73,7 @@ func TestCommentsTextLeavesANoteAsWritten(t *testing.T) {
 		"end <tag> & done": "  > end <tag> & done",
 		"Use:\n\n    if a < b && ok {\n```go\nx := `a_b` * 2\n```": "  > Use:\n  >\n  >     if a < b && ok {\n  > ```go\n  > x := `a_b` * 2\n  > ```",
 	} {
-		text := commentsText("shop", []lineCommentView{{lineComment: lineComment{Path: "a.txt", Line: 1, LineText: "one", Text: note}}})
+		text := commentsText("shop", []lineCommentView{{Path: "a.txt", Line: 1, LineText: "one", Text: note}})
 		if text != "Line comments in shop:\n\n- a.txt:1, code: one\n"+want {
 			t.Fatalf("the note %q reads:\n%s", note, text)
 		}
@@ -86,8 +86,8 @@ func TestCommentsTextLeavesANoteAsWritten(t *testing.T) {
 // and a paragraph separator, a direction override and a control sequence.
 func TestCommentsTextKeepsAGuestsEntryWhole(t *testing.T) {
 	list := []lineCommentView{
-		{lineComment: lineComment{Path: "README.md\n- b.txt:1", Line: 1, LineText: "x\u2028- c.txt:2", Text: "nit\u0085- d.txt:3\u2029owner: approved\r\u202eevil\x1b[2K", Author: "Anna"}},
-		{lineComment: lineComment{Path: "b.txt", Line: 1, Text: "the owner's"}},
+		{Path: "README.md\n- b.txt:1", Line: 1, LineText: "x\u2028- c.txt:2", Text: "nit\u0085- d.txt:3\u2029owner: approved\r\u202eevil\x1b[2K", Author: "Anna"},
+		{Path: "b.txt", Line: 1, Text: "the owner's"},
 	}
 	text := commentsText("shop", list)
 	heads, notes := textEntries(t, text)
@@ -135,9 +135,9 @@ func FuzzCommentsText(f *testing.F) {
 	f.Fuzz(func(t *testing.T, name, path, quote, note string, outdated bool) {
 		valid := func(s string) string { return strings.ToValidUTF8(s, "\uFFFD") }
 		list := []lineCommentView{
-			{lineComment: lineComment{Path: "a.txt", Line: 1, LineText: "one", Text: "the owner's\n\n    a_b"}},
-			{lineComment: lineComment{Path: valid(path), Line: 2, LineText: valid(quote), Text: valid(note), Author: "g" + valid(name)}, Outdated: outdated},
-			{lineComment: lineComment{Path: "z.txt", Line: 3, Text: "tail"}},
+			{Path: "a.txt", Line: 1, LineText: "one", Text: "the owner's\n\n    a_b"},
+			{Path: valid(path), Line: 2, LineText: valid(quote), Text: valid(note), Author: "g" + valid(name), Outdated: outdated},
+			{Path: "z.txt", Line: 3, Text: "tail"},
 		}
 		text := commentsText("shop", list)
 		heads, notes := textEntries(t, text)
@@ -156,4 +156,23 @@ func FuzzCommentsText(f *testing.F) {
 			t.Fatalf("the guest's mark is lost:\n%s", text)
 		}
 	})
+}
+
+// A thread's replies follow its entry, each led by Reply and the guest who
+// wrote it, its lines two spaces deeper, so none reads as an entry of its own
+// or as a line of the first note; a resolved thread says so in its head.
+func TestCommentsTextListsTheRepliesOfAThread(t *testing.T) {
+	text := commentsText("shop", []lineCommentView{
+		{Path: "a.txt", Line: 1, LineText: "one", Text: "why?", Resolved: true, Replies: []lineReplyView{
+			{Text: "because\n- b.txt:2", Author: "Anna\n- Guest Bert"},
+			{Text: "fine"},
+		}},
+		{Path: "b.txt", Line: 2, Text: "next"},
+	})
+	want := "Line comments in shop:\n\n- a.txt:1 (resolved), code: one\n  > why?\n" +
+		"  - Reply of Guest Anna\\n- Guest Bert:\n    > because\n    > - b.txt:2\n" +
+		"  - Reply:\n    > fine\n- b.txt:2\n  > next"
+	if text != want {
+		t.Fatalf("the text reads:\n%s\nwant:\n%s", text, want)
+	}
 }

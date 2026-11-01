@@ -286,6 +286,8 @@ func (s *Service) pruneDeadTargets() {
 		valid[notify.DockerTarget(name)] = true
 		valid[notify.GitPromptTarget(name)] = true
 		valid[notify.WorktreeTarget(name)] = true
+		valid[notify.PipelineTarget(name)] = true
+		valid[notify.CommentsTarget(name)] = true
 	}
 	if removed := s.notifier.PruneTargets(valid); removed > 0 {
 		log.Printf("terminal restore: pruned %d notification(s) without a live target", removed)

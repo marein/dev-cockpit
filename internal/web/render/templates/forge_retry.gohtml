@@ -1,0 +1,7 @@
+{{define "forge_retry.gohtml"}}
+{{- $r := .Retry}}
+<button type="button" class="dropdown-item d-flex align-items-center gap-2{{if $r.Blocked}} opacity-50{{end}}"{{if .Pin}} data-editor-sheet-pin{{end}} data-forge-retry data-forge-retry-branch="{{$r.Branch}}" data-forge-retry-head="{{$r.Head}}" data-forge-retry-pipeline="{{$r.Pipeline}}" data-forge-retry-job="{{$r.Job}}"{{with $r.Blocked}} title="{{.}}" disabled{{end}}>
+  <i class="ti ti-reload" aria-hidden="true"></i>
+  <span class="d-flex flex-column min-w-0 text-start"><span>{{$r.Label}}</span><span class="small text-secondary {{if $r.Blocked}}text-wrap text-break{{else}}text-truncate{{end}}">{{if $r.Blocked}}{{$r.Blocked}}{{else}}{{$r.Sub}}{{end}}</span></span>
+</button>
+{{end}}
