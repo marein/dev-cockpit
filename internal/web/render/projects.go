@@ -73,14 +73,25 @@ type BranchChoice struct {
 }
 
 // The values the create form's one select carries. An empty value is the
-// plain project, CreateClone a directory a repository is cloned into, and a
+// plain project, CreateClone a directory a repository is cloned into, a
 // worktree carries the project it forks behind CreateWorktree, because the
 // prefix is what keeps a project that is called "clone" apart from the kind
-// of the same name.
+// of the same name, and a clone out of a search of one forge host's
+// repositories carries the host's id behind CreateForge.
 const (
 	CreateClone    = "clone"
 	CreateWorktree = "worktree:"
+	CreateForge    = "forge:"
 )
+
+// ForgeHostID names the host a choice searches, empty for every choice that
+// searches none.
+func ForgeHostID(choice string) string {
+	if !strings.HasPrefix(choice, CreateForge) {
+		return ""
+	}
+	return strings.TrimPrefix(choice, CreateForge)
+}
 
 // WorktreeChoice is the select value that forks the given project.
 func WorktreeChoice(name string) string { return CreateWorktree + name }
@@ -126,6 +137,13 @@ type ProjectNewData struct {
 	Fill ProjectNewFill
 	// Modal marks the render for the create dialog, like CoderNewData.Modal.
 	Modal bool
+	// Forges are the hosts the select offers to clone from by a search of
+	// their repositories, Forge the one this form searches, nil for every
+	// other choice, and Repository the path its field shows for the address
+	// in Fill.CloneURL.
+	Forges     []RepositoryForge
+	Forge      *RepositoryForge
+	Repository string
 }
 
 // AnyTaken reports whether one of the offered branches stands in a working

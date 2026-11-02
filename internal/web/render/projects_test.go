@@ -290,6 +290,39 @@ func TestCreateFormOffersTheThreeKinds(t *testing.T) {
 	if strings.Contains(clone, "data-branch-block") {
 		t.Fatal("a clone renders branch fields")
 	}
+	if strings.Contains(clone, "<dc-repo-search") || strings.Contains(clone, "From ") {
+		t.Fatal("a form without the forges searches them")
+	}
+	forges := []RepositoryForge{{Choice: CreateForge + "github.com", ID: "github.com", Label: "GitHub"}, {Choice: CreateForge + "x1", ID: "x1", Label: "git.example.com"}}
+	offered := renderProjectNew(t, ProjectNewData{Page: Page{Title: "New Project"}, Create: CreateClone, Forges: forges, Sources: []ProjectOption{{Name: "app"}}})
+	if !strings.Contains(offered, `An existing repository</option>
+        <option value="forge:github.com">From GitHub</option><option value="forge:x1">From git.example.com</option>
+        <option value="worktree:app"`) || strings.Contains(offered, "<dc-repo-search") {
+		t.Fatalf("the forges are not offered after the address:\n%s", offered)
+	}
+	search := renderProjectNew(t, ProjectNewData{Page: Page{Title: "New Project"}, Create: CreateForge + "x1", Forges: forges, Forge: &forges[1], Repository: "a/b", Fill: ProjectNewFill{CloneURL: "git@git.example.com:a/b.git"}})
+	for _, want := range []string{
+		`<option value="forge:x1" selected>From git.example.com</option>`,
+		`<dc-repo-search class="d-block dropdown" data-repo-host="x1">`,
+		`<input type="hidden" name="clone_url" value="git@git.example.com:a/b.git" data-clone-url data-repo-value data-repo-path="a/b">`,
+		`id="repository" value="a/b" required maxlength="100" autofocus`,
+		`role="combobox" aria-expanded="false" aria-autocomplete="list"`,
+		`data-repo-menu`, `data-repo-list`,
+		`<div class="form-hint text-break" data-repo-address-line>Clones from <span data-repo-address>git@git.example.com:a/b.git</span></div>`,
+	} {
+		if !strings.Contains(search, want) {
+			t.Fatalf("the search lacks %s:\n%s", want, search)
+		}
+	}
+	if strings.Contains(search, `id="clone_url"`) {
+		t.Fatal("the search shape holds the address field too")
+	}
+	if fresh := renderProjectNew(t, ProjectNewData{Page: Page{Title: "New Project"}, Create: CreateForge + "x1", Forges: forges, Forge: &forges[1]}); !strings.Contains(fresh, `data-repo-address-line hidden>`) {
+		t.Fatal("an empty pick names an address")
+	}
+	if ForgeHostID(CreateForge+"x1") != "x1" || ForgeHostID(CreateClone) != "" || ForgeHostID(WorktreeChoice("forge:x")) != "" {
+		t.Fatal("ForgeHostID")
+	}
 }
 
 func TestWorktreeChoiceRoundTrip(t *testing.T) {

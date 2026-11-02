@@ -83,8 +83,14 @@ func projectNewFill(c *gin.Context) render.ProjectNewFill {
 func (s *Server) projectNewData(c *gin.Context, choice string) render.ProjectNewData {
 	data := render.ProjectNewData{Page: s.page(c, "New Project", "projects"), Fill: projectNewFill(c)}
 	data.Sources = worktreeSources(s.projects.List(), render.ProjectOptions(data.QuickNav.AllProjects))
+	hosts := s.repositorySearchHosts()
+	data.Forges = render.NewRepositoryForges(hosts)
 	if choice == render.CreateClone {
 		data.Create = choice
+		return data
+	}
+	if id := render.ForgeHostID(choice); id != "" {
+		s.repositorySearchForm(&data, hosts, choice, id)
 		return data
 	}
 	src, err := s.projects.FindByName(render.WorktreeSource(choice))

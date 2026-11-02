@@ -7,7 +7,7 @@ const { execFileSync } = require("child_process");
 
 // The fake forge forge.js, forge-status.js, forge-poll.js, forge-editor.js,
 // forge-events.js, forge-news.js, forge-comments.js, forge-retry.js,
-// forge-change.js, forge-publish.js and forge-thread.js point their host at, so no check ever reaches a real
+// forge-change.js, forge-publish.js, forge-thread.js and forge-repo-search.js point their host at, so no check ever reaches a real
 // forge. One handler answers over http and, with a certificate openssl makes
 // for 127.0.0.1 and nobody else trusts, over https:
 // like GitLab 17.5 below /gl and GitLab 14.10 below /old, like a GitHub
@@ -244,6 +244,9 @@ function handler(token, log, state, hooks) {
       if (!authed) return json(401, { message: "401 Unauthorized" });
       if (gitlab[2] === "version") return json(200, { version: gitlab[1] === "old" ? "14.10.5" : "17.5.1", revision: "8ff7d9d4d4a" });
       return json(200, { id: 1, username: "root", name: "Administrator", state: "active", web_url: "https://gitlab.example.com/root" });
+    }
+    if ((p === "/gl/api/v4/projects" || p === "/api/v3/user/repos" || p === "/api/v3/search/repositories") && req.method === "GET") {
+      return repositories(req, url, state, json, authed);
     }
     if (p === "/blob/actions-results/6.txt") {
       if (req.headers.authorization || url.searchParams.get("sig") !== "e2e-sig") {
@@ -501,6 +504,70 @@ function handler(token, log, state, hooks) {
   };
 }
 
+// repositories answers the create form's repository search, from the lists
+// the runner sets: GitLab's projects below /gl, those of the token's user
+// (state.glOwn) and the public ones (state.glPublic), and the Enterprise
+// Server's list of the user's repositories (state.ghOwn) and its search
+// (state.ghPublic), each item { path, name, description, visibility, fork,
+// archived } with ssh in place of the SSH address the fake makes. GitLab's
+// search matches the way GitLab does: a project matches when one field
+// carries every word of at least three characters, the shorter words beside
+// them dropped, or equals a term of shorter words alone; the fields are the
+// last path segment, the name and the description, the full path and the
+// name with its groups only under search_namespaces, so a short name in a
+// group is found only without it. A public search answers after
+// state.publicDelay milliseconds, GitLab's own one fails with 500 under
+// state.glOwnFail, and GitHub's search counts down state.searchRemaining,
+// where set, refusing it at 0 with its limit, which lifts after
+// state.searchReset seconds, 60 unless the runner sets another.
+function repositories(req, url, state, json, authed) {
+  const host = req.headers.host;
+  const name = host.split(":")[0];
+  const q = url.searchParams;
+  const perPage = Number(q.get("per_page") || 20);
+  const ssh = (r) => r.ssh ?? `git@${name}:${r.path}.git`;
+  const words = (text) => String(text || "").toLowerCase().split(/\s+/).filter(Boolean);
+  const gitlabMatches = (r) => {
+    const term = words(q.get("search"));
+    const long = term.filter((w) => [...w].length >= 3);
+    const name = r.name || r.path.split("/").pop();
+    const fields = q.get("search_namespaces") === "true"
+      ? [r.path, [...r.path.split("/").slice(0, -1), name].join(" / "), r.description || ""]
+      : [r.path.split("/").pop(), name, r.description || ""];
+    return !term.length || fields.map((f) => f.toLowerCase()).some((f) => (long.length ? long.every((w) => f.includes(w)) : f === term.join(" ")));
+  };
+  const later = (then) => setTimeout(then, state.publicDelay || 0);
+  if (url.pathname.startsWith("/gl/")) {
+    if (!authed) return json(401, { message: "401 Unauthorized" });
+    const own = q.get("membership") === "true";
+    if (own && state.glOwnFail) return json(500, { message: "500 Internal Server Error" });
+    const list = (own ? state.glOwn : state.glPublic).filter(gitlabMatches).slice(0, perPage).map((r) => ({
+      id: r.path.length, name: r.name || r.path.split("/").pop(), path_with_namespace: r.path, description: r.description || "", ssh_url_to_repo: ssh(r),
+      http_url_to_repo: `http://${host}/gl/${r.path}.git`, visibility: r.visibility || "public", archived: !!r.archived,
+      last_activity_at: "2026-10-01T10:00:00.000Z", ...(r.fork ? { forked_from_project: { id: 1 } } : {}),
+    }));
+    return own ? json(200, list) : later(() => json(200, list));
+  }
+  const headers = { "X-GitHub-Enterprise-Version": "3.14.2" };
+  if (!authed) return json(401, { message: "Bad credentials", status: "401" }, headers);
+  const gh = (r) => ({
+    id: r.path.length, full_name: r.path, ssh_url: ssh(r), clone_url: `http://${host}/${r.path}.git`, private: r.visibility === "private" || r.visibility === "internal",
+    visibility: r.visibility || "public", fork: !!r.fork, archived: !!r.archived, pushed_at: "2026-10-01T10:00:00Z",
+  });
+  if (url.pathname === "/api/v3/user/repos") return json(200, state.ghOwn.slice(0, perPage).map(gh), headers);
+  const reset = String(Math.floor(Date.now() / 1000) + (state.searchReset || 60));
+  if (typeof state.searchRemaining === "number") {
+    if (state.searchRemaining <= 0) return json(403, { message: "API rate limit exceeded for user ID 1.", status: "403" }, { ...headers, "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset, "X-RateLimit-Resource": "search" });
+    state.searchRemaining -= 1;
+    Object.assign(headers, { "X-RateLimit-Remaining": String(state.searchRemaining), "X-RateLimit-Reset": reset, "X-RateLimit-Resource": "search" });
+  }
+  const terms = words(q.get("q"));
+  const user = terms.find((t) => t.startsWith("user:"))?.slice(5);
+  const plain = terms.filter((t) => !t.includes(":"));
+  const items = state.ghPublic.filter((r) => (!user || r.path.toLowerCase().startsWith(`${user}/`)) && plain.every((w) => r.path.split("/").pop().toLowerCase().includes(w))).slice(0, perPage).map(gh);
+  return later(() => json(200, { total_count: items.length, incomplete_results: false, items }, headers));
+}
+
 // startFakeForge listens on both ports of every interface, which the docker
 // run publishes on the host's loopback, and answers the CA bundle that
 // trusts its https side, the log, the webhooks and the state the runner sets. The
@@ -514,7 +581,8 @@ async function startFakeForge({ port, tlsPort, token }) {
     "-subj", "/CN=forge-fake", "-addext", "subjectAltName=IP:127.0.0.1"], { stdio: "ignore" });
   const log = [];
   const hooks = [];
-  const state = { head: "", status: "failed", ghRun: "failure", ghTest: "failure", ghStatus: "pending", traceFill: 0, readOnly: false, reporter: false, refusal: "", retried: [], defaultBranch: "main", changes: [], pulls: [], diffFiles: [], published: [], replies: [], resolved: [], ghPending: false };
+  const state = { head: "", status: "failed", ghRun: "failure", ghTest: "failure", ghStatus: "pending", traceFill: 0, readOnly: false, reporter: false, refusal: "", retried: [], defaultBranch: "main", changes: [], pulls: [], diffFiles: [], published: [], replies: [], resolved: [], ghPending: false,
+    glOwn: [], glPublic: [], ghOwn: [], ghPublic: [], publicDelay: 0, glOwnFail: false, searchRemaining: null, searchReset: 60 };
   const plain = http.createServer(handler(token, log, state, hooks));
   const secure = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, handler(token, log, state, hooks));
   await Promise.all([

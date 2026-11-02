@@ -354,6 +354,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	auth.GET("/projects", s.handleProjectsList)
 	auth.GET("/projects/new", s.handleProjectNew)
+	auth.GET("/projects/new/repositories", s.handleProjectRepositories)
 	auth.POST("/projects", s.handleProjectCreate)
 	auth.POST("/projects/delete", s.handleDeletes(s.projectDeleteKind(), "project", s.handleProjectDelete))
 	auth.GET("/projects/:name/editor", s.handleProjectEditor)

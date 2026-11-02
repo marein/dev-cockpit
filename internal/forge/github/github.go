@@ -34,14 +34,22 @@ func (Provider) Kind() forge.Kind {
 // api is github.com's API on its own host, an Enterprise Server's below its
 // web address.
 func api(c *forge.Client, h forge.Host, token string) forge.API {
-	base := strings.TrimRight(h.WebURL, "/") + "/api/v3"
+	return c.API(apiBase(h), h, token, headers())
+}
+
+func apiBase(h forge.Host) string {
 	if h.WebURL == webURL {
-		base = "https://api.github.com"
+		return "https://api.github.com"
 	}
-	return c.API(base, h, token, http.Header{
+	return strings.TrimRight(h.WebURL, "/") + "/api/v3"
+}
+
+// headers are what every request to GitHub's API sends.
+func headers() http.Header {
+	return http.Header{
 		"Accept":               {"application/vnd.github+json"},
 		"X-Github-Api-Version": {"2022-11-28"},
-	})
+	}
 }
 
 // TokenPage is the page that creates a classic token, which every

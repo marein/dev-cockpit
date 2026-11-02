@@ -128,6 +128,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `A repository row names its origin and links the repository's page, a worktree row names its main project. An origin on a forge host wears its brand <i class="ti ti-brand-github align-text-bottom" aria-hidden="true"></i> <i class="ti ti-brand-gitlab align-text-bottom" aria-hidden="true"></i>, also over an alias host, any other host a globe <i class="ti ti-world align-text-bottom" aria-hidden="true"></i>. A binding set by hand sets brand and link, one switched off shows the globe. Beside the branch a bound row shows its change request and pipeline, see Forges.`,
 				},
 				{
+					Title: "Clone a repository",
+					Desc:  `<em>Create project</em> with <em>An existing repository</em> clones the <em>Repository URL</em>, typed or pasted, into the new project. Each forge host with a token adds an entry of its own, <em>From GitHub</em>, <em>From GitLab</em> or <em>From</em> an added host's address, which searches that host alone: the repositories its token reaches, the account's own, its groups' and organizations' and those it collaborates on, the most recently active first, with private, internal, fork or archived where the forge says so. From three characters public repositories follow under <em>Public</em> when the forge answers, a slow or limited public search stays out. Picking one fills in its SSH address, the https one where the SSH host is none of the forge host's names, shows it under the field and suggests the project name. A host without a token is not offered.`,
+				},
+				{
 					Title: "Worktree post script",
 					Desc:  `Settings &rarr; Projects &rarr; Worktrees holds one script that runs in every new worktree, its first line names the interpreter. It is stopped after 15 seconds. A failure notifies, the worktree stays.`,
 				},

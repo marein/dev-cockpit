@@ -28,6 +28,7 @@
       <select class="form-select" id="create" name="create" data-project-source>
         <option value=""{{if not .Create}} selected{{end}}>An empty project</option>
         <option value="clone"{{if eq .Create "clone"}} selected{{end}}>An existing repository</option>
+        {{range .Forges}}<option value="{{.Choice}}"{{if eq .Choice $.Create}} selected{{end}}>From {{.Label}}</option>{{end}}
         {{range .Sources}}<option value="{{worktreeChoice .Name}}"{{if eq .Name $.Source}} selected{{end}} data-project-name="{{.Name}}" data-project-active="{{if .Active}}true{{else}}false{{end}}" data-project-used="{{.LastUsedUnix}}">{{.Name}} (new worktree)</option>{{end}}
       </select>
     </dc-project-select>
@@ -35,6 +36,19 @@
     <div class="mb-3">
       <label class="form-label required" for="clone_url">Repository URL</label>
       <input class="form-control" id="clone_url" name="clone_url" value="{{.Fill.CloneURL}}" required maxlength="500"{{if not .Modal}} autofocus{{end}} autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="https://github.com/you/project.git" data-clone-url>
+    </div>
+    {{end}}
+    {{with .Forge}}
+    <div class="mb-3">
+      <label class="form-label required" for="repository">Repository</label>
+      <dc-repo-search class="d-block dropdown" data-repo-host="{{.ID}}">
+        <input type="hidden" name="clone_url" value="{{$.Fill.CloneURL}}" data-clone-url data-repo-value data-repo-path="{{$.Repository}}">
+        <input class="form-control" id="repository" value="{{$.Repository}}" required maxlength="100"{{if not $.Modal}} autofocus{{end}} placeholder="Search repositories…" role="combobox" aria-expanded="false" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-repo-search>
+        <div class="dropdown-menu w-100" data-repo-menu>
+          <div class="overflow-auto" style="max-height: min(14rem, 40vh)" data-repo-list></div>
+        </div>
+        <div class="form-hint text-break" data-repo-address-line{{if not $.Fill.CloneURL}} hidden{{end}}>Clones from <span data-repo-address>{{$.Fill.CloneURL}}</span></div>
+      </dc-repo-search>
     </div>
     {{end}}
     {{if .Source}}

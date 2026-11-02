@@ -366,7 +366,7 @@ func (s *Server) handleProjectCreate(c *gin.Context) {
 		s.formRefused(c, back, "Please check the form and try again.")
 		return
 	}
-	if form.Create == render.CreateClone {
+	if form.Create == render.CreateClone || render.ForgeHostID(form.Create) != "" {
 		s.createClone(c, form)
 		return
 	}
