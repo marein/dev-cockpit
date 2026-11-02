@@ -68,7 +68,11 @@ func newThreadFixture(t *testing.T) *threadFixture {
 			{ID: "t2", Path: "src/login.go", Line: 9, Resolvable: true, Resolved: true, Notes: []Note{{ID: "2"}}},
 			{ID: "t3", Path: "src/login.go", Line: 12, Notes: []Note{{ID: "3"}}},
 		},
-		General: []Thread{{ID: "g1", Notes: []Note{{ID: "4"}}}},
+		General: []Thread{
+			{ID: "g1", Resolvable: true, Notes: []Note{{ID: "4", Author: "bob", Body: "Ready?"}}},
+			{ID: "g2", Notes: []Note{{ID: "5"}}},
+			{ID: "c1", Single: true, Notes: []Note{{ID: "c1"}}},
+		},
 	}, nil)
 	return f
 }
@@ -99,10 +103,27 @@ func TestAWriteOnAThreadAnswersAndResolvesItAfterAFreshRead(t *testing.T) {
 	}
 }
 
-// Nothing is written where the branch has no change request, the thread is
-// not on its diff, is a general one, cannot be resolved, or stands resolved
-// with nothing to answer; a reply on a resolved thread is posted and asks no
-// resolve.
+// A general thread the forge keeps as a thread takes a reply and a resolve
+// like one on the diff, found by its id among the general ones.
+func TestAWriteOnAGeneralThreadAnswersAndResolvesIt(t *testing.T) {
+	f := newThreadFixture(t)
+	done, note, err := f.s.WriteThread(context.Background(), f.watch("app", "feature", "a1"), ThreadWrite{Thread: "g1", Body: "yes", Resolve: true})
+	if err != nil || note == nil || !done.Thread.Resolved || done.Thread.Path != "" || done.Thread.Notes[0].Author != "bob" {
+		t.Fatalf("the write answered %+v, %+v, %v", done, note, err)
+	}
+	want := []string{"reply group/app !4 g1 " + pollToken + ": yes", "resolve group/app !4 g1 " + pollToken}
+	if !slices.Equal(f.stub.written(), want) {
+		t.Fatalf("the forge was asked %q", f.stub.written())
+	}
+	if _, note, err := f.s.WriteThread(context.Background(), f.watch("app", "feature", "a1"), ThreadWrite{Thread: "g2", Body: "and this"}); err != nil || note == nil {
+		t.Fatalf("a reply on a general thread the forge does not resolve answered %+v, %v", note, err)
+	}
+}
+
+// Nothing is written where the branch has no change request, the change
+// request holds no such thread, the forge keeps the note alone, the thread
+// cannot be resolved, or it stands resolved with nothing to answer; a reply
+// on a resolved thread is posted and asks no resolve.
 func TestAWriteOnAThreadIsRefusedBeforeAnythingIsWritten(t *testing.T) {
 	f := newThreadFixture(t)
 	w := f.watch("app", "feature", "a1")
@@ -112,9 +133,11 @@ func TestAWriteOnAThreadIsRefusedBeforeAnythingIsWritten(t *testing.T) {
 		want  string
 	}{
 		{"c1", ThreadWrite{Thread: "t1", Body: "x"}, `"feature" has no change.`},
-		{"a1", ThreadWrite{Thread: "t9", Body: "x"}, `The change !4 has no such review thread on its diff.`},
-		{"a1", ThreadWrite{Thread: "g1", Body: "x"}, `The change !4 holds the thread as a general one, only a thread on its diff is answered or resolved here.`},
+		{"a1", ThreadWrite{Thread: "t9", Body: "x"}, `The change !4 has no such review thread.`},
+		{"a1", ThreadWrite{Thread: "c1", Body: "x"}, `The change !4 holds this note of its conversation alone, Stub keeps no thread of it to answer or resolve.`},
+		{"a1", ThreadWrite{Thread: "c1", Resolve: true}, `The change !4 holds this note of its conversation alone, Stub keeps no thread of it to answer or resolve.`},
 		{"a1", ThreadWrite{Thread: "t3", Body: "x", Resolve: true}, `Stub does not resolve this thread.`},
+		{"a1", ThreadWrite{Thread: "g2", Resolve: true}, `Stub does not resolve this thread.`},
 		{"a1", ThreadWrite{Thread: "t2", Resolve: true}, `The thread is resolved already.`},
 	} {
 		_, note, err := f.s.WriteThread(context.Background(), f.watch("app", "feature", c.head), c.write)

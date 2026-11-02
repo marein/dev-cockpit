@@ -321,7 +321,7 @@ async function waitText(read, needle, what, timeout = 15000) {
 }
 
 
-L.runFeature("PROJECT-SHARE", async ({ browser, page, run, bag, mobilePage }) => {
+L.runFeature("PROJECT-SHARE", async ({ engine, browser, page, run, bag, mobilePage }) => {
   const fx = { project: PROJECT, second: SECOND, other: OTHER, tag: TAG, name: `for-guest-${TAG}` };
   let stub = null;
   try {
@@ -511,7 +511,7 @@ L.runFeature("PROJECT-SHARE", async ({ browser, page, run, bag, mobilePage }) =>
       postAs, getAs, type, shellAsk, fetchRaw, tap, waitText, addViaEdit, removeFromLink, sharingRows,
     });
     await require("./project-share-comments").commentChecks({
-      browser, page, run, bag, fx, origin: ORIGIN, postAs, getAs, fetchRaw, waitText, openShare, madeLink, editLink, saveEdit, sharingRows,
+      engine, browser, page, run, bag, fx, origin: ORIGIN, postAs, getAs, fetchRaw, waitText, openShare, madeLink, editLink, saveEdit, sharingRows,
     });
 
     await run("a link opens several projects picked at once from the searched dropdown", async () => {

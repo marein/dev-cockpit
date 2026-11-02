@@ -188,6 +188,9 @@ func (s *Server) forgeReview(ctx context.Context, b forge.Binding, change *forge
 	return gin.H{"diff": forgeThreads(review.Diff), "general": forgeThreads(review.General), "partial": review.Partial, "error": ""}
 }
 
+// forgeThreads are threads the way forge-show reads them, each with the
+// forge's id, reply where it takes a reply and resolvable where it takes a
+// resolve.
 func forgeThreads(threads []forge.Thread) []gin.H {
 	out := make([]gin.H, 0, len(threads))
 	for _, t := range threads {
@@ -195,7 +198,8 @@ func forgeThreads(threads []forge.Thread) []gin.H {
 		for _, n := range t.Notes {
 			notes = append(notes, gin.H{"id": n.ID, "author": n.Author, "body": n.Body, "created": n.Created, "url": n.URL})
 		}
-		out = append(out, gin.H{"id": t.ID, "path": t.Path, "line": t.Line, "side": t.Side, "outdated": t.Outdated, "resolvable": t.Resolvable, "resolved": t.Resolved, "notes": notes})
+		reply, resolve := t.Takes()
+		out = append(out, gin.H{"id": t.ID, "path": t.Path, "line": t.Line, "side": t.Side, "outdated": t.Outdated, "reply": reply, "resolvable": resolve, "resolved": t.Resolved, "notes": notes})
 	}
 	return out
 }

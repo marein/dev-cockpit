@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -35,9 +36,9 @@ func ThreadIDRefusal(id string) string {
 	return ""
 }
 
-// ThreadWrite is a write on a review thread on the diff of a branch's change
-// request, the thread by the forge's id: the note to answer it with, "" for
-// none, and whether to resolve it.
+// ThreadWrite is a write on a review thread of a branch's change request, one
+// on its diff or a general one, the thread by the forge's id: the note to
+// answer it with, "" for none, and whether to resolve it.
 type ThreadWrite struct {
 	Thread  string
 	Body    string
@@ -62,13 +63,14 @@ func (e *ThreadRefusal) Error() string {
 }
 
 // ThreadTarget reads w's branch from the forge afresh, its change request and
-// the review threads of it, and answers the thread on its diff t names. A
-// branch without a change request, a thread it does not have there, a general
-// one, and a resolve of a thread the forge does not resolve or that stands
-// resolved with nothing to answer is refused. A refusal does not name the
-// thread by the forge's id, which says nobody anything: the caller knows
-// which one it named. One for a thread the diff lacks has the poller read
-// the threads at once, the line comments still offer it.
+// the review threads of it, and answers the thread t names, on the diff or a
+// general one. A branch without a change request, a thread it does not have,
+// a note the forge keeps alone, and a resolve of a thread the forge does not
+// resolve or that stands resolved with nothing to answer is refused. A
+// refusal does not name the thread by the forge's id, which says nobody
+// anything: the caller knows which one it named. One for a thread the change
+// request lacks has the poller read the threads at once, the line comments
+// still offer it.
 func (s *Service) ThreadTarget(ctx context.Context, w Watch, t ThreadWrite) (ThreadTarget, error) {
 	if _, _, _, err := s.threadWriters(w.Binding, t); err != nil {
 		return ThreadTarget{}, err
@@ -129,18 +131,19 @@ func (s *Service) threadTarget(ctx context.Context, w Watch, t ThreadWrite) (Thr
 	if err != nil {
 		return ThreadTarget{}, err
 	}
-	thread, found := findThread(review.Diff, t.Thread)
+	thread, found := findThread(slices.Concat(review.Diff, review.General), t.Thread)
 	if !found {
-		if _, general := findThread(review.General, t.Thread); general {
-			return refuse("%s holds the thread as a general one, only a thread on its diff is answered or resolved here.", of)
-		}
 		s.poll.wroteNotes(w)
 		if review.Partial {
 			return refuse("%s has no such review thread among the first ones %s lists of it, one read takes no more.", of, kind.Label)
 		}
-		return refuse("%s has no such review thread on its diff.", of)
+		return refuse("%s has no such review thread.", of)
 	}
-	if t.Resolve && !thread.Resolvable {
+	reply, resolve := thread.Takes()
+	if !reply {
+		return refuse("%s holds this note of its conversation alone, %s keeps no thread of it to answer or resolve.", of, kind.Label)
+	}
+	if t.Resolve && !resolve {
 		return refuse("%s does not resolve this thread.", kind.Label)
 	}
 	if t.Resolve && thread.Resolved && t.Body == "" {

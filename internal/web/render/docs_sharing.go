@@ -23,7 +23,7 @@ func docsSharingTopic() DocsTopic {
 			},
 			{
 				Title: "A guest's comments",
-				Desc:  `On a project that allows <em>Comment</em>, the guest adds line comments through the line's menu, replies to every thread except the forge's review threads, which stay read only for them, edits and deletes the notes written through their own link, resolves and reopens the threads they opened, deletes a thread only while every note of it is theirs, and reads yours and those of other links. Each of their notes carries the link's name, and each new comment or reply is news for you. You edit and delete every note outside the forge's review threads, a guest's keeps its name. Once <em>Comment</em> is taken away, the project leaves the link or the link ends, the guest's next write is refused. A page that is still open keeps its controls until a reload.`,
+				Desc:  `On a project that allows <em>Comment</em>, the guest adds line comments through the line's menu and project comments in <em>Line comments</em>, replies to every thread except the forge's review threads, which stay read only for them, edits and deletes the notes written through their own link, resolves and reopens the threads they opened, deletes a thread only while every note of it is theirs, and reads yours and those of other links. Each of their notes carries the link's name, and each new comment or reply is news for you. You edit and delete every note outside the forge's review threads, a guest's keeps its name. Once <em>Comment</em> is taken away, the project leaves the link or the link ends, the guest's next write is refused. A page that is still open keeps its controls until a reload.`,
 			},
 			{
 				Title: "An assistant on a link",

@@ -26,7 +26,7 @@ import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPrevie
 import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
 import { showPreview, wirePreviewLinks } from "@dc/editor-preview";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
-import { authorHead, commentRow, findUniqueQuoteLine, noteEntry, noteStart, placeNodes, replyCount, resolved, sortComments, visibleLine } from "@dc/editor-comments";
+import { PROJECT_PLACE, authorHead, commentRow, findUniqueQuoteLine, noteEntry, noteStart, placeNodes, placeOf, replyCount, resolved, sortComments, visibleLine } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
 import { changeList } from "@dc/editor-changes";
 import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-marks";
@@ -130,6 +130,9 @@ async function init(root) {
   const commentModalInvalidEl = root.querySelector("[data-editor-comment-invalid]");
   const commentHint = commentModalHintEl ? commentModalHintEl.textContent : "";
   const commentPlaceholder = commentModalTextEl ? commentModalTextEl.placeholder : "";
+  const projectCommentFormEl = root.querySelector("[data-editor-project-comment-form]");
+  const projectCommentTextEl = root.querySelector("[data-editor-project-comment-text]");
+  const projectCommentAddBtn = root.querySelector("[data-editor-project-comment-add]");
   const lspIndexEl = root.querySelector("[data-editor-lsp-index]");
   const lspIndexLabel = root.querySelector("[data-editor-lsp-index-label]");
   const lspIndexBar = root.querySelector("[data-editor-lsp-index-bar]");
@@ -1211,6 +1214,7 @@ async function init(root) {
     for (const divider of sheetBodyEl.querySelectorAll(".dropdown-divider")) {
       divider.hidden = query !== "" && !sheetDividerNeeded(divider, shown);
     }
+    for (const node of sheetBodyEl.querySelectorAll("[data-editor-sheet-unfiltered]")) node.hidden = query !== "";
     paintSheetFilter(found, total);
   }
 
@@ -5834,16 +5838,21 @@ async function init(root) {
   }
 
   const commentableTab = (tab) => (tab && !tab.kind && !tab.compare && !tab.external ? tab : null);
-  const commentsFor = (path) => comments.filter((c) => c.path === path);
-  const commentAt = (path, line) => comments.find((c) => c.path === path && c.line === line && !c.forge) || null;
-  const threadsAt = (path, line) => comments.filter((c) => c.path === path && c.line === line);
+  const commentsFor = (path) => comments.filter((c) => !c.project && c.path === path);
+  const commentAt = (path, line) => commentsFor(path).find((c) => c.line === line && !c.forge) || null;
+  const threadsAt = (path, line) => commentsFor(path).filter((c) => c.line === line);
   const mayChange = (c) => !c.forge && can("comments") && (!guest || !!c.mine);
   const mayChangeReply = (r) => can("comments") && (!guest || !!r.mine);
   const mayDelete = (c) => mayChange(c) && (c.replies || []).every(mayChangeReply);
   const ownComments = () => comments.filter((c) => !c.forge);
   // An author marks a guest's note, only the owner's own ones without a
-  // reply publish.
+  // reply publish, a project comment as a general one.
   const publishable = (c) => !guest && !c.forge && !c.author && !(c.replies || []).length;
+  const publishWords = (picked) => {
+    const general = picked.filter((c) => c.project).length;
+    if (general && general === picked.length) return { each: "a general comment", aside: "" };
+    return { each: "a review thread", aside: general ? ", a project comment a general one" : "" };
+  };
   const publishOffer = () => {
     const el = forgeFragment?.querySelector("[data-forge-publish]");
     return el ? { forge: el.dataset.forgePublishForge, noun: el.dataset.forgePublishNoun, ref: el.dataset.forgePublishRef } : null;
@@ -5883,8 +5892,9 @@ async function init(root) {
     for (const c of fresh) {
       const tab = commentableTab(tabByPath(c.path));
       if (!tab || !tab.dirty) continue;
-      const held = comments.find((old) => old.id === c.id);
+      const held = comments.find((old) => old.id === c.id || old.id === c.was);
       if (held) {
+        if (held.id !== c.id && tab.commentPos?.has(held.id)) tab.commentPos.set(c.id, tab.commentPos.get(held.id));
         c.line = held.line;
         c.lineText = held.lineText;
         c.outdated = held.outdated;
@@ -6081,7 +6091,8 @@ async function init(root) {
   }
 
   function commentModalHead(path, line, lineText) {
-    commentModalPlaceEl.replaceChildren(...placeNodes(path, line));
+    commentModalPlaceEl.hidden = !path;
+    commentModalPlaceEl.replaceChildren(...(path ? placeNodes(path, line) : []));
     commentModalPlaceEl.title = commentModalPlaceEl.textContent;
     const code = (lineText || "").trim();
     commentModalCodeEl.replaceChildren(...visibleLine(code));
@@ -6134,11 +6145,11 @@ async function init(root) {
   async function openThread(thread) {
     let editing = null;
     let current = thread;
-    const live = () => comments.find((c) => c.id === thread.id) || current;
+    const live = () => comments.find((c) => c.id === current.id || c.was === current.id) || current;
     const { forge } = thread;
     const offer = forge ? threadsOffer() : null;
     const writes = forge ? !guest && !!offer?.reply && !!forge.thread : can("comments");
-    const mayToggle = (c) => !editing && (forge ? writes && offer.resolve && !resolved(c) : mayChange(c));
+    const mayToggle = (c) => !editing && (forge ? writes && offer.resolve && !forge.unresolvable && !resolved(c) : mayChange(c));
     const nameOf = (note) => (forge ? note.author || forge.label : noteName(note));
     const edit = (id, text, title) => {
       editing = { id };
@@ -6178,7 +6189,7 @@ async function init(root) {
           name: nameOf(c),
           when: noteWhen(c.updatedAt),
           text: c.text,
-          buttons: mayChange(c) ? [noteButton("ti-pencil", "Edit comment", () => edit("", c.text, "Edit line comment"))] : [],
+          buttons: mayChange(c) ? [noteButton("ti-pencil", "Edit comment", () => edit("", c.text, c.project ? "Edit project comment" : "Edit line comment"))] : [],
         }),
         ...(c.replies || []).map(replyEntry),
       );
@@ -6186,8 +6197,9 @@ async function init(root) {
       commentModalAuthorEl.hidden = !resolved(c);
       if (writes) paintControls();
     };
-    commentModalTitleEl.textContent = "Line comment";
-    commentModalHead(thread.path, thread.line, currentLineText(thread.path, thread.line, thread));
+    commentModalTitleEl.textContent = thread.project ? PROJECT_PLACE : "Line comment";
+    if (thread.project) commentModalHead("", 0, "");
+    else commentModalHead(thread.path, thread.line, currentLineText(thread.path, thread.line, thread));
     commentModalAuthorEl.classList.add("text-green");
     commentModalLinkEl.hidden = !forge?.url;
     commentModalLinkEl.href = forge?.url || "#";
@@ -6222,7 +6234,7 @@ async function init(root) {
         if (note && note.text === text) return true;
         const saved = editing.id
           ? await saveReply(c, text, editing.id)
-          : await saveComment({ id: c.id, path: c.path, line: c.line, lineText: currentLineText(c.path, c.line, c), text });
+          : await saveComment(c.project ? { id: c.id, project: true, text } : { id: c.id, path: c.path, line: c.line, lineText: currentLineText(c.path, c.line, c), text });
         return saved || null;
       }
       const toggle = mayToggle(c) && commentModalResolveEl.checked;
@@ -6264,12 +6276,15 @@ async function init(root) {
 
   async function publishAllDialog() {
     const offer = publishOffer();
-    const ids = comments.filter(publishable).map((c) => c.id);
+    const picked = comments.filter(publishable);
+    const ids = picked.map((c) => c.id);
     const count = ids.length;
     if (!offer || !count) return;
+    const words = publishWords(picked);
+    const becomes = count === 1 ? `It becomes ${words.each}` : `Each becomes ${words.each} of its own`;
     if (!(await confirmDialog({
       title: count === 1 ? "Publish the comment?" : `Publish all ${count} comments?`,
-      text: `${count === 1 ? "It becomes a review thread" : "Each becomes a review thread of its own"} on ${offer.noun} ${offer.ref} on ${offer.forge}, for everybody who can read it there.`,
+      text: `${becomes} on ${offer.noun} ${offer.ref} on ${offer.forge}${words.aside}, for everybody who can read it there.`,
       confirmText: "Publish",
     }))) return;
     await publishComments(ids);
@@ -6434,8 +6449,26 @@ async function init(root) {
 
   function openCommentsSheet() {
     openSheet("comments", "Line comments");
+    projectCommentTextEl?.classList.remove("is-invalid");
+    adoptIntoSheet(projectCommentFormEl);
     renderCommentsSheet();
     focusSheetTop();
+  }
+
+  let addingProjectComment = false;
+
+  async function addProjectComment() {
+    const text = projectCommentTextEl.value.trim();
+    if (!text) {
+      projectCommentTextEl.classList.add("is-invalid");
+      projectCommentTextEl.focus();
+      return;
+    }
+    if (addingProjectComment) return;
+    addingProjectComment = projectCommentAddBtn.disabled = true;
+    const saved = await saveComment({ id: "", project: true, text });
+    addingProjectComment = projectCommentAddBtn.disabled = false;
+    if (saved && projectCommentTextEl.value.trim() === text) projectCommentTextEl.value = "";
   }
 
   function renderCommentsSheet() {
@@ -6445,7 +6478,7 @@ async function init(root) {
 
   function commentCellMenuItems(comment) {
     return [
-      { label: "Go to line", icon: "ti-arrow-right", action: () => void jumpToComment(comment) },
+      !comment.project && { label: "Go to line", icon: "ti-arrow-right", action: () => void jumpToComment(comment) },
       { label: "Open thread", icon: "ti-messages", action: () => void openThread(comment) },
       comment.forge && forgeLinkItem(comment),
       publishItem(comment, "Publish"),
@@ -6453,7 +6486,7 @@ async function init(root) {
     ];
   }
 
-  const noteConfirm = (comment, note) => `${el("div", {}, ...visibleLine(`${comment.path}:${comment.line}`)).outerHTML}${note.author ? `<div>By ${escapeHtml(note.author)}</div>` : ""}<div class="text-secondary">${escapeHtml(note.text)}</div>`;
+  const noteConfirm = (comment, note) => `${el("div", {}, ...visibleLine(placeOf(comment))).outerHTML}${note.author ? `<div>By ${escapeHtml(note.author)}</div>` : ""}<div class="text-secondary">${escapeHtml(note.text)}</div>`;
 
   async function deleteCommentDialog(comment) {
     const replies = (comment.replies || []).length;
@@ -6486,53 +6519,66 @@ async function init(root) {
     return el("div", { class: "col-12 col-lg-6" }, cell);
   }
 
+  const commentGrid = (list) => el("div", { class: "row row-deck g-0" }, ...list.map(commentCol));
+  const commentsNote = (text) => el("div", { class: "text-secondary small px-3 py-2", "data-editor-sheet-unfiltered": "" }, text);
+
   function paintCommentsSheet() {
     if (sheetKind !== "comments") return;
-    sheetBodyEl.replaceChildren();
     const list = sortComments(comments);
-    sheetBodyEl.appendChild(sheetActionRow({
-      icon: "ti-copy",
-      label: "Copy as text",
-      sub: "file, line and comment as plain text, the code line quoted",
-      disabled: !list.length,
-      onClick: () => {
-        closeSheet();
-        void copyCommentsText();
-      },
-    }));
+    const onProject = list.filter((c) => c.project);
+    const onLines = list.filter((c) => !c.project);
+    const form = projectCommentFormEl && sheetBodyEl.contains(projectCommentFormEl) ? projectCommentFormEl : null;
     const offer = publishOffer();
-    if (offer) sheetBodyEl.appendChild(sheetActionRow({
-      icon: "ti-send",
-      label: "Publish all comments",
-      sub: `each a review thread on ${offer.noun} ${offer.ref}`,
-      disabled: !list.some(publishable),
-      onClick: () => {
-        closeSheet();
-        void publishAllDialog();
-      },
-    }));
-    if (can("comments") && !guest) sheetBodyEl.appendChild(sheetActionRow({
-      icon: "ti-trash",
-      iconClass: "text-danger",
-      label: "Delete all comments",
-      disabled: !ownComments().length,
-      onClick: () => {
-        closeSheet();
-        void clearCommentsDialog();
-      },
-    }));
-    sheetBodyEl.appendChild(gitDivider());
-    if (!list.length) {
-      const empty = document.createElement("div");
-      empty.className = "text-secondary small px-3 py-2";
-      empty.textContent = can("comments") ? "No comments yet. Click a line number to add one." : "No comments yet.";
-      sheetBodyEl.appendChild(empty);
+    const words = publishWords(list.filter(publishable));
+    const top = [
+      sheetActionRow({
+        icon: "ti-copy",
+        label: "Copy as text",
+        sub: "file, line and comment as plain text, the code line quoted",
+        disabled: !list.length,
+        onClick: () => {
+          closeSheet();
+          void copyCommentsText();
+        },
+      }),
+      offer && sheetActionRow({
+        icon: "ti-send",
+        label: "Publish all comments",
+        sub: `each ${words.each} on ${offer.noun} ${offer.ref}${words.aside}`,
+        disabled: !list.some(publishable),
+        onClick: () => {
+          closeSheet();
+          void publishAllDialog();
+        },
+      }),
+      can("comments") && !guest && sheetActionRow({
+        icon: "ti-trash",
+        iconClass: "text-danger",
+        label: "Delete all comments",
+        disabled: !ownComments().length,
+        onClick: () => {
+          closeSheet();
+          void clearCommentsDialog();
+        },
+      }),
+      gitDivider(),
+    ].filter(Boolean);
+    const rest = [];
+    if (form || onProject.length) {
+      top.push(sheetHead("Project"));
+      if (onProject.length) rest.push(commentGrid(onProject));
+      if (form || onLines.length) rest.push(gitDivider(), sheetHead("Files"));
+    }
+    if (onLines.length) rest.push(commentGrid(onLines));
+    else if (!onProject.length) rest.push(commentsNote(can("comments") ? "No comments yet. Click a line number to add one." : "No comments yet."));
+    else if (form) rest.push(commentsNote("No line comments yet. Click a line number to add one."));
+    if (!form) {
+      sheetBodyEl.replaceChildren(...top, ...rest);
       return;
     }
-    const grid = document.createElement("div");
-    grid.className = "row row-deck g-0";
-    for (const comment of list) grid.appendChild(commentCol(comment));
-    sheetBodyEl.appendChild(grid);
+    for (const node of [...sheetBodyEl.childNodes]) if (node !== form) node.remove();
+    form.before(...top);
+    form.after(...rest);
   }
 
   // ---- file comparison -------------------------------------------------------
@@ -10242,6 +10288,17 @@ async function init(root) {
   filesItem.addEventListener("click", openFilesSheet, { signal });
   settingsItem.addEventListener("click", openSettingsSheet, { signal });
   commentsItem.addEventListener("click", openCommentsSheet, { signal });
+  if (projectCommentFormEl) {
+    projectCommentAddBtn.addEventListener("click", () => void addProjectComment(), { signal });
+    projectCommentTextEl.addEventListener("input", () => projectCommentTextEl.classList.remove("is-invalid"), { signal });
+    projectCommentTextEl.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        void addProjectComment();
+      }
+    }, { signal });
+  }
   wireRowMenus(root, ".cm-gutters .cm-gutterElement", lineNumberMenu, { signal });
   root.addEventListener("click", gutterClick, { signal });
   if (reindexItem) reindexItem.hidden = !lsp;

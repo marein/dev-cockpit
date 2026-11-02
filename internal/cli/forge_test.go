@@ -188,7 +188,7 @@ func TestFormatForgeShowKeepsALogsLinesInTheirPlace(t *testing.T) {
 }
 
 func forgeThread(id, path string, line int, side string, resolvable, resolved, outdated bool, notes ...any) map[string]any {
-	return map[string]any{"id": id, "path": path, "line": float64(line), "side": side, "outdated": outdated, "resolvable": resolvable, "resolved": resolved, "notes": notes}
+	return map[string]any{"id": id, "path": path, "line": float64(line), "side": side, "outdated": outdated, "reply": true, "resolvable": resolvable, "resolved": resolved, "notes": notes}
 }
 
 func forgeNote(author, body, url string) map[string]any {
@@ -197,8 +197,9 @@ func forgeNote(author, body, url string) map[string]any {
 
 // The review threads stand after the pipeline, the ones on the diff apart
 // from the general ones, the unresolved first: each head says where it
-// stands, on the diff with the thread's id, the first note's link below it,
-// then each note's author, time and text, its lines indented.
+// stands with the thread's id, none for a note the forge keeps alone, the
+// first note's link below it, then each note's author, time and text, its
+// lines indented.
 func TestFormatForgeShowListsTheReviewThreads(t *testing.T) {
 	answer := forgeAnswer(map[string]any{"ref": "!4", "title": "Fix", "state": "open", "url": "https://gitlab.com/group/sub/app/-/merge_requests/4", "target": "main"}, nil)
 	page := "https://gitlab.com/group/sub/app/-/merge_requests/4#note_"
@@ -211,6 +212,9 @@ func TestFormatForgeShowListsTheReviewThreads(t *testing.T) {
 		forgeThread("d6", "", 0, "", false, false, false, forgeNote("root", "Individual note", page+"36")),
 		forgeThread("d5", "", 0, "", true, false, false, forgeNote("root", "General thread", page+"34")),
 	}}
+	alone := forgeThread("IC_1", "", 0, "", false, false, false, forgeNote("hubot", "Looks good", page+"38"))
+	alone["reply"] = false
+	answer["review"].(map[string]any)["general"] = append(answer["review"].(map[string]any)["general"].([]any), alone)
 	out := formatForgeShow(answer, false)
 	at := jsonTime("2026-10-28T23:03:31.551Z")
 	want := "No pipeline for f471a571e52a.\n" +
@@ -228,13 +232,16 @@ func TestFormatForgeShowListsTheReviewThreads(t *testing.T) {
 		"  resolved \"src/login.go\" new line 5, id d3\n" +
 		"    " + page + "31\n" +
 		"    root at " + at + ":\n      Context c\n" +
-		"General threads (2, 1 unresolved):\n" +
-		"  unresolved\n" +
+		"General threads (3, 1 unresolved):\n" +
+		"  unresolved, id d5\n" +
 		"    " + page + "34\n" +
 		"    root at " + at + ":\n      General thread\n" +
-		"  comment\n" +
+		"  comment, id d6\n" +
 		"    " + page + "36\n" +
-		"    root at " + at + ":\n      Individual note\n"
+		"    root at " + at + ":\n      Individual note\n" +
+		"  comment\n" +
+		"    " + page + "38\n" +
+		"    hubot at " + at + ":\n      Looks good\n"
 	if !strings.HasSuffix(out, want) {
 		t.Fatalf("the output reads\n%s\nwant it to end in\n%s", out, want)
 	}

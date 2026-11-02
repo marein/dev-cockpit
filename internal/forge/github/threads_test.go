@@ -204,10 +204,10 @@ func TestTheThreadsAreTheReviewThreadsAndTheConversation(t *testing.T) {
 			{ID: "PRRT_4", Path: "README.md", Resolvable: true, Notes: []forge.Note{reviewNote(4, "octocat", "File note")}},
 		},
 		General: []forge.Thread{
-			{ID: "PRR_kwDOAbc83", Notes: []forge.Note{githubNote("PRR_kwDOAbc83", "octocat", "Early summary", pullPage+"#pullrequestreview-83", 10)}},
-			{ID: "IC_kwDOAbc11", Notes: []forge.Note{githubNote("IC_kwDOAbc11", "hubot", "First\r\nwith two lines", pullPage+"#issuecomment-11", 20)}},
-			{ID: "PRR_kwDOAbc80", Notes: []forge.Note{githubNote("PRR_kwDOAbc80", "octocat", "Please rename", pullPage+"#pullrequestreview-80", 30)}},
-			{ID: "IC_kwDOAbc12", Notes: []forge.Note{githubNote("IC_kwDOAbc12", "hubot", "Later", pullPage+"#issuecomment-12", 40)}},
+			{ID: "PRR_kwDOAbc83", Single: true, Notes: []forge.Note{githubNote("PRR_kwDOAbc83", "octocat", "Early summary", pullPage+"#pullrequestreview-83", 10)}},
+			{ID: "IC_kwDOAbc11", Single: true, Notes: []forge.Note{githubNote("IC_kwDOAbc11", "hubot", "First\r\nwith two lines", pullPage+"#issuecomment-11", 20)}},
+			{ID: "PRR_kwDOAbc80", Single: true, Notes: []forge.Note{githubNote("PRR_kwDOAbc80", "octocat", "Please rename", pullPage+"#pullrequestreview-80", 30)}},
+			{ID: "IC_kwDOAbc12", Single: true, Notes: []forge.Note{githubNote("IC_kwDOAbc12", "hubot", "Later", pullPage+"#issuecomment-12", 40)}},
 		},
 		Partial: true,
 	}

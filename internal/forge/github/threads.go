@@ -120,8 +120,9 @@ func graphql(c *forge.Client, h forge.Host, token string) forge.API {
 
 // Threads reads the review threads of the pull request over GraphQL, and its
 // conversation, the comments and the bodies of the submitted reviews, over
-// REST, as general threads of one note each in the order they were written.
-// A comment of a review still pending is left out.
+// REST, as general threads of one note each in the order they were written,
+// each a note alone that takes no reply. A comment of a review still pending
+// is left out.
 func (Provider) Threads(ctx context.Context, c *forge.Client, b forge.Binding, token string, number int) (forge.Review, error) {
 	owner, name, ok := strings.Cut(b.Path, "/")
 	if !ok || strings.Contains(name, "/") {
@@ -158,7 +159,7 @@ func (Provider) Threads(ctx context.Context, c *forge.Client, b forge.Binding, t
 }
 
 func single(id string, author *login, body string, at time.Time, page string) forge.Thread {
-	return forge.Thread{ID: id, Notes: []forge.Note{{ID: id, Author: author.name(), Body: body, Created: at, URL: page}}}
+	return forge.Thread{ID: id, Single: true, Notes: []forge.Note{{ID: id, Author: author.name(), Body: body, Created: at, URL: page}}}
 }
 
 // reviewThreads reads the review threads page by page.

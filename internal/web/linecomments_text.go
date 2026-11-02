@@ -13,7 +13,9 @@ import (
 // comments, an entry per thread. Its head line names the guest who wrote it,
 // or the forge and the author there of a thread of the forge, first, then
 // file, line, whether it is outdated or resolved, and the quoted code line,
-// and every line of the note follows behind two spaces and > as written. Each
+// a project comment Project comment in place of file and line, the read
+// lists those first, and every line of the note follows behind two spaces
+// and > as written. Each
 // reply follows as an entry of its own, indented by two more spaces, led by
 // Reply and the guest who wrote it, or the forge and its author there. Path, quote and note show what would
 // break a line, hide in it or turn it around as its escape, the way
@@ -29,7 +31,11 @@ func commentsText(project string, list []lineCommentView) string {
 		case comment.Author != "":
 			head += "Guest " + plaintext.Visible(comment.Author) + ": "
 		}
-		head += plaintext.Visible(comment.Path) + ":" + strconv.Itoa(comment.Line)
+		if comment.Project {
+			head += "Project comment"
+		} else {
+			head += plaintext.Visible(comment.Path) + ":" + strconv.Itoa(comment.Line)
+		}
 		if comment.Outdated {
 			head += " (outdated)"
 		}

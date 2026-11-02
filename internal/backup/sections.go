@@ -126,7 +126,7 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 			Sources:     []Source{{Name: "config.json", Path: hm(".ollama/config.json")}}},
 
 		{ID: "projects", Group: "Host", Label: "Projects",
-			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order, the projects the editor was last opened on, the editor's line comments and the project tags with their colors travel along.",
+			Description: "The complete projects directory, every working copy as it sits on disk. Imports into the current projects dir. Can be large. The recent projects order, the projects the editor was last opened on, the editor's line and project comments and the project tags with their colors travel along.",
 			Sources: []Source{
 				{Name: "projects", Path: projectsDir},
 				{Name: "recent-projects.json", Path: st("recent-projects.json")},

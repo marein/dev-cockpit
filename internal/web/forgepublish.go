@@ -30,8 +30,9 @@ const maxForgeCommentID = 64
 // by one, the rest it counts.
 const maxApprovalComments = 10
 
-// forgeDraft is a line comment the way it publishes: the comment, the draft
-// of it at its line in the pushed head, and that line's text there.
+// forgeDraft is a comment the way it publishes: the comment, the draft of it
+// at its line in the pushed head, and that line's text there, a general
+// draft without either for a project comment.
 type forgeDraft struct {
 	comment linecomment.Comment
 	draft   forge.Draft
@@ -46,16 +47,17 @@ type forgePublished struct {
 	notes  []forge.Note
 }
 
-// handleProjectForgePublish publishes line comments the owner wrote as review
+// handleProjectForgePublish publishes comments the owner wrote as review
 // comments on the open change request of the branch HEAD of a project is on,
-// each a review thread of its own on its line of the diff: the ones the form
-// names by id, or with all every one of them. Each has to stand in the pushed
-// head as it quotes its line and on a line the change request's diff shows,
-// or none is published. A comment published becomes the thread of the forge
-// it opened there. A click in the browser publishes at once. An assistant's
-// call over the local socket waits for the user's approval, whose run
-// resolves the project, its binding, the branch and the comments again by
-// name and publishes them only as the user saw them.
+// each a review thread of its own on its line of the diff, a project comment
+// a general comment: the ones the form names by id, or with all every one of
+// them. Each line comment has to stand in the pushed head as it quotes its
+// line and on a line the change request's diff shows, or none is published.
+// A comment published becomes the thread of the forge it opened there. A
+// click in the browser publishes at once. An assistant's call over the local
+// socket waits for the user's approval, whose run resolves the project, its
+// binding, the branch and the comments again by name and publishes them only
+// as the user saw them.
 func (s *Server) handleProjectForgePublish(c *gin.Context) {
 	p, err := s.projects.FindByName(c.Param("name"))
 	if err != nil {
@@ -136,8 +138,9 @@ func forgePublishAsked(ids []string, all bool) string {
 
 // forgePublishPick answers the comments of p a publish names, in the order
 // the sheet lists them: those with the ids, or with all every one the owner
-// wrote that has no reply. A thread of the forge, one a guest wrote, one
-// with replies and an id nobody holds are refused.
+// wrote that has no reply. A thread of the forge, a published one named by
+// the id it had too, one a guest wrote, one with replies and an id nobody
+// holds are refused.
 func (s *Server) forgePublishPick(p project.Project, ids []string, all bool) ([]linecomment.Comment, error) {
 	refuse := func(format string, args ...any) ([]linecomment.Comment, error) {
 		return nil, &forge.PublishRefusal{Reason: fmt.Sprintf(format, args...)}
@@ -155,32 +158,46 @@ func (s *Server) forgePublishPick(p project.Project, ids []string, all bool) ([]
 		}
 		return picked, nil
 	}
+	named := func(comment linecomment.Comment, id string) bool {
+		return comment.ID == id || comment.Was != "" && comment.Was == id
+	}
 	for _, comment := range list {
-		if slices.Contains(ids, comment.ID) {
+		if slices.ContainsFunc(ids, func(id string) bool { return named(comment, id) }) {
 			picked = append(picked, comment)
 		}
 	}
 	for _, id := range ids {
-		at := slices.IndexFunc(picked, func(comment linecomment.Comment) bool { return comment.ID == id })
-		switch {
-		case at < 0:
+		at := slices.IndexFunc(picked, func(comment linecomment.Comment) bool { return named(comment, id) })
+		if at < 0 {
 			return refuse("%q holds no comment %q.", p.Name, id)
-		case picked[at].Forge != nil:
-			return refuse("The comment at %q:%d is a review thread on the forge already.", picked[at].Path, picked[at].Line)
-		case picked[at].Link != "":
-			return refuse("The comment at %q:%d is a guest's, only your own publish.", picked[at].Path, picked[at].Line)
-		case len(picked[at].Replies) > 0:
-			return refuse("The comment at %q:%d has replies, it does not publish.", picked[at].Path, picked[at].Line)
+		}
+		c := picked[at]
+		switch {
+		case c.Forge != nil:
+			return refuse("%s is a review thread on the forge already.", commentPlace(c))
+		case c.Link != "":
+			return refuse("%s is a guest's, only your own publish.", commentPlace(c))
+		case len(c.Replies) > 0:
+			return refuse("%s has replies, it does not publish.", commentPlace(c))
 		}
 	}
 	return picked, nil
 }
 
+// commentPlace names a comment the way a refusal of a publish does: by its
+// file and line, a project comment by its id.
+func commentPlace(c linecomment.Comment) string {
+	if c.Project {
+		return fmt.Sprintf("The project comment %q", c.ID)
+	}
+	return fmt.Sprintf("The comment at %q:%d", c.Path, c.Line)
+}
+
 // forgeDrafts places each comment picked at the line of its file in w's
 // pushed head that holds its quote the way the comment follows the file:
-// where it stands, else the one line holding it. A branch never pushed, a
-// file the pushed head lacks and a quote it does not hold so are refused, see
-// forgeUnpushed.
+// where it stands, else the one line holding it, a project comment as a
+// general draft. A branch never pushed, a file the pushed head lacks and a
+// quote it does not hold so are refused, see forgeUnpushed.
 func forgeDrafts(ctx context.Context, p project.Project, w forge.Watch, picked []linecomment.Comment) ([]forgeDraft, error) {
 	if err := forge.Unpushed(w); err != nil {
 		return nil, err
@@ -189,6 +206,10 @@ func forgeDrafts(ctx context.Context, p project.Project, w forge.Watch, picked [
 	files := map[string][]string{}
 	drafts := make([]forgeDraft, 0, len(picked))
 	for _, comment := range picked {
+		if comment.Project {
+			drafts = append(drafts, forgeDraft{comment: comment, draft: forge.Draft{General: true, Body: comment.Text}})
+			continue
+		}
 		lines, seen := files[comment.Path]
 		if !seen {
 			content, ok, err := repo.FileAt(ctx, w.Head, comment.Path)
@@ -236,8 +257,9 @@ func forgeDraftsOf(drafts []forgeDraft) []forge.Draft {
 }
 
 // forgeSaid names the comments of drafts by their ids, each with the draft
-// it makes now, its file, its line in the pushed head and its text, which a
-// publish of them later has to make unchanged.
+// it makes now, its file, its line in the pushed head and its text, or a
+// general one with its text, which a publish of them later has to make
+// unchanged.
 func forgeSaid(drafts []forgeDraft) ([]string, map[string]forge.Draft) {
 	ids := make([]string, 0, len(drafts))
 	said := make(map[string]forge.Draft, len(drafts))
@@ -267,8 +289,8 @@ func (s *Server) publishForgeComments(ctx context.Context, p project.Project, w 
 		return forgePublished{}, err
 	}
 	for _, d := range drafts {
-		if was, ok := said[d.comment.ID]; said != nil && (!ok || was.Path != d.draft.Path || was.Line != d.draft.Line || was.Body != d.draft.Body) {
-			return forgePublished{}, &forge.PublishRefusal{Reason: fmt.Sprintf("The comment at %q:%d changed since you were asked, nothing was published.", d.comment.Path, d.comment.Line)}
+		if was, ok := said[d.comment.ID]; said != nil && (!ok || was.Path != d.draft.Path || was.Line != d.draft.Line || was.Body != d.draft.Body || was.General != d.draft.General) {
+			return forgePublished{}, &forge.PublishRefusal{Reason: fmt.Sprintf("%s changed since you were asked, nothing was published.", commentPlace(d.comment))}
 		}
 	}
 	target, notes, err := s.forge.Publish(ctx, w, forgeDraftsOf(drafts))
@@ -277,12 +299,16 @@ func (s *Server) publishForgeComments(ctx context.Context, p project.Project, w 
 		published := make(map[string]linecomment.ForgeThread, len(notes))
 		for i, n := range notes {
 			d := drafts[i]
-			published[d.comment.ID] = linecomment.ForgeThread{
-				Kind:  kind.ID,
-				URL:   n.URL,
-				At:    linecomment.Place{Path: d.draft.Path, Line: d.draft.Line, Quote: d.quote, Quoted: true},
-				Notes: []linecomment.ForgeNote{{ID: n.ID, Author: n.Author, Text: n.Body, Created: n.Created}},
+			thread := linecomment.ForgeThread{
+				Kind:    kind.ID,
+				URL:     n.URL,
+				Project: d.draft.General,
+				Notes:   []linecomment.ForgeNote{{ID: n.ID, Author: n.Author, Text: n.Body, Created: n.Created}},
 			}
+			if !d.draft.General {
+				thread.At = linecomment.Place{Path: d.draft.Path, Line: d.draft.Line, Quote: d.quote, Quoted: true}
+			}
+			published[d.comment.ID] = thread
 		}
 		if s.lineComments.Published(p.Name, published) {
 			s.publishLineComments(p.Name)
@@ -315,11 +341,16 @@ func (s *Server) forgePublishApproval(owner string, w forge.Watch, change forge.
 	kind := w.Binding.Host.Kind
 	project, branch, address := w.Project, w.Branch, w.Binding.Address()
 	ref := kind.ChangeRef(change.Number)
-	details := []askpass.Detail{{Label: "Action", Value: "Publish line comments"}}
+	details := []askpass.Detail{{Label: "Action", Value: "Publish " + commentsNoun(drafts, false)}}
 	for i, d := range drafts {
-		if i < maxApprovalComments {
-			details = append(details, askpass.Detail{Label: "Comment", Value: fmt.Sprintf("%s:%d · %s", d.draft.Path, d.draft.Line, d.comment.Text)})
+		if i >= maxApprovalComments {
+			break
 		}
+		at := fmt.Sprintf("%s:%d", d.draft.Path, d.draft.Line)
+		if d.draft.General {
+			at = "project"
+		}
+		details = append(details, askpass.Detail{Label: "Comment", Value: at + " · " + d.comment.Text})
 	}
 	if rest := len(drafts) - maxApprovalComments; rest > 0 {
 		details = append(details, askpass.Detail{Label: "And", Value: fmt.Sprintf("%d more comments", rest)})
@@ -340,7 +371,7 @@ func (s *Server) forgePublishApproval(owner string, w forge.Watch, change forge.
 		Owner:    owner,
 		Kind:     approvalForgePublish,
 		Key:      project + "\n" + strings.Join(key, "\n"),
-		What:     fmt.Sprintf("Publish %s on %s %s of %s in %s", lineComments(len(drafts)), kind.ChangeNoun, ref, plaintext.Visible(branch), project),
+		What:     fmt.Sprintf("Publish %s on %s %s of %s in %s", commentsNoun(drafts, true), kind.ChangeNoun, ref, plaintext.Visible(branch), project),
 		Details:  details,
 		Projects: []string{project},
 		Run: func() (string, error) {
@@ -369,11 +400,30 @@ func (s *Server) forgePublishApproval(owner string, w forge.Watch, change forge.
 	}
 }
 
-func lineComments(n int) string {
-	if n == 1 {
-		return "a line comment"
+// commentsNoun names the comments of drafts, line comments, project comments
+// or comments where both kinds publish, counted, or bare as an action names
+// them.
+func commentsNoun(drafts []forgeDraft, counted bool) string {
+	general := 0
+	for _, d := range drafts {
+		if d.draft.General {
+			general++
+		}
 	}
-	return fmt.Sprintf("%d line comments", n)
+	kind := "line comment"
+	switch {
+	case general == len(drafts):
+		kind = "project comment"
+	case general > 0:
+		kind = "comment"
+	}
+	switch {
+	case !counted:
+		return kind + "s"
+	case len(drafts) == 1:
+		return "a " + kind
+	}
+	return fmt.Sprintf("%d %ss", len(drafts), kind)
 }
 
 // forgePublishedText is what an assistant reads of a publish that went
@@ -391,7 +441,7 @@ func forgePublishedText(w forge.Watch, done forgePublished) assistant.ForgeOutco
 	}
 	for i, n := range done.notes {
 		d := done.drafts[i].draft
-		data.Notes = append(data.Notes, assistant.ForgePublishedNote{Path: d.Path, Line: d.Line, URL: n.URL})
+		data.Notes = append(data.Notes, assistant.ForgePublishedNote{Path: d.Path, Line: d.Line, URL: n.URL, Project: d.General})
 	}
 	return assistant.ForgePublished(data)
 }

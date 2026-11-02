@@ -43,3 +43,21 @@ func TestThreadsAskTheProviderWithTheHostsToken(t *testing.T) {
 		t.Fatalf("a provider without the reading: %v", err)
 	}
 }
+
+// A note the forge keeps alone takes no write, a thread takes a reply, and a
+// resolve only where the forge resolves it.
+func TestAThreadTakesTheWritesItsForgeAllows(t *testing.T) {
+	for _, c := range []struct {
+		thread         forge.Thread
+		reply, resolve bool
+	}{
+		{forge.Thread{ID: "d1", Resolvable: true}, true, true},
+		{forge.Thread{ID: "d6"}, true, false},
+		{forge.Thread{ID: "IC_1", Single: true}, false, false},
+		{forge.Thread{ID: "IC_2", Single: true, Resolvable: true}, false, false},
+	} {
+		if reply, resolve := c.thread.Takes(); reply != c.reply || resolve != c.resolve {
+			t.Fatalf("%+v takes a reply %v and a resolve %v", c.thread, reply, resolve)
+		}
+	}
+}

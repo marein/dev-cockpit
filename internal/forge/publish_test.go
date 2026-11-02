@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -65,6 +66,17 @@ func (p *publishStub) PublishNote(_ context.Context, _ *Client, b Binding, token
 	p.posted = append(p.posted, b.Path+" !"+strconv.Itoa(ch.Number)+" "+pl.Path+":"+strconv.Itoa(pl.Line)+" old "+pl.OldPath+":"+strconv.Itoa(pl.OldLine)+" at "+d.Head+" "+token+": "+pl.Body)
 	id := strconv.Itoa(100 + len(p.posted))
 	return Note{ID: id, Author: "root", Body: pl.Body, URL: ch.URL + "#note_" + id}, nil
+}
+
+func (p *publishStub) PublishGeneral(_ context.Context, _ *Client, b Binding, token string, ch Change, body string) (Note, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.posted)+1 == p.failAt {
+		return Note{}, errors.New("The forge refused it.")
+	}
+	p.posted = append(p.posted, b.Path+" !"+strconv.Itoa(ch.Number)+" general "+token+": "+body)
+	id := strconv.Itoa(100 + len(p.posted))
+	return Note{ID: id, Author: "root", Body: body, URL: ch.URL + "#note_" + id}, nil
 }
 
 func (p *publishStub) asked() []string {
@@ -177,6 +189,29 @@ func TestAPublishTheForgeRefusesHalfwayAnswersWhatItPosted(t *testing.T) {
 	f.round(w)
 	if f.reads() != reads+1 {
 		t.Fatal("the branch was not read at once after a half refused publish")
+	}
+}
+
+// A general draft posts as a general comment in its turn among the others,
+// on no line of the diff, and a publish of general drafts alone reads no diff,
+// so a change request the forge shows at another commit takes them too.
+func TestAPublishPostsAGeneralDraftAsAGeneralComment(t *testing.T) {
+	f := newPublishFixture(t)
+	drafts := []Draft{{General: true, Body: "Ready?"}, {Path: "src/login.go", Line: 4, Body: "Why this?"}}
+	done, notes, err := f.s.Publish(context.Background(), f.watch("app", "feature", "a1"), drafts)
+	if err != nil || len(notes) != 2 || !reflect.DeepEqual(done.Placed[0], Placed{Draft: drafts[0]}) {
+		t.Fatalf("the publish answered %+v, %+v, %v", done, notes, err)
+	}
+	posted := []string{"group/app !4 general " + pollToken + ": Ready?", "group/app !4 src/login.go:4 old src/login.go:0 at a1 " + pollToken + ": Why this?"}
+	if !slices.Equal(f.stub.asked(), posted) || f.stub.diffs != 1 {
+		t.Fatalf("the forge was asked %q after %d diff reads", f.stub.asked(), f.stub.diffs)
+	}
+	f.stub.answers["d1"] = f.stub.answers["a1"]
+	if _, notes, err := f.s.Publish(context.Background(), f.watch("app", "feature", "d1"), drafts[:1]); err != nil || len(notes) != 1 || f.stub.diffs != 1 {
+		t.Fatalf("general drafts alone answered %+v, %v after %d diff reads", notes, err, f.stub.diffs)
+	}
+	if _, _, err := f.s.Publish(context.Background(), f.watch("app", "feature", "d1"), drafts); err == nil || !strings.Contains(err.Error(), "not at the pushed head d1") || len(f.stub.asked()) != 3 {
+		t.Fatalf("a general draft beside one on a line of a diff at another commit answered %v, posted %q", err, f.stub.asked())
 	}
 }
 

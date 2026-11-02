@@ -21,20 +21,23 @@ import (
 
 // threadGitLab answers group/sub/app like GitLab: the open merge request !4
 // of feature at head, no pipeline, and its discussions, d1 on line 4 of
-// src/login.go that alice opened, with every reply posted to it after, and
-// the general one g1; d1 left out while gone. A reply and a resolve of d1
-// are refused the way GitLab refuses an account without the right while
+// src/login.go that alice opened, with every reply posted to it after, the
+// general thread g1 with the replies posted to it and the comment g2, which
+// GitLab does not resolve; d1 left out while gone. A reply and a resolve of
+// d1 are refused the way GitLab refuses an account without the right while
 // forbid is set, a resolve alone the way it refuses a Reporter while
 // reporter is set. It keeps what was written.
 type threadGitLab struct {
-	mu       sync.Mutex
-	head     string
-	forbid   bool
-	reporter bool
-	gone     bool
-	resolved bool
-	replies  []string
-	wrote    []string
+	mu        sync.Mutex
+	head      string
+	forbid    bool
+	reporter  bool
+	gone      bool
+	resolved  bool
+	replies   []string
+	general   []string
+	generalOK bool
+	wrote     []string
 }
 
 func (g *threadGitLab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +66,17 @@ func (g *threadGitLab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for i, body := range g.replies {
 			notes = append(notes, note(400+i, "root", body))
 		}
-		discussions := []string{`{"id":"g1","individual_note":false,"notes":[{"id":34,"body":"General","author":{"username":"alice"},"system":false,"resolvable":true,"resolved":false}]}`}
+		general := func(id int, author, body string) string {
+			return fmt.Sprintf(`{"id":%d,"body":%q,"author":{"username":%q},"system":false,"resolvable":true,"resolved":%v}`, id, body, author, g.generalOK)
+		}
+		opened := []string{general(34, "alice", "General")}
+		for i, body := range g.general {
+			opened = append(opened, general(500+i, "root", body))
+		}
+		discussions := []string{
+			`{"id":"g1","individual_note":false,"notes":[` + strings.Join(opened, ",") + `]}`,
+			`{"id":"g2","individual_note":true,"notes":[{"id":35,"body":"Just a comment","author":{"username":"bob"},"system":false,"resolvable":false}]}`,
+		}
 		if !g.gone {
 			discussions = append(discussions, `{"id":"d1","individual_note":false,"notes":[`+strings.Join(notes, ",")+`]}`)
 		}
@@ -79,6 +92,18 @@ func (g *threadGitLab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.replies = append(g.replies, sent["body"])
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprint(w, note(400+len(g.replies)-1, "root", sent["body"]))
+	case path == mr+"/discussions/g1/notes" && r.Method == http.MethodPost:
+		var sent map[string]string
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &sent)
+		g.wrote = append(g.wrote, "g1 reply: "+sent["body"])
+		g.general = append(g.general, sent["body"])
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, `{"id":%d,"body":%q,"author":{"username":"root"},"system":false,"resolvable":true,"resolved":false}`, 500+len(g.general)-1, sent["body"])
+	case path == mr+"/discussions/g1" && r.Method == http.MethodPut && r.URL.Query().Get("resolved") == "true":
+		g.wrote = append(g.wrote, "g1 resolve")
+		g.generalOK = true
+		fmt.Fprint(w, `{"id":"g1","individual_note":false,"notes":[]}`)
 	case path == mr+"/discussions/d1" && r.Method == http.MethodPut && r.URL.Query().Get("resolved") == "true":
 		g.wrote = append(g.wrote, "resolve")
 		g.resolved = true
@@ -148,9 +173,9 @@ func TestAClickAnswersAndResolvesAThread(t *testing.T) {
 }
 
 // Nothing is written for a request that names no thread or nothing to write,
-// a reply too long, a thread the change request does not have on its diff, a
-// general one, or a branch the cockpit's rule refuses; a refusal of the forge
-// says what it means.
+// a reply too long, a thread the change request does not have, a resolve of a
+// comment GitLab does not resolve, or a branch the cockpit's rule refuses; a
+// refusal of the forge says what it means.
 func TestAWriteOnAThreadIsRefusedBeforeTheForgeIsAsked(t *testing.T) {
 	f := newForgeThreadFixture(t)
 	for _, c := range []struct {
@@ -163,8 +188,8 @@ func TestAWriteOnAThreadIsRefusedBeforeTheForgeIsAsked(t *testing.T) {
 		{url.Values{"thread": {strings.Repeat("d", 256)}, "body": {"x"}}, http.StatusBadRequest, "The id of a review thread is text of at most 255 characters."},
 		{url.Values{"thread": {"d1"}, "body": {" \n "}}, http.StatusBadRequest, "Write a reply, or resolve the thread."},
 		{url.Values{"thread": {"d1"}, "body": {strings.Repeat("x", 16<<10+1)}}, http.StatusBadRequest, "A reply has at most 16 KiB."},
-		{url.Values{"thread": {"d9"}, "body": {"x"}}, http.StatusConflict, `The merge request !4 has no such review thread on its diff.`},
-		{url.Values{"thread": {"g1"}, "resolve": {"1"}}, http.StatusConflict, `The merge request !4 holds the thread as a general one, only a thread on its diff is answered or resolved here.`},
+		{url.Values{"thread": {"d9"}, "body": {"x"}}, http.StatusConflict, `The merge request !4 has no such review thread.`},
+		{url.Values{"thread": {"g2"}, "body": {"x"}, "resolve": {"1"}}, http.StatusConflict, `GitLab does not resolve this thread.`},
 		{url.Values{"thread": {"d1"}, "body": {"x"}, "branch": {"feature\u202e"}}, http.StatusBadRequest, "A branch name holds no spaces, no control characters and no invisible characters, its character 8 is U+202E."},
 	} {
 		if code, answer := f.write(t, false, c.form); code != c.code || answer["error"] != c.says {
@@ -241,8 +266,36 @@ func TestAnAssistantsWriteOnAThreadWaitsForTheApproval(t *testing.T) {
 	f.gitlab.mu.Unlock()
 	f.decide(t, q, true, false)
 	note = f.waitApprovalNotes(t, f.owner, 2)[1]
-	if note.Note.Verdict != approval.Failed || !strings.Contains(note.Content, `The merge request !4 has no such review thread on its diff.`) || len(f.gitlab.written()) != 2 {
+	if note.Note.Verdict != approval.Failed || !strings.Contains(note.Content, `The merge request !4 has no such review thread.`) || len(f.gitlab.written()) != 2 {
 		t.Fatalf("the approval of a thread gone asked %q, note %s", f.gitlab.written(), note.Content)
+	}
+}
+
+// A general thread GitLab keeps as a thread takes a click's reply and resolve
+// and an assistant's after the approval, which names it by the conversation,
+// and the note says the general thread holds the reply.
+func TestAGeneralThreadIsAnsweredAndResolved(t *testing.T) {
+	f := newForgeThreadFixture(t)
+	if code, answer := f.write(t, false, url.Values{"thread": {"g1"}, "body": {"yes"}, "resolve": {"1"}}); code != http.StatusOK || answer["message"] != "The reply is posted on merge request !4, the thread is resolved." {
+		t.Fatalf("the click answered %d %v", code, answer)
+	}
+	f.gitlab.mu.Lock()
+	f.gitlab.generalOK = false
+	f.gitlab.mu.Unlock()
+	code, answer := f.write(t, true, url.Values{"thread": {"g1"}, "body": {"done"}, "resolve": {"1"}})
+	what := "Reply and resolve the thread in the conversation on merge request !4 of feature in app"
+	if code != http.StatusOK || answer["pending"] != true || answer["what"] != what {
+		t.Fatalf("the assistant's write answered %d %v", code, answer)
+	}
+	q := f.waitQuestion(t)
+	if q.Details[1] != (askpass.Detail{Label: "Thread", Value: "the conversation · alice: General"}) {
+		t.Fatalf("the question reads %+v", q)
+	}
+	f.decide(t, q, true, false)
+	note := f.waitApprovalNotes(t, f.owner, 1)[0]
+	says := ` the general thread of the merge request !4 "Fix the login" of feature in app holds your reply and is resolved: https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_501.`
+	if note.Note.Verdict != approval.Done || !strings.Contains(note.Content, says) || !slices.Equal(f.gitlab.written(), []string{"g1 reply: yes", "g1 resolve", "g1 reply: done", "g1 resolve"}) {
+		t.Fatalf("the approval asked %q, note %s", f.gitlab.written(), note.Content)
 	}
 }
 

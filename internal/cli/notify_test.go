@@ -110,6 +110,9 @@ func TestEveryKindIsBuiltTheSameWayRound(t *testing.T) {
 		{"guest reply", "Guest replied.", "Anna on a.txt:1 in shop: fine", func() (string, string) {
 			return commentNews(web.GuestComment{Project: "shop", Guest: "Anna", Path: "a.txt", Line: 1, Text: "fine", Reply: true})
 		}},
+		{"guest project comment", "Guest commented.", "Anna on shop: Rename it", func() (string, string) {
+			return commentNews(web.GuestComment{Project: "shop", Guest: "Anna", OnProject: true, Text: "Rename it"})
+		}},
 		{"guest comment on a long path", "Guest commented.", "Anna on " + strings.Repeat("d/", 70) + "…:1 in shop: x", func() (string, string) {
 			return commentNews(web.GuestComment{Project: "shop", Guest: "Anna", Path: strings.Repeat("d/", 2000) + "a.go", Line: 1, Text: "x"})
 		}},

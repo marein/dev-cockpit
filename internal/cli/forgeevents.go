@@ -78,8 +78,8 @@ func reviewReport(n forge.ReviewNote) assistant.ReviewReport {
 	if len(t.Notes) > 0 && t.Notes[0].ID != n.Note.ID {
 		report.Reply, report.Opener = true, t.Notes[0].Author
 	}
-	if t.Path != "" {
-		report.Thread = t.ID
+	if reply, resolve := t.Takes(); reply {
+		report.Thread, report.Resolvable = t.ID, resolve
 	}
 	return report
 }

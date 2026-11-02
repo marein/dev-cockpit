@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -107,15 +108,19 @@ func hunkRange(s string) (int, int, bool) {
 // the commit the source of the change request stands at, and its body. Shown
 // is the line it is shown at where that is another, a line comment's own in
 // the file that moved on since the push, which a sentence names it by.
+// General marks a note on the change request as a whole, a general comment
+// without a file and a line.
 type Draft struct {
-	Path  string
-	Line  int
-	Shown int
-	Body  string
+	Path    string
+	Line    int
+	Shown   int
+	Body    string
+	General bool
 }
 
 // Placed is a draft where the diff shows its line: the file's path on the old
-// side and the line's there, 0 for a line the change adds.
+// side and the line's there, 0 for a line the change adds. A general draft
+// stands on no line.
 type Placed struct {
 	Draft
 	OldPath string
@@ -123,8 +128,9 @@ type Placed struct {
 }
 
 // Publication is what a publish posts to: the open change request of a
-// branch, the diff the forge shows of it at the branch's pushed head, and
-// each draft where that diff shows it, in order.
+// branch, the diff the forge shows of it at the branch's pushed head, none
+// for general drafts alone, and each draft where that diff shows it, in
+// order.
 type Publication struct {
 	Change Change
 	Diff   Diff
@@ -145,11 +151,12 @@ func (e *PublishRefusal) Error() string {
 const maxNamedOutside = 3
 
 // PublishTarget reads w's branch from the forge afresh, its open change
-// request and the diff of it, and answers where each of drafts stands on that
-// diff. A branch not pushed, one without an open change request, and one
-// whose change request the forge shows at another commit than w's pushed head
-// is refused, so is every draft where one of them stands on no line the diff
-// shows: a publish posts all of its drafts or none.
+// request and, for a draft on a line, the diff of it, and answers where each
+// of drafts stands on that diff. A branch not pushed, one without an open
+// change request, and one whose change request the forge shows at another
+// commit than w's pushed head is refused, so is every draft where one of them
+// stands on no line the diff shows: a publish posts all of its drafts or
+// none.
 func (s *Service) PublishTarget(ctx context.Context, w Watch, drafts []Draft) (Publication, error) {
 	publisher, token, err := s.publisher(w.Binding)
 	if err != nil {
@@ -159,10 +166,10 @@ func (s *Service) PublishTarget(ctx context.Context, w Watch, drafts []Draft) (P
 }
 
 // Publish posts each draft PublishTarget places as a review thread of its own,
-// in order, and answers the notes the forge has of the ones it posted, with
-// the refusal of the forge that ended it where one did. The poller then reads
-// the branch and its review threads at once, also after a refusal, which may
-// come after some were posted.
+// a general one as a general comment, in order, and answers the notes the
+// forge has of the ones it posted, with the refusal of the forge that ended it
+// where one did. The poller then reads the branch and its review threads at
+// once, also after a refusal, which may come after some were posted.
 func (s *Service) Publish(ctx context.Context, w Watch, drafts []Draft) (Publication, []Note, error) {
 	publisher, token, err := s.publisher(w.Binding)
 	if err != nil {
@@ -175,7 +182,12 @@ func (s *Service) Publish(ctx context.Context, w Watch, drafts []Draft) (Publica
 	defer s.poll.wroteNotes(w)
 	notes := make([]Note, 0, len(target.Placed))
 	for _, p := range target.Placed {
-		note, err := publisher.PublishNote(ctx, s.client, w.Binding, token, target.Change, target.Diff, p)
+		var note Note
+		if p.General {
+			note, err = publisher.PublishGeneral(ctx, s.client, w.Binding, token, target.Change, p.Body)
+		} else {
+			note, err = publisher.PublishNote(ctx, s.client, w.Binding, token, target.Change, target.Diff, p)
+		}
 		if err != nil {
 			return target, notes, err
 		}
@@ -200,12 +212,14 @@ func (s *Service) publishTarget(ctx context.Context, publisher Publisher, token 
 		return refuse("%q has no open %s to publish comments on.", w.Branch, kind.ChangeNoun)
 	}
 	change := *status.Change
-	diff, err := publisher.ChangeDiff(ctx, s.client, w.Binding, token, change)
-	if err != nil {
-		return Publication{}, err
-	}
-	if diff.Head != w.Head {
-		return refuse("The %s %s stands at %s on %s, not at the pushed head %s of %q: a fetch or a push catches up.", kind.ChangeNoun, kind.ChangeRef(change.Number), ShortHead(diff.Head), kind.Label, ShortHead(w.Head), w.Branch)
+	var diff Diff
+	if slices.ContainsFunc(drafts, func(d Draft) bool { return !d.General }) {
+		if diff, err = publisher.ChangeDiff(ctx, s.client, w.Binding, token, change); err != nil {
+			return Publication{}, err
+		}
+		if diff.Head != w.Head {
+			return refuse("The %s %s stands at %s on %s, not at the pushed head %s of %q: a fetch or a push catches up.", kind.ChangeNoun, kind.ChangeRef(change.Number), ShortHead(diff.Head), kind.Label, ShortHead(w.Head), w.Branch)
+		}
 	}
 	placed, outside := diff.place(drafts)
 	if len(outside) > 0 {
@@ -223,12 +237,16 @@ func Unpushed(w Watch) error {
 	return nil
 }
 
-// place answers where the diff shows each draft, and the drafts it shows on
-// no line.
+// place answers where the diff shows each draft, a general one on no line,
+// and the drafts on a line it does not show.
 func (d Diff) place(drafts []Draft) ([]Placed, []Draft) {
 	placed := make([]Placed, 0, len(drafts))
 	var outside []Draft
 	for _, draft := range drafts {
+		if draft.General {
+			placed = append(placed, Placed{Draft: draft})
+			continue
+		}
 		file, ok := d.Files[draft.Path]
 		old, shown := file.Lines[draft.Line]
 		if !ok || !shown {

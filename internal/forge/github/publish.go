@@ -68,6 +68,20 @@ func (Provider) PublishNote(ctx context.Context, c *forge.Client, b forge.Bindin
 	return forge.Note{ID: made.NodeID, Author: made.User.name(), Body: made.Body, Created: made.CreatedAt, URL: made.HTMLURL}, nil
 }
 
+// PublishGeneral posts a comment on the pull request's conversation, which
+// GitHub keeps as a comment of its issue, a note alone and no thread.
+func (Provider) PublishGeneral(ctx context.Context, c *forge.Client, b forge.Binding, token string, ch forge.Change, body string) (forge.Note, error) {
+	a := api(c, b.Host, token)
+	var made issueComment
+	if err := a.Post(ctx, fmt.Sprintf("%s/issues/%d/comments", repository(b), ch.Number), map[string]any{"body": body}, &made); err != nil {
+		return forge.Note{}, commentRefusal(a, b, ch.Number, err)
+	}
+	if made.NodeID == "" {
+		return forge.Note{}, fmt.Errorf("GitHub answered the comment on pull request #%d without its id.", ch.Number)
+	}
+	return forge.Note{ID: made.NodeID, Author: made.User.name(), Body: made.Body, Created: made.CreatedAt, URL: made.HTMLURL}, nil
+}
+
 // commentRefusal says what an answer GitHub gave to a review comment means:
 // a token that may not, which GitHub answers with 403, or with 404 where it
 // hides the repository from the token; a comment GitHub refuses in words of

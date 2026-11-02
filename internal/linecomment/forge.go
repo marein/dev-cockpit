@@ -17,15 +17,19 @@ import (
 
 // Forge is where a review thread came from: the kind of forge, the id of
 // the note that opens it and its page there, the thread's own id, "" until a
-// read named it, and At, where the forge put it when it was last read. The
-// comment's own line follows the file like any other; only a move of the
-// forge's place sets it again.
+// read named it and for a note the forge keeps alone, and At, where the forge
+// put it when it was last read, nothing for a thread on the project.
+// Unresolvable says the forge does not resolve it; a thread stored before
+// that was told is one on a line, which the forge resolves. The comment's own
+// line follows the file like any other; only a move of the forge's place sets
+// it again.
 type Forge struct {
-	Kind   string `json:"kind"`
-	Note   string `json:"note"`
-	URL    string `json:"url,omitempty"`
-	Thread string `json:"thread,omitempty"`
-	At     Place  `json:"at"`
+	Kind         string `json:"kind"`
+	Note         string `json:"note"`
+	URL          string `json:"url,omitempty"`
+	Thread       string `json:"thread,omitempty"`
+	At           Place  `json:"at"`
+	Unresolvable bool   `json:"unresolvable,omitempty"`
 }
 
 // Place is where the forge puts a thread: the file, the line and the code
@@ -38,17 +42,20 @@ type Place struct {
 	Quoted bool   `json:"quoted,omitempty"`
 }
 
-// ForgeThread is one review thread on a line the way a read of the forge
-// found it: the kind of forge, the thread's id there, "" where the read named
-// none, its page, whether it is resolved, where the forge puts it and its
-// notes, oldest first, the first one opening it.
+// ForgeThread is one review thread the way a read of the forge found it: the
+// kind of forge, the thread's id there, "" where the read named none, its
+// page, whether the forge resolves it and whether it is resolved, where the
+// forge puts it, on a line or with Project on the project, a general thread
+// that names no place, and its notes, oldest first, the first one opening it.
 type ForgeThread struct {
-	Kind     string
-	ID       string
-	URL      string
-	Resolved bool
-	At       Place
-	Notes    []ForgeNote
+	Kind         string
+	ID           string
+	URL          string
+	Unresolvable bool
+	Resolved     bool
+	Project      bool
+	At           Place
+	Notes        []ForgeNote
 }
 
 // ForgeNote is one note of a review thread on the forge: its id there, who
@@ -71,18 +78,20 @@ const (
 // SyncForge makes the project's threads of the forge the ones a read found,
 // in the order the read lists them, and reports whether that changed
 // anything. Each is one comment, its first note the comment's, the others its
-// replies, its resolved state the comment's. A thread it holds already, known
+// replies, its resolved state the comment's, a general thread a project
+// comment, which stands on no file. A thread it holds already, known
 // by the thread's id or by the note that opens it, keeps its id and the line
 // it followed the file to, unless the forge moved it, and takes the rest from
 // the read. One it does not hold comes back under the id statefile.DerivedID
-// gives the project and its first key, the id on the forge, which outlives
-// the note that opens it, the note only where a read names no id. A read
-// that could not read the text of the thread's line, a commit the repository
-// has not fetched yet, tells nothing of it: the thread keeps its place in the
-// same file, a fetch brings the commit for the next read. A thread the read
-// lacks goes when the read is complete, and stays when it read the first ones
-// of more. A thread whose file does not resolve under root is left out. The
-// threads people wrote are not touched.
+// gives the project and the note that opens it, the one key a publish knows
+// before any read names the thread, so a published comment takes that id at
+// once; a thread whose opening note went comes back under the next one's. A
+// read that could not read the text of the thread's line, a commit the
+// repository has not fetched yet, tells nothing of it: the thread keeps its
+// place in the same file, a fetch brings the commit for the next read. A
+// thread the read lacks goes when the read is complete, and stays when it
+// read the first ones of more. A thread whose file does not resolve under
+// root is left out. The threads people wrote are not touched.
 func (s *Service) SyncForge(project, root string, threads []ForgeThread, complete bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -133,11 +142,12 @@ func (s *Service) SyncForge(project, root string, threads []ForgeThread, complet
 			t.At = c.Forge.At
 		}
 		updated := c
-		if !ok || c.Forge.At != t.At {
+		if !ok || c.Forge.At != t.At || c.Project != t.Project {
 			updated.Path, updated.Line, updated.LineText = t.At.Path, t.At.Line, t.At.Quote
 		}
+		updated.Project = t.Project
 		if !ok {
-			updated.ID = statefile.DerivedID(ids, project, keys[0])
+			updated.ID = statefile.DerivedID(ids, project, t.idKey())
 			ids[updated.ID] = true
 		}
 		first := t.Notes[0]
@@ -186,14 +196,16 @@ func forgeReplies(notes []ForgeNote, room int) []Reply {
 
 // Published makes each comment the owner wrote that a publish posted the
 // review thread of the forge it opened, keyed by the comment's id: the
-// comment keeps its id and its own line, and takes the forge's thread with
+// comment keeps its own line, takes the id its thread comes back under after
+// a drop and keeps the one it had as Was, and takes the forge's thread with
 // its place there the way a read of it finds it, so the next read keeps it as
 // it stands, its resolved state the forge's from then on. It moves behind the
 // other threads of the forge, where a read lists a new one. A thread of the
 // forge a read already brought for it goes, none stands twice. A comment
 // deleted, changed to another's or replied to meanwhile is left to the next
 // read, and so is one the forge named no note of a line comment could stand
-// for. It reports whether anything changed.
+// for, and one the forge took on a line for a project comment or the other
+// way round. It reports whether anything changed.
 func (s *Service) Published(project string, published map[string]ForgeThread) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -205,7 +217,7 @@ func (s *Service) Published(project string, published map[string]ForgeThread) bo
 	took := map[string]bool{}
 	for _, c := range list {
 		t, ok := published[c.ID]
-		if !ok || !Publishable(c) || t.Kind == "" || len(t.Notes) == 0 || !forgeID(t.Notes[0].ID) {
+		if !ok || !Publishable(c) || t.Project != c.Project || t.Kind == "" || len(t.Notes) == 0 || !forgeID(t.Notes[0].ID) {
 			continue
 		}
 		t.At.Quote = FileLine(t.At.Quote)
@@ -225,6 +237,7 @@ func (s *Service) Published(project string, published map[string]ForgeThread) bo
 		return false
 	}
 	next := make([]Comment, 0, len(list))
+	ids := map[string]bool{}
 	for _, c := range list {
 		_, publishedNow := published[c.ID]
 		switch {
@@ -232,14 +245,20 @@ func (s *Service) Published(project string, published map[string]ForgeThread) bo
 		case c.Forge != nil && slices.ContainsFunc(c.Forge.keys(), func(key string) bool { return took[key] }):
 		default:
 			next = append(next, c)
+			ids[c.ID] = true
 		}
+	}
+	for i, c := range became {
+		became[i].Was, became[i].ID = c.ID, statefile.DerivedID(ids, project, c.Forge.idKey())
+		ids[became[i].ID] = true
 	}
 	s.store(project, append(next, became...))
 	return true
 }
 
 // Publishable reports whether c is a thread a publish turns into a review
-// thread of the forge: the owner's own, without a reply.
+// thread of the forge, a project comment into a general one: the owner's own,
+// without a reply.
 func Publishable(c Comment) bool {
 	return c.Forge == nil && c.Link == "" && len(c.Replies) == 0
 }
@@ -275,6 +294,16 @@ func (t ForgeThread) keys() []string {
 	return forgeKeys(t.Kind, t.thread(), t.Notes[0].ID)
 }
 
+// idKey is the key the id of a thread's comment is derived from, the note
+// that opens it.
+func (f *Forge) idKey() string {
+	return forgeKeys(f.Kind, "", f.Note)[0]
+}
+
+func (t ForgeThread) idKey() string {
+	return forgeKeys(t.Kind, "", t.Notes[0].ID)[0]
+}
+
 func forgeKeys(kind, thread, note string) []string {
 	keys := make([]string, 0, 2)
 	if thread != "" {
@@ -294,12 +323,19 @@ func (t ForgeThread) thread() string {
 
 // origin is where the thread came from.
 func (t ForgeThread) origin() *Forge {
-	return &Forge{Kind: t.Kind, Note: t.Notes[0].ID, URL: pageURL(t.URL), Thread: t.thread(), At: t.At}
+	return &Forge{Kind: t.Kind, Note: t.Notes[0].ID, URL: pageURL(t.URL), Thread: t.thread(), At: t.At, Unresolvable: t.Unresolvable}
 }
 
-// fits reports whether the thread can stand as a line comment under root.
+// fits reports whether the thread can stand as a line comment under root, or
+// as a project comment, which names no place.
 func (t ForgeThread) fits(root string) bool {
-	if t.Kind == "" || len(t.Notes) == 0 || !forgeID(t.Notes[0].ID) || t.At.Line < 1 || t.At.Path == "" || len(t.At.Path) > MaxPath {
+	if t.Kind == "" || len(t.Notes) == 0 || !forgeID(t.Notes[0].ID) {
+		return false
+	}
+	if t.Project {
+		return t.At == Place{}
+	}
+	if t.At.Line < 1 || t.At.Path == "" || len(t.At.Path) > MaxPath {
 		return false
 	}
 	_, err := filesystem.ResolveUnder(root, t.At.Path)

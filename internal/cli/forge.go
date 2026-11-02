@@ -47,7 +47,9 @@ func newForgeShowCommand(opts *inspectOptions) *cobra.Command {
 			strconv.Itoa(forge.DefaultLogLines) + " lines unless `--lines` says otherwise. `--threads` adds " +
 			"the review threads, read from the forge on every call: those on the diff with file, line, side, " +
 			"whether outdated and the id `forge-thread-reply` and `forge-thread-resolve` take, then the general " +
-			"ones, each with its resolved state, link and notes, the forge's own system notes left out. Each " +
+			"ones, each with its resolved state, link and notes, and the id where the forge keeps it as a " +
+			"thread, the forge's own system notes left out. The cockpit mirrors both kinds into " +
+			"`line-comment-list`, the general ones as project comments. Each " +
 			"list shows its first " + strconv.Itoa(maxForgeThreadsShown) + " threads, the unresolved first; " +
 			"`--all` lists every one. What the cockpit polled no longer than " +
 			strconv.Itoa(int(forge.CacheFresh/time.Second)) + " seconds ago answers, else the forge is asked; " +
@@ -176,12 +178,15 @@ func newForgeCommentPublishCommand(opts *inspectOptions) *cobra.Command {
 		Use:   "forge-comment-publish <project> <id>... | <project> --all",
 		Short: "Publish line comments as review comments, once the user approves",
 		Long: "Publish line comments as review comments on the open change request of the branch HEAD is on, each " +
-			"a review thread of its own: the ids `line-comment-list` prints, or with `--all` every comment the " +
-			"user or you wrote. A review thread of the forge, a guest's comment and one with replies do not " +
-			"publish. A comment's line has to stand in the pushed head, a line not pushed is refused, push it " +
+			"a review thread of its own, and project comments as general comments of it: the ids " +
+			"`line-comment-list` prints, or with `--all` every comment the user or you wrote. A review thread " +
+			"of the forge, a guest's comment and one with replies do not publish. A line comment's line has " +
+			"to stand in the pushed head, a line not pushed is refused, push it " +
 			"first; an outdated comment no push carries, remove it or write it again on its line. The line " +
 			"has to be one the change request's diff shows, a changed line or one around it, else the whole " +
-			"call is refused. A published comment becomes that review thread among the line comments. Needs " +
+			"call is refused. A published comment becomes that review thread among the line comments, a " +
+			"project comment that general thread among the project comments, under a new id `line-comment-list` " +
+			"prints, which it keeps from then on. Needs " +
 			"a token that writes: the scope api on GitLab, on GitHub the scope repo or, fine grained, Pull " +
 			"requests read and write. It asks the user first and answers `waits for the user's approval`; on approval the forge " +
 			"is read again and they are published. Either way a note lands in your thread with the outcome " +
@@ -217,11 +222,13 @@ func newForgeThreadReplyCommand(opts *inspectOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "forge-thread-reply <project> <thread> <text>",
 		Short: "Answer a review thread, once the user approves",
-		Long: "Answer a review thread on the diff of the change request of a branch, the branch HEAD is on unless " +
-			"`--branch` names another, by the thread id `forge-show --threads` and `line-comment-list` print " +
+		Long: "Answer a review thread of the change request of a branch, on its diff or a general one, the branch " +
+			"HEAD is on unless `--branch` names another, by the thread id `forge-show --threads` and " +
+			"`line-comment-list` print " +
 			"and a forge-review-comment event names. The text is Markdown, like `fixed in abc123` once a coder " +
 			"handled the thread, at most " + strconv.Itoa(linecomment.MaxText>>10) + " KiB. `--resolve` " +
-			"resolves the thread after the reply. A general thread of the conversation is refused. GitHub " +
+			"resolves the thread after the reply. A comment of GitHub's conversation is no thread and is " +
+			"refused, `line-comment-list` names no thread id for it. GitHub " +
 			"files a reply under a review the token's account has pending and shows it once that review is " +
 			"submitted, the answer says so. Needs a token that writes: the scope api on GitLab, on GitHub " +
 			"the scope repo or, fine grained, Pull requests read and write. It asks the user first and answers `waits for " +
@@ -255,10 +262,11 @@ func newForgeThreadResolveCommand(opts *inspectOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "forge-thread-resolve <project> <thread>",
 		Short: "Resolve a review thread, once the user approves",
-		Long: "Resolve a review thread on the diff of the change request of a branch, the branch HEAD is on unless " +
-			"`--branch` names another, by the thread id `forge-show --threads` and `line-comment-list` print " +
-			"and a forge-review-comment event names. A thread resolved already, one the forge does not resolve and " +
-			"a general one are refused. To say why, use `forge-thread-reply --resolve`, one question for both. " +
+		Long: "Resolve a review thread of the change request of a branch, on its diff or a general one, the branch " +
+			"HEAD is on unless `--branch` names another, by the thread id `forge-show --threads` and " +
+			"`line-comment-list` print and a forge-review-comment event names. A thread resolved already and " +
+			"one the forge does not resolve are refused, a GitLab comment that started no thread and a comment " +
+			"of GitHub's conversation among them. To say why, use `forge-thread-reply --resolve`, one question for both. " +
 			"On GitLab it needs the Developer role or the token's own merge request. Needs a token that " +
 			"writes: the scope api on GitLab, on GitHub the scope repo or, fine grained, Pull requests read and write. It " +
 			"asks the user first and answers `waits for the user's approval`; on approval the forge is read " +
@@ -501,8 +509,8 @@ func formatThreads(b *strings.Builder, title, none string, list any, all bool) {
 }
 
 // threadHead says whether a thread is resolved, a comment for one the forge
-// does not resolve, and on the diff where it stands with the id the writes on
-// a thread take.
+// does not resolve, on the diff where it stands, and the id the writes on a
+// thread take where the server says a reply goes.
 func threadHead(t map[string]any) string {
 	head := "comment"
 	if r, _ := t["resolvable"].(bool); r {
@@ -513,7 +521,7 @@ func threadHead(t map[string]any) string {
 	}
 	path, _ := t["path"].(string)
 	if path == "" {
-		return head
+		return head + threadID(t)
 	}
 	head += fmt.Sprintf(" %q", path)
 	if line := jsonCount(t["line"]); line > 0 {
@@ -524,10 +532,17 @@ func threadHead(t map[string]any) string {
 	if outdated, _ := t["outdated"].(bool); outdated {
 		head += ", outdated"
 	}
-	if id, _ := t["id"].(string); id != "" {
-		head += ", id " + plaintext.Visible(id)
+	return head + threadID(t)
+}
+
+func threadID(t map[string]any) string {
+	if reply, _ := t["reply"].(bool); !reply {
+		return ""
 	}
-	return head
+	if id, _ := t["id"].(string); id != "" {
+		return ", id " + plaintext.Visible(id)
+	}
+	return ""
 }
 
 // threadRank puts an unresolved thread first, then a comment the forge does

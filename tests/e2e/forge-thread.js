@@ -11,8 +11,11 @@ const { assert, sleep, BASE } = L;
 // the thread, offered once the forge poller read the change request
 // (data-forge-threads in the forge fragment) and only where a read named the
 // thread. The switch resolves the thread after the reply, or alone with the
-// field empty. The forge is read again first; a thread it does not hold, a
-// general one and a resolve of a resolved one are refused, a token without
+// field empty. A general thread of the merge request takes both from its
+// project comment, a comment that started no thread a reply alone. The forge
+// is read again first; a thread it does not hold, a resolve of a comment the
+// forge does not resolve or of a resolved thread and a write on a comment of
+// GitHub's conversation, which is no thread, are refused, a token without
 // the right to write in the forge's words, and a resolve refused after the
 // reply went closes the dialog all the same, the reply posted once. The line
 // comments follow with the poller's read right after the write: the reply
@@ -109,6 +112,7 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
     gitlabDiscussion("t3e2e", false, [gitlabNote(31, "bob", "Or call it auth?", { resolvable: true, at: { head: s.head, newLine: 4 } })]),
     gitlabDiscussion("t4e2e", false, [gitlabNote(32, "alice", "Is c needed?", { resolvable: true, at: { head: s.head, newLine: 5 } })]),
     gitlabDiscussion("g1e2e", false, [gitlabNote(34, "alice", "General thread", { resolvable: true })]),
+    gitlabDiscussion("g2e2e", true, [gitlabNote(35, "bob", "Just a comment")]),
   ];
 
   const git = async (args) => {
@@ -288,10 +292,10 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       }, alias);
       assert(hostEdit, "the added host has no Edit on the list");
       await openEditor(page);
-      await waitFor(async () => (await comments()).filter((c) => c.forge?.thread).length === 4, "the notes of the four threads on the diff with their threads", 30000);
+      await waitFor(async () => (await comments()).filter((c) => c.forge?.thread).length === 6, "the notes of the four threads on the diff and the two general ones with their threads", 30000);
       const list = await comments();
-      const by = Object.fromEntries(list.filter((c) => c.forge).map((c) => [c.text, c.forge.thread]));
-      assert(JSON.stringify(by) === JSON.stringify({ "New name bb?": "t1e2e", "Or call it auth?": "t3e2e", "Is c needed?": "t4e2e", "Return early?": "t2e2e" }), `the notes read ${JSON.stringify(list)}`);
+      const by = Object.fromEntries(list.filter((c) => c.forge).map((c) => [c.text, `${c.project ? "project " : ""}${c.forge.thread}${c.forge.unresolvable ? " unresolvable" : ""}`]));
+      assert(JSON.stringify(by) === JSON.stringify({ "General thread": "project g1e2e", "Just a comment": "project g2e2e unresolvable", "New name bb?": "t1e2e", "Or call it auth?": "t3e2e", "Is c needed?": "t4e2e", "Return early?": "t2e2e" }), `the notes read ${JSON.stringify(list)}`);
     });
 
     await run("a thread of the forge opens from its entry and from the line's menu, two threads on one line each by whose it is and how it opens, nothing written", async () => {
@@ -376,7 +380,32 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       assert(!(await ofThread("t1e2e")).resolved, "the other thread on the line turned resolved");
     });
 
-    await run("a token without the right to write is refused in GitLab's words and the reply stays in its dialog, a thread the forge does not hold, a general one and a bad id are refused before it is asked", async () => {
+    await run("a general thread answers and resolves from its project comment, a comment that started no thread answers without the switch", async () => {
+      await openFromCell(page, "General thread");
+      let m = await modal(page);
+      assert(m.open && m.title === "Project comment" && JSON.stringify(m.notes) === JSON.stringify(["alice: General thread"]) && m.field && m.save === "Reply" && m.resolve && m.hint === "It is posted on merge request !4 on GitLab, for everybody who can read it there.", `the general thread's dialog reads ${JSON.stringify(m)}`);
+      const sent = writes().length;
+      await page.check(`${MODAL} [data-editor-comment-resolve]`);
+      await page.fill(`${MODAL} [data-editor-comment-text]`, "Done in abc123.");
+      await page.keyboard.press("Control+Enter");
+      await toast(page, "The reply is posted on merge request !4, the thread is resolved.");
+      await waitModalGone(page);
+      assert(JSON.stringify(writesAfter(sent)) === JSON.stringify(["POST /g1e2e/notes {\"body\":\"Done in abc123.\"}", "PUT /g1e2e?resolved=true {}"]), `the forge was asked ${JSON.stringify(writesAfter(sent))}`);
+      await waitFor(async () => {
+        const thread = await ofThread("g1e2e");
+        return thread?.project && thread.resolved && JSON.stringify(replyTexts(thread)) === JSON.stringify(["Done in abc123."]);
+      }, "the reply and the resolve on the general thread", 30000);
+      await openFromCell(page, "Just a comment");
+      m = await modal(page);
+      assert(m.open && m.title === "Project comment" && m.field && m.save === "Reply" && !m.resolve && m.hint, `the comment's dialog reads ${JSON.stringify(m)}`);
+      await page.click(`${MODAL} [data-editor-comment-cancel]`);
+      await waitModalGone(page);
+      assert(writes().length === sent + 2, "the comment's dialog wrote something");
+      await closeSheet(page);
+      await notReloaded(page);
+    });
+
+    await run("a token without the right to write is refused in GitLab's words and the reply stays in its dialog, a thread the forge does not hold, a resolve it does not offer and a bad id are refused before it is asked", async () => {
       await openSheet(page);
       state.readOnly = true;
       const replies = state.replies.length;
@@ -396,8 +425,8 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       await closeSheet(page);
       const sent = writes().length;
       for (const [fields, code, says] of [
-        [{ thread: "t9e2e", body: "x" }, 409, 'The merge request !4 has no such review thread on its diff.'],
-        [{ thread: "g1e2e", resolve: "1" }, 409, 'The merge request !4 holds the thread as a general one, only a thread on its diff is answered or resolved here.'],
+        [{ thread: "t9e2e", body: "x" }, 409, 'The merge request !4 has no such review thread.'],
+        [{ thread: "g2e2e", body: "x", resolve: "1" }, 409, 'GitLab does not resolve this thread.'],
         [{ thread: "t2e2e", resolve: "1" }, 409, 'The thread is resolved already.'],
         [{ thread: "t1\u202ee2e", body: "x" }, 400, "The id of a review thread holds no spaces, no control characters and no invisible format characters."],
         [{ thread: "t1e2e" }, 400, "Write a reply, or resolve the thread."],
@@ -476,7 +505,7 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
         await page.click(`${DIALOG} .swal2-confirm`);
         await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
         const note = await approvalNote("failed", 1);
-        assert(note.text.includes('The merge request !4 has no such review thread on its diff.'), `the note says ${note.text}`);
+        assert(note.text.includes('The merge request !4 has no such review thread.'), `the note says ${note.text}`);
       } finally {
         gone = false;
       }
@@ -503,15 +532,27 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       assert(on.status === 200, `switching it on answered ${on.status}`);
     });
 
-    await run("GitHub: a reply goes into the review thread over GraphQL, the switch resolves it there, a reply into a pending review is said", async () => {
+    await run("GitHub: a reply goes into the review thread over GraphQL, the switch resolves it there, a reply into a pending review is said, a comment of the conversation takes none", async () => {
       await openEditor(page);
       const saved = await post(hostEdit, { form: "save", kind: "github", web_url: fakeWeb, aliases: alias });
       assert(saved.status === 200, `turning the host into a GitHub answered ${saved.status}`);
       await git(["remote", "set-url", "origin", `${fakeWeb}/octo/app.git`]);
       await waitFor(async () => {
         const list = (await comments()).filter((c) => c.forge);
-        return list.length === 3 && list.every((c) => c.forge.kind === "github" && c.forge.thread);
-      }, "the notes of the pull request's review threads", 30000);
+        const general = list.filter((c) => c.project);
+        return list.length === 5 && list.every((c) => c.forge.kind === "github") && list.filter((c) => !c.project).every((c) => c.forge.thread) && general.length === 2 && general.every((c) => !("thread" in c.forge) && c.forge.unresolvable);
+      }, "the notes of the pull request's review threads and its conversation", 30000);
+      const before = writes().length;
+      for (const fields of [{ thread: "IC_kwDOe2e11", body: "x" }, { thread: "PRR_kwDOe2e80", resolve: "1" }]) {
+        const r = await post(`/projects/${project}/forge/thread`, fields);
+        assert(r.status === 409 && r.json.error === "The pull request #7 holds this note of its conversation alone, GitHub keeps no thread of it to answer or resolve.", `${JSON.stringify(fields)} answered ${r.status} ${r.text}`);
+      }
+      assert(writes().length === before, "a write on a comment of the conversation reached the forge");
+      await openFromCell(page, "Looks good");
+      const lone = await modal(page);
+      assert(lone.open && lone.title === "Project comment" && !lone.field && !lone.save && !lone.resolve && !lone.hint, `the conversation comment's dialog reads ${JSON.stringify(lone)}`);
+      await page.click(`${MODAL} [data-editor-comment-cancel]`);
+      await waitModalGone(page);
       await openSheet(page);
       await page.waitForFunction(() => [...document.querySelectorAll("[data-editor-sheet-body] .row .dropdown-item")].some((e) => e.textContent.includes("Added e")), null, { timeout: 10000 });
       const items = await cellMenu(page, "New name bb?");
@@ -609,13 +650,13 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       const item = page.locator("section#forges .list-group-item", { hasText: /^\s*Answer and resolve review threads/ });
       assert(await item.count() === 1, "no docs entry for the reply and the resolve");
       const text = await item.innerText();
-      for (const said of ["Open thread", "offers a reply", "Resolve the thread", "after the reply or alone", "A resolved thread reopens on the forge, not here", "the Developer role", "once that review is submitted", "forge-thread-reply", "forge-thread-resolve", "only once you approve"]) {
+      for (const said of ["Open thread", "offers a reply", "Resolve the thread", "after the reply or alone", "A general thread takes them too on GitLab", "a comment of GitHub's conversation is no thread and stays read only", "A resolved thread reopens on the forge, not here", "the Developer role", "once that review is submitted", "forge-thread-reply", "forge-thread-resolve", "only once you approve"]) {
         assert(text.includes(said), `the entry lacks "${said}": ${text}`);
       }
       const tokens = await page.locator("section#forges .list-group-item", { hasText: "Tokens and the connection test" }).innerText();
       assert(tokens.includes("writing api") && tokens.includes("Pull requests read and write"), `the tokens' entry reads ${tokens}`);
       const reads = await page.locator("section#forges .list-group-item", { hasText: "For the assistants" }).innerText();
-      assert(reads.includes("the id a reply takes"), `the assistants' entry reads ${reads}`);
+      assert(reads.includes("the id a reply takes where the forge keeps it as a thread"), `the assistants' entry reads ${reads}`);
       const approvals = await page.locator("section#assistants .list-group-item", { hasText: /^\s*Approvals/ }).innerText();
       assert(approvals.includes("a reply on or resolve of a review thread") && approvals.includes("comments or thread"), `the approvals' entry reads ${approvals}`);
       const lines = await page.locator("section#editor .list-group-item", { hasText: "Line comments" }).first().innerText();

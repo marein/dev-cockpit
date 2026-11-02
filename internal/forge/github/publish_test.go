@@ -63,6 +63,15 @@ func (f *fakeComments) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprintf(w, `{"url":"https://github.example.com/api/v3/repos/octo/app/pulls/comments/1","pull_request_review_id":42,"id":10,"node_id":"PRRC_kwDOe2e10","diff_hunk":"@@ -1,4 +1,4 @@","path":%q,"commit_id":%q,"original_commit_id":%q,"user":{"login":"octocat","id":1},"body":%q,"created_at":"2026-10-29T18:40:00Z","updated_at":"2026-10-29T18:40:00Z","html_url":"%s#discussion_r10","line":%d,"side":"RIGHT","original_line":%d,"author_association":"OWNER"}`,
 			sent.Path, head, head, sent.Body, pullPage, sent.Line, sent.Line)
+	case r.URL.Path == repoAt+"/issues/7/comments" && r.Method == http.MethodPost:
+		body, _ := io.ReadAll(r.Body)
+		f.sent = append(f.sent, string(body))
+		var sent struct {
+			Body string `json:"body"`
+		}
+		_ = json.Unmarshal(body, &sent)
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, `{"id":11,"node_id":"IC_kwDOe2e11","html_url":"%s#issuecomment-11","body":%q,"user":{"login":"octocat","id":1},"created_at":"2026-10-29T18:41:00Z","updated_at":"2026-10-29T18:41:00Z","author_association":"OWNER"}`, pullPage, sent.Body)
 	default:
 		http.NotFound(w, r)
 	}
@@ -137,5 +146,23 @@ func TestARefusedReviewCommentIsSaidPlainly(t *testing.T) {
 		if err == nil || !strings.HasPrefix(err.Error(), c.want) || strings.Contains(err.Error(), token) {
 			t.Errorf("%d answered %v", c.code, err)
 		}
+	}
+}
+
+// A general comment is a comment of the pull request's conversation, its
+// note the comment's node id the conversation names it by; a refusal says
+// why like a review comment's.
+func TestAGeneralCommentIsACommentOfTheConversation(t *testing.T) {
+	fake, b, ctx := commentsFixture(t)
+	note, err := Provider{}.PublishGeneral(ctx, forge.NewClient(), b, token, pullSeven, "Ready?")
+	if err != nil || note.ID != "IC_kwDOe2e11" || note.Author != "octocat" || note.Body != "Ready?" || note.URL != pullPage+"#issuecomment-11" || note.Created.IsZero() {
+		t.Fatalf("the note reads %+v, %v", note, err)
+	}
+	if len(fake.sent) != 1 || fake.sent[0] != `{"body":"Ready?"}` {
+		t.Fatalf("the comment was sent as %q", fake.sent)
+	}
+	fake.refusals["POST "+repoAt+"/issues/7/comments"] = refusalAnswer{http.StatusForbidden, `{"message":"Resource not accessible by personal access token","status":"403"}`}
+	if _, err = (Provider{}).PublishGeneral(ctx, forge.NewClient(), b, token, pullSeven, "x"); err == nil || !strings.HasPrefix(err.Error(), "The token may not comment on pull requests in ") {
+		t.Fatalf("a token that may not answered %v", err)
 	}
 }

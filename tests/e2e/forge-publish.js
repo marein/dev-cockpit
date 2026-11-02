@@ -10,9 +10,10 @@ const { assert, sleep, BASE } = L;
 // Publish all comments in the sheet after asking, offered once the forge
 // poller read an open change request (data-forge-publish in the forge
 // fragment). A comment published becomes the thread of the forge it opened
-// (internal/linecomment Published), keeping its id, with the forge's icon,
-// its author and the link to its thread, and the poller's next read keeps it
-// as it stands. On GitLab a line the change adds names its new line, one both
+// (internal/linecomment Published) under the id that thread comes back under,
+// the one it had as was, which an open thread of it follows, with the forge's
+// icon, its author and the link to its thread, and the poller's next read
+// keeps it as it stands, its id too. On GitLab a line the change adds names its new line, one both
 // sides share its old one too; on a GitHub Enterprise Server it is a review
 // comment on the right side at the head commit. A comment on a line outside
 // the diff refuses every comment of the same publish, one whose quoted line
@@ -23,7 +24,11 @@ const { assert, sleep, BASE } = L;
 // under Settings › Assistants › Approvals): the dialog names each comment
 // with its line, the change request, branch, forge and project, Approve
 // publishes them and the note links each thread, a comment changed meanwhile
-// fails it. A guest of a shared link publishes nothing.
+// fails it. A project comment publishes as a general comment, a discussion
+// without a position on GitLab and a comment of the conversation on GitHub,
+// and becomes that general thread under Project; the row of Publish all
+// comments and its dialog say so beside the review threads. A guest of a
+// shared link publishes nothing.
 //
 // The forge is the runner's own fake (forge-fake.js) on FORGE_PORT (default
 // 3157), published on the host's loopback, where the instance reaches it at
@@ -41,6 +46,7 @@ const FAKE_ADDR = process.env.FORGE_ADDR || "127.0.0.1";
 const APISOCK = process.env.APISOCK || "/apisock/s";
 const TOKEN = `glpat-e2e${Date.now().toString(36)}Pb7uK3wQ5xZ1`;
 const DIALOG = ".swal2-popup:not(.swal2-toast)";
+const MODAL = "[data-editor-comment-modal]";
 const FILE = "src/login.go";
 const CONTENT = "package login\n\nfunc login() {\n\tname := bb\n\tc := 3\n\td := 4\n\treturn\n}\n\nfunc logout() {\n\treturn\n}\n";
 const PATCH = "@@ -1,8 +1,8 @@\n package login\n \n func login() {\n-\tname := b\n+\tname := bb\n \tc := 3\n \td := 4\n \treturn\n }";
@@ -161,8 +167,8 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
     assert(r.status === 200 && r.json.removed === 1, `removing ${name} answered ${r.status} ${JSON.stringify(r.json)}`);
   };
   const comments = (p = page, base = "") => p.evaluate((target) => fetch(target, { headers: { Accept: "application/json" } }).then((r) => r.json()).then((d) => d.comments), `${base}/projects/${project}/editor/comments`);
-  const byID = async (name) => (await comments()).find((c) => c.id === ids[name]);
-  const posts = () => fakeForge.log.filter((r) => r.method === "POST" && /\/discussions$|\/pulls\/7\/comments$/.test(r.path));
+  const byID = async (name) => (await comments()).find((c) => c.id === ids[name] || c.was === ids[name]);
+  const posts = () => fakeForge.log.filter((r) => r.method === "POST" && /\/discussions$|\/pulls\/7\/comments$|\/issues\/7\/comments$/.test(r.path));
   const postsAfter = (n) => posts().slice(n);
 
   const openEditor = async (p, base = BASE) => {
@@ -311,12 +317,24 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       await notReloaded(page);
     });
 
-    await run("Publish posts the comment on its line of the diff, it becomes a thread of GitLab linked there, without a reload", async () => {
+    await run("Publish posts the comment on its line of the diff, it becomes a thread of GitLab linked there under the id it keeps from then on, its open thread follows, without a reload", async () => {
       const before = fakeForge.log.length;
       await openSheet(page);
       await cellMenu(page, "Why bb?");
-      await page.locator(".dc-context-menu .dropdown-item", { hasText: "Publish" }).click();
-      await toast(page, "The comment is published on merge request !4.");
+      await page.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
+      await page.waitForFunction((sel) => document.querySelector(sel)?.classList.contains("show"), MODAL, { timeout: 6000 });
+      const named = () => page.$$eval(`${MODAL} [data-comment-note-author]`, (els) => els.map((e) => e.textContent.trim()).join("|"));
+      assert(await named() === "You", `the open thread names ${await named()}`);
+      const published = await post(`/projects/${project}/forge/publish`, { id: ids.added });
+      assert(published.status === 200 && published.json.message === "The comment is published on merge request !4.", `the publish answered ${published.status} ${published.text}`);
+      try {
+        await page.waitForFunction((sel) => [...document.querySelectorAll(`${sel} [data-comment-note-author]`)].map((e) => e.textContent.trim()).join("|") === "root", MODAL, { timeout: 15000 });
+      } catch {
+        throw new Error(`after the publish the open thread names ${await named()}`);
+      }
+      await page.click(`${MODAL} [data-editor-comment-cancel]`);
+      await page.waitForFunction((sel) => !document.querySelector(sel)?.classList.contains("show") && getComputedStyle(document.querySelector(sel)).display === "none", MODAL, { timeout: 6000 });
+      await openSheet(page);
       const sent = posts();
       assert(sent.length === 1 && sent[0].path === discussions && sent[0].query === "" && sent[0].auth === `Bearer ${TOKEN}`, `the forge was asked ${JSON.stringify(sent)}`);
       const want = { body: "Why bb?", position: { position_type: "text", base_sha: BASE_SHA, start_sha: BASE_SHA, head_sha: pushed, old_path: FILE, new_path: FILE, new_line: 4 } };
@@ -324,6 +342,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       const c = await byID("added");
       const { thread, ...origin } = c?.forge || {};
       assert(c && c.line === 4 && c.author === "root" && c.text === "Why bb?" && JSON.stringify(origin) === JSON.stringify({ kind: "gitlab", label: "GitLab", icon: "ti-brand-gitlab", url: `${mrPage}#note_50` }) && [undefined, "p50"].includes(thread), `the published comment reads ${JSON.stringify(c)}`);
+      assert(/^[0-9a-f]{16}$/.test(c.id) && c.id !== ids.added && c.was === ids.added, `the published comment stands as ${c.id}, was ${c.was}, it was written as ${ids.added}`);
       await forgeCell(page, "Why bb?", "ti-brand-gitlab", "root");
       await waitFor(() => {
         const after = fakeForge.log.slice(before);
@@ -332,7 +351,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       }, "the poller's read of the threads after the publish", 30000);
       await sleep(1500);
       const list = await comments();
-      assert(list.length === 1 && list[0].id === ids.added && list[0].line === 4 && list[0].forge?.url === `${mrPage}#note_50` && list[0].forge.thread === "p50", `after the poller's read the comments read ${JSON.stringify(list)}`);
+      assert(list.length === 1 && list[0].id === c.id && list[0].was === ids.added && list[0].line === 4 && list[0].forge?.url === `${mrPage}#note_50` && list[0].forge.thread === "p50", `after the poller's read the comments read ${JSON.stringify(list)}`);
       const items = await cellMenu(page, "Why bb?");
       assert(items.map((i) => i.label).join("|") === "Go to line|Open thread|Open the thread on GitLab", `the published comment's menu reads ${JSON.stringify(items)}`);
       await closeMenu(page);
@@ -487,6 +506,46 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       assert(on.status === 200, `switching it on answered ${on.status}`);
     });
 
+    await run("a project comment publishes as a general discussion of the merge request and becomes that general thread under Project, an assistant's after the approval", async () => {
+      await openEditor(page);
+      const made = await postJSON(`/projects/${project}/editor/comments`, { project: true, text: "Ready to merge?" });
+      assert(made.status === 200 && made.json.comment?.project, `the project comment answered ${made.status} ${JSON.stringify(made.json)}`);
+      ids.whole = made.json.comment.id;
+      await openSheet(page);
+      const items = await cellMenu(page, "Ready to merge?");
+      assert(items.map((i) => `${i.label} ${i.hint}`.trim()).join("|") === "Open thread|Publish !4|Delete", `the project comment's menu reads ${JSON.stringify(items)}`);
+      const sent = posts().length;
+      const before = fakeForge.log.length;
+      await page.locator(".dc-context-menu .dropdown-item", { hasText: "Publish" }).click();
+      await toast(page, "The comment is published on merge request !4.");
+      const asked = postsAfter(sent);
+      assert(asked.length === 1 && asked[0].path === discussions && asked[0].auth === `Bearer ${TOKEN}` && canon(asked[0].body) === canon({ body: "Ready to merge?" }), `the forge was asked ${JSON.stringify(asked)}`);
+      assert(!fakeForge.log.slice(before).some((r) => r.path.endsWith("/diffs")), "the publish of a project comment read the diff");
+      const id = 50 + state.published.length - 1;
+      await forgeCell(page, "Ready to merge?", "ti-brand-gitlab", "root");
+      await waitFor(async () => (await byID("whole"))?.forge?.thread === `p${id}`, "the poller's read of the general thread", 30000);
+      const c = await byID("whole");
+      assert(c.project && c.path === "" && c.author === "root" && c.forge.url === `${mrPage}#note_${id}` && !c.forge.unresolvable, `the published project comment reads ${JSON.stringify(c)}`);
+      const after = await cellMenu(page, "Ready to merge?");
+      assert(after.map((i) => i.label).join("|") === "Open thread|Open the thread on GitLab", `the published project comment's menu reads ${JSON.stringify(after)}`);
+      await closeMenu(page);
+      await closeSheet(page);
+      const asking = await postJSON(`/projects/${project}/editor/comments`, { project: true, text: "Squash it?" });
+      ids.squash = asking.json.comment?.id;
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      const answer = await asAssistant(assistant, `/projects/${project}/forge/publish`, { id: ids.squash });
+      const what = `Publish a project comment on merge request !4 of feature in ${project}`;
+      assert(answer.status === 200 && answer.json.pending === true && answer.json.what === what, `the socket answered ${answer.status} ${answer.raw}`);
+      await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
+      const rows = await dialogRows();
+      assert(JSON.stringify(rows.slice(1, 3)) === JSON.stringify([["Action", "Publish project comments"], ["Comment", "project · Squash it?"]]), `the dialog's rows read ${JSON.stringify(rows)}`);
+      await page.click(`${DIALOG} .swal2-confirm`);
+      await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+      const note = await approvalNote("done", 2);
+      const squash = 50 + state.published.length - 1;
+      assert(note.text.includes(`the project comment of feature in ${project} is published on the merge request !4 "Fix the login":`) && note.text.includes(`project ${mrPage}#note_${squash}`), `the note reads ${note.text}`);
+    });
+
     await run("GitHub: Publish posts a review comment on the right side at the head commit, and it becomes a thread of GitHub", async () => {
       await openEditor(page);
       const saved = await post(hostEdit, { form: "save", kind: "github", web_url: fakeWeb, aliases: alias });
@@ -518,6 +577,37 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       assert(after && after.line === 7 && after.forge?.url === `${prPage}#discussion_r${id}` && after.forge.thread === `PRRT_kwDOe2ep${id}`, `after the poller's read it reads ${JSON.stringify(after)}`);
       await closeSheet(page);
       await notReloaded(page);
+    });
+
+    await run("GitHub: Publish all says a project comment becomes a general comment, it publishes as a comment of the conversation, which stays read only without a thread", async () => {
+      const made = await postJSON(`/projects/${project}/editor/comments`, { project: true, text: "Ship it?" });
+      ids.ship = made.json.comment?.id;
+      await openSheet(page);
+      await waitPublishRow(page, "each a general comment on pull request #7");
+      await comment("mixed", 7, "Early return here too?");
+      await waitPublishRow(page, "each a review thread on pull request #7, a project comment a general one");
+      await page.locator("[data-editor-sheet-body] > .dropdown-item", { hasText: "Publish all comments" }).click();
+      await page.waitForSelector(DIALOG, { state: "visible", timeout: 6000 });
+      const said = { title: (await page.textContent(`${DIALOG} .swal2-title`)).trim(), text: (await page.textContent(`${DIALOG} .swal2-html-container`)).trim() };
+      assert(said.title === "Publish all 2 comments?" && said.text === "Each becomes a review thread of its own on pull request #7 on GitHub, a project comment a general one, for everybody who can read it there.", `the dialog says ${JSON.stringify(said)}`);
+      await page.click(`${DIALOG} .swal2-cancel`);
+      await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+      await uncomment("mixed");
+      await openSheet(page);
+      await waitPublishRow(page, "each a general comment on pull request #7");
+      const sent = posts().length;
+      await cellMenu(page, "Ship it?");
+      await page.locator(".dc-context-menu .dropdown-item", { hasText: "Publish" }).click();
+      await waitFor(() => posts().length > sent, "the comment of the conversation posted", 15000);
+      await toast(page, "The comment is published on pull request #7.");
+      const asked = postsAfter(sent);
+      assert(asked.length === 1 && asked[0].path === "/api/v3/repos/octo/app/issues/7/comments" && asked[0].auth === `Bearer ${TOKEN}` && canon(asked[0].body) === canon({ body: "Ship it?" }), `the forge was asked ${JSON.stringify(asked)}`);
+      const id = 60 + state.published.length - 1;
+      await forgeCell(page, "Ship it?", "ti-brand-github", "octocat");
+      await waitFor(async () => (await byID("ship"))?.forge?.unresolvable === true, "the poller's read of the conversation", 30000);
+      const c = await byID("ship");
+      assert(c.project && JSON.stringify(c.forge) === JSON.stringify({ kind: "github", label: "GitHub", icon: "ti-brand-github", url: `${prPage}#issuecomment-${id}`, unresolvable: true }), `the published project comment reads ${JSON.stringify(c)}`);
+      await closeSheet(page);
     });
 
     await run("phone: the sheet's Publish all comments stands within 390px", async () => {
@@ -570,7 +660,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       const item = page.locator("section#forges .list-group-item", { hasText: /^\s*Publish line comments/ });
       assert(await item.count() === 1, "no docs entry for the publish of line comments");
       const text = await item.innerText();
-      for (const said of ["Publish comment", "Publish all comments", "in the pushed head and in the change request's diff", "else the publish is refused as a whole", "becomes that review thread", "A guest's comment and one with replies do not publish", "goes behind a backslash", "forge-comment-publish", "only once you approve"]) {
+      for (const said of ["Publish comment", "Publish all comments", "in the pushed head and in the change request's diff", "else the publish is refused as a whole", "A project comment publishes as a general comment of the change request", "becomes that review thread", "A guest's comment and one with replies do not publish", "goes behind a backslash", "forge-comment-publish", "only once you approve"]) {
         assert(text.includes(said), `the entry lacks "${said}": ${text}`);
       }
       const tokens = await page.locator("section#forges .list-group-item", { hasText: "Tokens and the connection test" }).innerText();

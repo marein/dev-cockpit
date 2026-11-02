@@ -20,9 +20,10 @@ import (
 // thread opens with.
 const maxThreadOpening = 200
 
-// handleProjectForgeThread answers or resolves a review thread on the diff of
-// the change request of a project's branch, the one HEAD is on unless the
-// form names another: the thread by the forge's id, answered with the form's
+// handleProjectForgeThread answers or resolves a review thread of the change
+// request of a project's branch, on its diff or a general one, the branch
+// HEAD is on unless the form names another: the thread by the forge's id,
+// answered with the form's
 // body where it has one, then resolved where the form asks. The forge is read
 // again first, and the line comments follow with the poller's read right
 // after. A click in the browser writes at once. An assistant's call over the
@@ -138,7 +139,7 @@ func (s *Server) forgeThreadApproval(owner string, w forge.Watch, target forge.T
 		Owner:    owner,
 		Kind:     approvalForgeThread,
 		Key:      strings.Join([]string{project, branch, write.Thread}, "\n"),
-		What:     fmt.Sprintf("%s at %s:%d on %s %s of %s in %s", action, plaintext.Visible(target.Thread.Path), target.Thread.Line, kind.ChangeNoun, ref, plaintext.Visible(branch), project),
+		What:     fmt.Sprintf("%s %s on %s %s of %s in %s", action, forgeThreadPlace(target.Thread), kind.ChangeNoun, ref, plaintext.Visible(branch), project),
 		Details:  details,
 		Projects: []string{project},
 		Run: func() (string, error) {
@@ -164,10 +165,22 @@ func (s *Server) forgeThreadApproval(owner string, w forge.Watch, target forge.T
 	}
 }
 
+// forgeThreadPlace is where a thread stands in the words of an approval's
+// head line: at its file and line, or in the conversation for a general one.
+func forgeThreadPlace(t forge.Thread) string {
+	if t.Path == "" {
+		return "in the conversation"
+	}
+	return fmt.Sprintf("at %s:%d", plaintext.Visible(t.Path), t.Line)
+}
+
 // forgeThreadOpening is where a thread stands and the start of the note it
 // opens with, the way an approval names the thread.
 func forgeThreadOpening(t forge.Thread) string {
 	at := fmt.Sprintf("%s:%d", t.Path, t.Line)
+	if t.Path == "" {
+		at = "the conversation"
+	}
 	if len(t.Notes) == 0 {
 		return at
 	}

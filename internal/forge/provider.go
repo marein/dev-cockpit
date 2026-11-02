@@ -81,8 +81,8 @@ type ChangeOpener interface {
 	OpenChange(ctx context.Context, c *Client, b Binding, token, source string, o NewChange) (Change, error)
 }
 
-// Publisher is a provider that publishes notes as review threads on the diff
-// of a change request.
+// Publisher is a provider that publishes notes on a change request, as review
+// threads on its diff and as general comments.
 type Publisher interface {
 	// ChangeDiff reads the diff of ch, an open change request of b's
 	// repository, as the forge shows it now. A failure is the sentence the
@@ -92,20 +92,25 @@ type Publisher interface {
 	// ChangeDiff read of it, and answers its note as the forge has it. A
 	// failure is the sentence the user reads.
 	PublishNote(ctx context.Context, c *Client, b Binding, token string, ch Change, d Diff, p Placed) (Note, error)
+	// PublishGeneral posts body as a general comment of ch, an open change
+	// request of b's repository, a thread of its own where the forge keeps
+	// them as threads, and answers its note as the forge has it. A failure
+	// is the sentence the user reads.
+	PublishGeneral(ctx context.Context, c *Client, b Binding, token string, ch Change, body string) (Note, error)
 }
 
 // Replier is a provider that answers review threads.
 type Replier interface {
-	// Reply posts body as a note of t, a thread on the diff of ch that
-	// Threads read, and answers the note as the forge has it. A failure is
-	// the sentence the user reads.
+	// Reply posts body as a note of t, a thread of ch that Threads read, on
+	// its diff or a general one that is no Single note, and answers the note
+	// as the forge has it. A failure is the sentence the user reads.
 	Reply(ctx context.Context, c *Client, b Binding, token string, ch Change, t Thread, body string) (Note, error)
 }
 
 // Resolver is a provider that resolves review threads.
 type Resolver interface {
-	// Resolve resolves t, a thread on the diff of ch that Threads read
-	// resolvable and not resolved. A failure is the sentence the user reads.
+	// Resolve resolves t, a thread of ch that Threads read resolvable and
+	// not resolved. A failure is the sentence the user reads.
 	Resolve(ctx context.Context, c *Client, b Binding, token string, ch Change, t Thread) error
 }
 

@@ -1,4 +1,4 @@
-On {{.Forge}} {{md .Address}} {{if eq (len .Notes) 1}}the line comment of {{md .Branch}} in {{md .Project}} is published on the {{.Noun}} {{.Ref}} "{{md .Title}}"{{else}}{{len .Notes}} line comments of {{md .Branch}} in {{md .Project}} are published on the {{.Noun}} {{.Ref}} "{{md .Title}}", each a review thread of its own{{end}}:
+On {{.Forge}} {{md .Address}} {{.Comments}} of {{md .Branch}} in {{md .Project}} {{if eq (len .Notes) 1}}is{{else}}are{{end}} published on the {{.Noun}} {{.Ref}} "{{md .Title}}"{{if gt (len .Notes) 1}}, each {{if .General}}a thread{{else}}a review thread{{end}} of its own{{end}}:
 {{- range .Notes}}
-- {{md .Path}}:{{.Line}} {{.URL}}
+- {{if .Project}}project{{else}}{{md .Path}}:{{.Line}}{{end}} {{.URL}}
 {{- end}}

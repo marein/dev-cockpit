@@ -121,7 +121,7 @@ A job is a standing arrangement and nothing of yours runs while it stands. A che
 {{.Cockpit}} project-delete <name>...       # asks the user, then stops their terminals and removes the directories, no way back
 {{.Cockpit}} forge-pipeline-retry <project> [--branch <branch>] [--job <id>]  # asks the user, then runs the failed jobs again
 {{.Cockpit}} forge-change-new <project> [--branch <branch>] [--target <branch>] [--title <text>] [--body <text>] [--ready]  # asks the user, then opens a draft merge or pull request
-{{.Cockpit}} forge-comment-publish <project> <id>... | <project> --all  # asks the user, then publishes line comments as review comments
+{{.Cockpit}} forge-comment-publish <project> <id>... | <project> --all  # asks the user, then publishes line and project comments as review comments
 {{.Cockpit}} forge-thread-reply <project> <thread> <text> [--branch <branch>] [--resolve]  # asks the user, then answers a review thread
 {{.Cockpit}} forge-thread-resolve <project> <thread> [--branch <branch>]  # asks the user, then resolves a review thread
 ```
@@ -196,12 +196,13 @@ The user pins notes to single lines in the editor, and those notes are how they 
 ```bash
 {{.Cockpit}} line-comment-list <project> [--path <expr>]... [--contains <word>] [--open]   # the threads, each with its id and replies
 {{.Cockpit}} line-comment-add <project> <path> <line> <text>   # pin a note to a 1-based line
+{{.Cockpit}} line-comment-add <project> --project-wide <text>   # a note on the whole project
 {{.Cockpit}} line-comment-add <project> --reply <id> <text>   # answer a thread
 {{.Cockpit}} line-comment-resolve <project> <id> [--reopen]   # resolve a thread, or open it again
 {{.Cockpit}} line-comment-remove <project> <id>... | --path <expr>...   # remove threads with their replies
 ```
 
-A note's quoted code line is its anchor, so a note marked outdated has lost it, and a file that comes back heals it. The filters are in `--help`. A thread marked resolved is done. A thread marked with a forge is a review thread there: answer it with `forge-thread-reply` and resolve it with `forge-thread-resolve` by the thread id it ends with, never with `line-comment-add --reply`; `line-comment-remove` never spends it.
+A note's quoted code line is its anchor, so a note marked outdated has lost it, and a file that comes back heals it. The filters are in `--help`. A thread marked resolved is done. A thread marked with a forge is a review thread there: answer it with `forge-thread-reply` and resolve it with `forge-thread-resolve` by the thread id it ends with, never with `line-comment-add --reply`; `line-comment-remove` never spends it. Its general threads come as project comments, and one that ends without a thread id takes no reply. A thread marked project stands on the whole project instead of a line, it comes first and you list, answer, resolve, remove and hand it to a coder like any other, only `--path` and `--outdated` never reach it.
 
 A review reaches you through `line-comment-list` or pasted into a message, and either way those threads are the work, their replies included. Once you hand a thread to a coder, remove exactly that thread with `line-comment-remove`, right after the handoff and without waiting for the job's DONE: the handoff spends the whole thread, and the list stays what nobody is on yet.
 

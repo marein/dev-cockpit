@@ -66,7 +66,8 @@ type View struct {
 // Everything else is honestly outdated: the quote gone or ambiguous, the
 // file missing, renamed or no longer readable as text. An empty quote never
 // rebinds, every empty line would match it. Deliberately nothing fuzzy here:
-// the quote matches exactly, or the comment is outdated.
+// the quote matches exactly, or the comment is outdated. A project comment
+// stands on no file, it is never outdated and leads the answer.
 func Reconcile(root string, list []Comment) ([]View, map[string][]Comment) {
 	files := map[string][]string{}
 	readable := map[string]bool{}
@@ -85,6 +86,10 @@ func Reconcile(root string, list []Comment) ([]View, map[string][]Comment) {
 	rebinds := map[string][]Comment{}
 	for _, comment := range list {
 		view := View{Comment: comment}
+		if comment.Project {
+			views = append(views, view)
+			continue
+		}
 		lines, ok := linesOf(comment.Path)
 		// TODO(v2.0.0): a released build quoted the disk with the carriage
 		// return of a Windows line ending, FileLine cuts it on both sides.
@@ -99,12 +104,7 @@ func Reconcile(root string, list []Comment) ([]View, map[string][]Comment) {
 		}
 		views = append(views, view)
 	}
-	sort.SliceStable(views, func(i, j int) bool {
-		if views[i].Path != views[j].Path {
-			return views[i].Path < views[j].Path
-		}
-		return views[i].Line < views[j].Line
-	})
+	sort.SliceStable(views, func(i, j int) bool { return before(views[i].Comment, views[j].Comment) })
 	return views, rebinds
 }
 

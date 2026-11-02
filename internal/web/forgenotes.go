@@ -18,8 +18,8 @@ const forgeQuoteTimeout = 30 * time.Second
 // project's branch into the project's line comments: every thread on a line
 // of the diff is one, its notes the thread's, at the thread's line with the
 // text that line has in the commit the forge names, or the text the forge
-// gives. A thread on a whole file and a general one stand on no line,
-// forge-show lists them.
+// gives, and every general thread a project comment. A thread on a whole
+// file stands on no line, forge-show lists it.
 func (s *Server) ForgeReview(r forge.ReviewRead) {
 	p, err := s.projects.FindByName(r.Watch.Project)
 	if err != nil || !p.GitRepo {
@@ -27,7 +27,7 @@ func (s *Server) ForgeReview(r forge.ReviewRead) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), forgeQuoteTimeout)
 	defer cancel()
-	threads := lineThreads(ctx, git.New(p.Path), r)
+	threads := append(lineThreads(ctx, git.New(p.Path), r), generalThreads(r)...)
 	if s.lineComments.SyncForge(p.Name, p.Path, threads, !r.Review.Partial) {
 		s.publishLineComments(p.Name)
 	}
@@ -73,11 +73,37 @@ func lineThreads(ctx context.Context, repo *git.Repo, r forge.ReviewRead) []line
 			continue
 		}
 		text, quoted := quote(t)
-		thread := linecomment.ForgeThread{Kind: r.Watch.Binding.Host.Kind.ID, ID: t.ID, URL: t.Notes[0].URL, Resolved: t.Resolved, At: linecomment.Place{Path: t.Path, Line: t.Line, Quote: text, Quoted: quoted}}
-		for _, n := range t.Notes {
-			thread.Notes = append(thread.Notes, linecomment.ForgeNote{ID: n.ID, Author: n.Author, Text: n.Body, Created: n.Created})
-		}
+		thread := forgeLineThread(r, t)
+		thread.At = linecomment.Place{Path: t.Path, Line: t.Line, Quote: text, Quoted: quoted}
 		threads = append(threads, thread)
 	}
 	return threads
+}
+
+// generalThreads are the general threads of r, each standing on the project.
+func generalThreads(r forge.ReviewRead) []linecomment.ForgeThread {
+	var threads []linecomment.ForgeThread
+	for _, t := range r.Review.General {
+		if len(t.Notes) == 0 {
+			continue
+		}
+		thread := forgeLineThread(r, t)
+		thread.Project = true
+		threads = append(threads, thread)
+	}
+	return threads
+}
+
+// forgeLineThread is t of r with its notes, its page the first note's, its
+// id only where it takes a reply and unresolvable where it takes no resolve.
+func forgeLineThread(r forge.ReviewRead, t forge.Thread) linecomment.ForgeThread {
+	reply, resolve := t.Takes()
+	thread := linecomment.ForgeThread{Kind: r.Watch.Binding.Host.Kind.ID, URL: t.Notes[0].URL, Unresolvable: !resolve, Resolved: t.Resolved}
+	if reply {
+		thread.ID = t.ID
+	}
+	for _, n := range t.Notes {
+		thread.Notes = append(thread.Notes, linecomment.ForgeNote{ID: n.ID, Author: n.Author, Text: n.Body, Created: n.Created})
+	}
+	return thread
 }

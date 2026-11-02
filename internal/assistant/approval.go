@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -186,7 +187,7 @@ func ForgeChanged(c ForgeChange) ForgeOutcome {
 	return forgeOutcome("forge_changed.md.tmpl", c)
 }
 
-// ForgePublish is a publish of line comments on a forge that went through:
+// ForgePublish is a publish of comments on a forge that went through:
 // the forge's label and the repository's address there, the change request's
 // noun and number in the forge's words and its title, the branch and the
 // project the comments are of, and each note it posted.
@@ -202,31 +203,54 @@ type ForgePublish struct {
 }
 
 // ForgePublishedNote is one comment a publish posted: its file, its line in
-// the pushed head and the page of its thread on the forge.
+// the pushed head and the page of its thread on the forge. Project marks a
+// project comment, posted as a general comment without a file and a line.
 type ForgePublishedNote struct {
-	Path string
-	Line int
-	URL  string
+	Path    string
+	Line    int
+	URL     string
+	Project bool
 }
 
-// ForgePublished is the outcome of a publish of line comments. What the forge
+// ForgePublished is the outcome of a publish of comments. What the forge
 // or a file name holds is written visible, so none of it breaks a line of the
 // thread it stands in.
 func ForgePublished(p ForgePublish) ForgeOutcome {
 	for _, field := range []*string{&p.Forge, &p.Address, &p.Noun, &p.Ref, &p.Title, &p.Branch, &p.Project} {
 		*field = plaintext.Visible(*field)
 	}
+	project := 0
 	for i := range p.Notes {
 		p.Notes[i].Path, p.Notes[i].URL = plaintext.Visible(p.Notes[i].Path), plaintext.Visible(p.Notes[i].URL)
+		if p.Notes[i].Project {
+			project++
+		}
 	}
-	return forgeOutcome("forge_published.md.tmpl", p)
+	data := struct {
+		ForgePublish
+		Comments string
+		General  bool
+	}{ForgePublish: p, General: project > 0}
+	kind := "line comment"
+	switch {
+	case project == len(p.Notes):
+		kind = "project comment"
+	case project > 0:
+		kind = "comment"
+	}
+	data.Comments = "the " + kind
+	if len(p.Notes) != 1 {
+		data.Comments = fmt.Sprintf("%d %ss", len(p.Notes), kind)
+	}
+	return forgeOutcome("forge_published.md.tmpl", data)
 }
 
 // ForgeThread is a write on a review thread on a forge that went through:
 // the forge's label and the repository's address there, the change request's
 // noun and number in the forge's words and its title, the branch and the
-// project, the file and the line the thread stands on, whether a reply was
-// posted, the page of that reply, and whether the thread is resolved now.
+// project, the file and the line the thread stands on, none for a general
+// one, whether a reply was posted, the page of that reply, and whether the
+// thread is resolved now.
 type ForgeThread struct {
 	Forge    string
 	Address  string

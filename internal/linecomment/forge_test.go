@@ -196,11 +196,11 @@ func TestSyncForgeKnowsAThreadByItsIDOrItsOpeningNote(t *testing.T) {
 	}
 }
 
-// A thread of the forge stands under an id derived from the project and its
-// id there, so it comes back under the same one after a drop, also once the
-// note that opens it went, and one a read names no id of under the one of its
-// opening note. Another thread, another project bound to the same change
-// request and an id a person's thread holds give another one.
+// A thread of the forge stands under an id derived from the project and the
+// note that opens it, whether a read names the thread's id or not, so it
+// comes back under the same one after a drop, and keeps it while it stands
+// once that note went. Another thread, another project bound to the same
+// change request and an id a person's thread holds give another one.
 func TestAThreadOfTheForgeComesBackUnderItsID(t *testing.T) {
 	root := t.TempDir()
 	s := New(t.TempDir())
@@ -214,19 +214,23 @@ func TestAThreadOfTheForgeComesBackUnderItsID(t *testing.T) {
 		t.Fatalf("the threads stand under %q and %q", first, second)
 	}
 	s.DropForge(func(string) bool { return true })
-	thread.Notes = thread.Notes[1:]
 	other := forgeThread("40", "root", "And d?", 6, "d := 4")
 	other.ID = "d2"
 	s.SyncForge("p", root, []ForgeThread{thread, bare, other}, true)
-	if forgeOf(t, s, "33").ID != first || forgeOf(t, s, "30").ID != second || !shape.MatchString(forgeOf(t, s, "40").ID) || forgeOf(t, s, "40").ID == first {
+	if forgeOf(t, s, "29").ID != first || forgeOf(t, s, "30").ID != second || !shape.MatchString(forgeOf(t, s, "40").ID) || forgeOf(t, s, "40").ID == first {
 		t.Fatalf("the threads came back as %+v", s.List("p"))
+	}
+	thread.Notes = thread.Notes[1:]
+	s.SyncForge("p", root, []ForgeThread{thread, bare, other}, true)
+	if forgeOf(t, s, "33").ID != first {
+		t.Fatalf("the thread whose opening note went reads %+v", s.List("p"))
 	}
 	s.SyncForge("q", root, []ForgeThread{thread}, true)
 	if list := s.List("q"); len(list) != 1 || !shape.MatchString(list[0].ID) || list[0].ID == first {
 		t.Fatalf("another project bound to the change request holds %+v", list)
 	}
 
-	mine := statefile.DerivedID(nil, "r", thread.keys()[0])
+	mine := statefile.DerivedID(nil, "r", thread.idKey())
 	if err := os.WriteFile(s.file("r"), []byte(`[{"id":"`+mine+`","path":"src/a.go","line":1,"text":"mine","updatedAt":"2026-10-29T10:00:00Z"}]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -363,11 +367,12 @@ func TestDropForgeTakesTheThreadsOfTheForgeOfTheProjectsPicked(t *testing.T) {
 }
 
 // A comment the owner published becomes the thread of the forge it opened,
-// keeping its id and the line it followed the file to, and the next read of
-// the thread keeps it as it stands, also once it names the thread's id; a
-// thread a read brought for it first goes, a guest's comment, a thread of the
-// forge, an id nobody holds and a note id longer than any a forge hands out
-// change nothing.
+// keeping the line it followed the file to, under the id the thread comes
+// back under with the one it had as Was, and the next read of the thread
+// keeps it as it stands, also once it names the thread's id; a thread a read
+// brought for it first goes and leaves it its id, a guest's comment, a thread
+// of the forge, an id nobody holds and a note id longer than any a forge
+// hands out change nothing.
 func TestAPublishedCommentBecomesItsThreadOfTheForge(t *testing.T) {
 	root := t.TempDir()
 	s := New(t.TempDir())
@@ -392,10 +397,10 @@ func TestAPublishedCommentBecomesItsThreadOfTheForge(t *testing.T) {
 	}
 	c := forgeOf(t, s, "39")
 	want := Forge{Kind: "gitlab", Note: "39", URL: "https://gitlab.example.com/team/app/-/merge_requests/4#note_39", At: Place{Path: "src/a.go", Line: 4, Quote: "name := b", Quoted: true}}
-	if c.ID != own.ID || c.Line != 6 || c.LineText != "name := b" || c.Author != "root" || c.Text != "New name?" || *c.Forge != want {
+	if c.ID != statefile.DerivedID(nil, "p", published[own.ID].idKey()) || c.Was != own.ID || c.Line != 6 || c.LineText != "name := b" || c.Author != "root" || c.Text != "New name?" || *c.Forge != want {
 		t.Fatalf("the published comment reads %+v %+v", c, c.Forge)
 	}
-	if c := forgeOf(t, s, "40"); c.ID != other.ID || c.Line != 7 {
+	if c := forgeOf(t, s, "40"); c.ID != raced.ID || c.Was != other.ID || c.Line != 7 {
 		t.Fatalf("the thread a read brought first stands in place of the published one: %+v", c)
 	}
 	read := []ForgeThread{forgeThread("39", "root", "New name?", 4, "name := b"), forgeThread("40", "root", "Raced", 5, "c := 3")}
@@ -405,7 +410,145 @@ func TestAPublishedCommentBecomesItsThreadOfTheForge(t *testing.T) {
 	read[0].ID = "p39"
 	read[0].Notes = append(read[0].Notes, ForgeNote{ID: "44", Author: "alice", Text: "Sure."})
 	s.SyncForge("p", root, read, true)
-	if c := forgeOf(t, s, "39"); c.ID != own.ID || c.Line != 6 || c.Forge.Thread != "p39" || len(c.Replies) != 1 {
-		t.Fatalf("after the read the published comment reads %+v", c)
+	if got := forgeOf(t, s, "39"); got.ID != c.ID || got.Was != own.ID || got.Line != 6 || got.Forge.Thread != "p39" || len(got.Replies) != 1 {
+		t.Fatalf("after the read the published comment reads %+v", got)
+	}
+}
+
+// A published comment, a line comment, a project comment and one the forge
+// keeps as a note alone, stands under its id for good: a read that names its
+// thread, a drop and a restart do not change it.
+func TestAPublishedCommentKeepsItsIDAcrossADrop(t *testing.T) {
+	root, state := t.TempDir(), t.TempDir()
+	s := New(state)
+	line, _, _ := s.Save("p", Comment{Path: "src/a.go", Line: 4, LineText: "name := b", Text: "New name?"}, Writer{})
+	whole, _, _ := s.Save("p", Comment{Project: true, Text: "Ready?"}, Writer{})
+	alone, _, _ := s.Save("p", Comment{Project: true, Text: "Ship it?"}, Writer{})
+	posted := generalThread("50", "root", "Ready?")
+	posted.ID = ""
+	single := generalThread("IC_60", "octocat", "Ship it?")
+	single.ID = ""
+	if !s.Published("p", map[string]ForgeThread{line.ID: forgeThread("39", "root", "New name?", 4, "name := b"), whole.ID: posted, alone.ID: single}) {
+		t.Fatal("the publish changed nothing")
+	}
+	ids := map[string]string{}
+	for note, was := range map[string]string{"39": line.ID, "50": whole.ID, "IC_60": alone.ID} {
+		c := forgeOf(t, s, note)
+		if c.ID == was || c.Was != was || !regexp.MustCompile(`^[0-9a-f]{16}$`).MatchString(c.ID) {
+			t.Fatalf("the published comment of note %s reads %+v", note, c)
+		}
+		ids[note] = c.ID
+	}
+	read := forgeThread("39", "root", "New name?", 4, "name := b")
+	read.ID = "p39"
+	general := generalThread("50", "root", "Ready?")
+	single.Unresolvable = true
+	threads := []ForgeThread{read, general, single}
+	for round := range 3 {
+		s.SyncForge("p", root, threads, true)
+		for note, id := range ids {
+			if got := forgeOf(t, s, note).ID; got != id {
+				t.Fatalf("in round %d the thread of note %s stands as %s, it was published as %s", round, note, got, id)
+			}
+		}
+		s.DropForge(func(string) bool { return true })
+		s = New(state)
+	}
+}
+
+func generalThread(note, author, text string, replies ...ForgeNote) ForgeThread {
+	return ForgeThread{
+		Kind:    "gitlab",
+		ID:      "g" + note,
+		URL:     "https://gitlab.example.com/team/app/-/merge_requests/4#note_" + note,
+		Project: true,
+		Notes:   append([]ForgeNote{{ID: note, Author: author, Text: text}}, replies...),
+	}
+}
+
+// A general thread of the forge is a project comment of the forge: no file,
+// no line, no quote, its notes and resolved state the forge's, whether the
+// forge resolves it kept beside. It comes back under the same id after a
+// drop, by the thread's id, or by its note where the forge names no thread,
+// and one that names a place is left out.
+func TestAGeneralThreadOfTheForgeIsAProjectComment(t *testing.T) {
+	root, state := t.TempDir(), t.TempDir()
+	s := New(state)
+	own, _, _ := s.Save("p", Comment{Project: true, Text: "mine"}, Writer{})
+	thread := generalThread("34", "root", "Ready?", ForgeNote{ID: "35", Author: "alice", Text: "Soon."})
+	thread.Resolved = true
+	alone := generalThread("36", "hubot", "Looks good")
+	alone.ID, alone.Unresolvable = "", true
+	placed := generalThread("37", "root", "Placed")
+	placed.At = Place{Path: "src/a.go", Line: 1}
+	if !s.SyncForge("p", root, []ForgeThread{thread, alone, placed}, true) {
+		t.Fatal("the read changed nothing")
+	}
+	c := forgeOf(t, s, "34")
+	if !c.Project || c.Path != "" || c.Line != 0 || c.LineText != "" || c.Text != "Ready?" || !c.Resolved || len(c.Replies) != 1 || c.Forge.Thread != "g34" || c.Forge.Unresolvable || c.Forge.At != (Place{}) {
+		t.Fatalf("the general thread reads %+v %+v", c, c.Forge)
+	}
+	if a := forgeOf(t, s, "36"); !a.Project || a.Forge.Thread != "" || !a.Forge.Unresolvable {
+		t.Fatalf("the note the forge keeps alone reads %+v %+v", a, a.Forge)
+	}
+	list := s.List("p")
+	if len(list) != 3 || !list[0].Project || !list[1].Project || !list[2].Project || slices.ContainsFunc(list, func(c Comment) bool { return c.Text == "Placed" }) {
+		t.Fatalf("the list reads %+v", list)
+	}
+	if views, _ := s.Reconciled("p", root); slices.ContainsFunc(views, func(v View) bool { return v.Outdated }) {
+		t.Fatalf("a project comment of the forge reads outdated: %+v", views)
+	}
+	ids := map[string]string{"34": c.ID, "36": forgeOf(t, s, "36").ID}
+	if s.SyncForge("p", root, []ForgeThread{thread, alone}, true) {
+		t.Fatal("the same read changed something")
+	}
+	for range 2 {
+		s.DropForge(func(string) bool { return true })
+		if list := s.List("p"); len(list) != 1 || list[0].ID != own.ID {
+			t.Fatalf("after the drop the list reads %+v", list)
+		}
+		s2 := New(state)
+		s2.SyncForge("p", root, []ForgeThread{thread, alone}, true)
+		for note, id := range ids {
+			if got := forgeOf(t, s2, note).ID; got != id {
+				t.Fatalf("the thread of note %s came back as %s, it stood as %s", note, got, id)
+			}
+		}
+	}
+	if _, _, err := s.Reply("p", c.ID, Reply{Text: "here"}, Writer{}); !errors.Is(err, ErrForgeThread) {
+		t.Fatalf("a reply here on a general thread of the forge answered %v", err)
+	}
+	if _, _, err := s.Resolve("p", c.ID, false, Writer{}); !errors.Is(err, ErrForgeThread) {
+		t.Fatalf("a reopen here of a general thread of the forge answered %v", err)
+	}
+	if n := s.Remove("p", func(Comment) bool { return true }); n != 1 {
+		t.Fatalf("a remove of everything took %d", n)
+	}
+}
+
+// The owner's project comment a publish posted becomes the general thread it
+// opened, under the id the thread comes back under, and the next read keeps
+// it as it stands; one the forge took on a line stays as it was.
+func TestAPublishedProjectCommentBecomesItsGeneralThread(t *testing.T) {
+	root := t.TempDir()
+	s := New(t.TempDir())
+	own, _, _ := s.Save("p", Comment{Project: true, Text: "Ready?"}, Writer{})
+	line, _, _ := s.Save("p", Comment{Path: "src/a.go", Line: 1, Text: "Here?"}, Writer{})
+	posted := generalThread("50", "root", "Ready?")
+	posted.ID = ""
+	if s.Published("p", map[string]ForgeThread{line.ID: generalThread("51", "root", "Here?"), own.ID: forgeThread("52", "root", "Ready?", 1, "")}) {
+		t.Fatal("a comment the forge took on the other kind of place was published")
+	}
+	if !s.Published("p", map[string]ForgeThread{own.ID: posted}) {
+		t.Fatal("the publish changed nothing")
+	}
+	c := forgeOf(t, s, "50")
+	if c.ID == own.ID || c.Was != own.ID || !c.Project || c.Path != "" || c.Author != "root" || c.Forge.Thread != "" {
+		t.Fatalf("the published project comment reads %+v %+v", c, c.Forge)
+	}
+	read := generalThread("50", "root", "Ready?")
+	s.SyncForge("p", root, []ForgeThread{read}, true)
+	if got := forgeOf(t, s, "50"); got.ID != c.ID || got.Forge.Thread != "g50" || !got.Project {
+		t.Fatalf("after the read the published project comment reads %+v %+v", got, got.Forge)
 	}
 }

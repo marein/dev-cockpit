@@ -33,9 +33,12 @@ func checkCommentPath(c *gin.Context, root, rel string) bool {
 // never stored, so a file that comes back heals its comments by itself, and
 // where a thread of the forge came from. Resolved is the thread's state. Mine
 // marks a note the reading guest wrote under its own link. Nothing of the link a guest wrote a note under
-// shows, another guest has no business with it.
+// shows, another guest has no business with it. Project marks a thread on the
+// whole project, its path empty and its line 0. Was is the id a published
+// comment had before, which a page that held it follows.
 type lineCommentView struct {
 	ID        string           `json:"id"`
+	Project   bool             `json:"project,omitempty"`
 	Path      string           `json:"path"`
 	Line      int              `json:"line"`
 	LineText  string           `json:"lineText,omitempty"`
@@ -44,6 +47,7 @@ type lineCommentView struct {
 	Forge     *forgeThreadView `json:"forge,omitempty"`
 	Replies   []lineReplyView  `json:"replies,omitempty"`
 	Resolved  bool             `json:"resolved,omitempty"`
+	Was       string           `json:"was,omitempty"`
 	UpdatedAt time.Time        `json:"updatedAt"`
 	Outdated  bool             `json:"outdated,omitempty"`
 	Mine      bool             `json:"mine,omitempty"`
@@ -60,14 +64,16 @@ type lineReplyView struct {
 }
 
 // forgeThreadView is what a reader sees of where a thread of the forge came
-// from: the kind of forge with its name and icon and the thread's page there.
-// The owner, who answers and resolves threads, reads the thread's id too.
+// from: the kind of forge with its name and icon, the thread's page there and
+// whether the forge resolves it. The owner, who answers and resolves threads,
+// reads the thread's id too, none for a note the forge keeps alone.
 type forgeThreadView struct {
-	Kind   string `json:"kind"`
-	Label  string `json:"label"`
-	Icon   string `json:"icon"`
-	URL    string `json:"url,omitempty"`
-	Thread string `json:"thread,omitempty"`
+	Kind         string `json:"kind"`
+	Label        string `json:"label"`
+	Icon         string `json:"icon"`
+	URL          string `json:"url,omitempty"`
+	Thread       string `json:"thread,omitempty"`
+	Unresolvable bool   `json:"unresolvable,omitempty"`
 }
 
 // commentWriterOf answers who a request writes line comments as, the guest
@@ -83,6 +89,7 @@ func commentWriterOf(c *gin.Context) linecomment.Writer {
 func (s *Server) commentView(w linecomment.Writer, v linecomment.View) lineCommentView {
 	view := lineCommentView{
 		ID:        v.ID,
+		Project:   v.Project,
 		Path:      v.Path,
 		Line:      v.Line,
 		LineText:  v.LineText,
@@ -90,6 +97,7 @@ func (s *Server) commentView(w linecomment.Writer, v linecomment.View) lineComme
 		Author:    v.Author,
 		UpdatedAt: v.UpdatedAt,
 		Resolved:  v.Resolved,
+		Was:       v.Was,
 		Outdated:  v.Outdated,
 		Mine:      w.Link != "" && v.Link == w.Link,
 	}
@@ -98,7 +106,7 @@ func (s *Server) commentView(w linecomment.Writer, v linecomment.View) lineComme
 	}
 	if f := v.Forge; f != nil {
 		kind := s.forgeKind(f.Kind)
-		view.Forge = &forgeThreadView{Kind: f.Kind, Label: kind.Label, Icon: kind.Icon, URL: f.URL}
+		view.Forge = &forgeThreadView{Kind: f.Kind, Label: kind.Label, Icon: kind.Icon, URL: f.URL, Unresolvable: f.Unresolvable}
 		if w.Link == "" {
 			view.Forge.Thread = f.Thread
 		}
@@ -132,8 +140,8 @@ func (s *Server) reconciledLineComments(p project.Project) []linecomment.View {
 // the gutter marks, the sheet and every catch-up after the linecomments
 // event pull, each judged against the disk on the way out. `?path=` narrows
 // the answer for the CLI's list, it may repeat and each value ors in an
-// exact file, a folder, or a glob with * and **; the browser asks without
-// one and gets everything.
+// exact file, a folder, or a glob with * and **, and leaves the project
+// comments out; the browser asks without one and gets everything.
 func (s *Server) handleEditorComments(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -143,7 +151,7 @@ func (s *Server) handleEditorComments(c *gin.Context) {
 	patterns := c.QueryArray("path")
 	list := []lineCommentView{}
 	for _, comment := range s.reconciledLineComments(p) {
-		if len(patterns) == 0 || linecomment.MatchesAnyPath(patterns, comment.Path) {
+		if len(patterns) == 0 || comment.OnPath(patterns) {
 			list = append(list, s.commentView(w, comment))
 		}
 	}
@@ -152,6 +160,7 @@ func (s *Server) handleEditorComments(c *gin.Context) {
 
 type editorCommentSaveRequest struct {
 	ID       string  `json:"id"`
+	Project  bool    `json:"project"`
 	Path     string  `json:"path"`
 	Line     int     `json:"line"`
 	LineText *string `json:"lineText"`
@@ -200,9 +209,11 @@ func (s *Server) answerThread(c *gin.Context, p project.Project, w linecomment.W
 
 // handleEditorCommentSave stores the first note of a thread: a new one
 // without an id, an edited one under its id, and a renamed file's note under
-// its id with the new path. A guest's note is written under its link, a new
-// one is news for the owner, and a note of anybody else is refused to it, a
-// thread of the forge to everybody.
+// its id with the new path. With project the thread stands on the whole
+// project and the request names no path, line or quote, without it a line
+// comment names a path and a line. A guest's note is written under its link,
+// a new one is news for the owner, and a note of anybody else is refused to
+// it, a thread of the forge to everybody.
 func (s *Server) handleEditorCommentSave(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -213,11 +224,7 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
 		return
 	}
-	if !checkCommentPath(c, p.Path, req.Path) {
-		return
-	}
-	if req.Line < 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "A line number is required."})
+	if !checkCommentPlace(c, p.Path, req) {
 		return
 	}
 	if req.Text, ok = noteText(c, req.Text, "comment"); !ok {
@@ -231,14 +238,16 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 	// that cannot be read as text or a line past its end answer empty, and
 	// the comment stands without a quote.
 	quote := ""
-	if req.LineText != nil {
+	switch {
+	case req.LineText != nil:
 		quote = *req.LineText
-	} else {
+	case !req.Project:
 		quote = linecomment.DiskQuote(p.Path, req.Path, req.Line)
 	}
 	w := commentWriterOf(c)
 	comment, changed, err := s.lineComments.Save(p.Name, linecomment.Comment{
 		ID:       req.ID,
+		Project:  req.Project,
 		Path:     req.Path,
 		Line:     req.Line,
 		LineText: linecomment.FileLine(quote),
@@ -247,6 +256,27 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 	if s.answerThread(c, p, w, comment, changed, err) && req.ID == "" {
 		s.guestWrote(p, w, comment, comment.Text, false)
 	}
+}
+
+// checkCommentPlace verifies what a new or edited first note stands on: a
+// project comment names no path, no line and no quote, a line comment a path
+// inside the project and a line.
+func checkCommentPlace(c *gin.Context, root string, req editorCommentSaveRequest) bool {
+	if req.Project {
+		if req.Path != "" || req.Line != 0 || req.LineText != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "A project comment has no file and no line."})
+			return false
+		}
+		return true
+	}
+	if !checkCommentPath(c, root, req.Path) {
+		return false
+	}
+	if req.Line < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "A line number is required."})
+		return false
+	}
+	return true
 }
 
 type editorCommentReplyRequest struct {
@@ -325,14 +355,16 @@ func (s *Server) handleEditorCommentResolve(c *gin.Context) {
 }
 
 // GuestComment is a note a guest wrote on a project, the first of a thread or
-// a reply, with where its thread stands.
+// a reply, with where its thread stands, the whole project when OnProject
+// says so.
 type GuestComment struct {
-	Project string
-	Guest   string
-	Path    string
-	Line    int
-	Text    string
-	Reply   bool
+	Project   string
+	Guest     string
+	OnProject bool
+	Path      string
+	Line      int
+	Text      string
+	Reply     bool
 }
 
 // SetGuestComment hands every new thread and reply a guest writes to notify,
@@ -347,7 +379,7 @@ func (s *Server) guestWrote(p project.Project, w linecomment.Writer, thread line
 	if w.Link == "" || s.guestComment == nil {
 		return
 	}
-	s.guestComment(GuestComment{Project: p.Name, Guest: w.Name, Path: thread.Path, Line: thread.Line, Text: text, Reply: reply})
+	s.guestComment(GuestComment{Project: p.Name, Guest: w.Name, OnProject: thread.Project, Path: thread.Path, Line: thread.Line, Text: text, Reply: reply})
 }
 
 type editorCommentsDeleteRequest struct {
@@ -359,7 +391,7 @@ type editorCommentsDeleteRequest struct {
 
 // handleEditorCommentsDelete takes notes away: the named ones, whole files or
 // folders through paths (each value an exact file, a folder, or a glob with
-// * and **, ored together), the outdated ones — judged in the same read that
+// * and **, ored together, never a project comment), the outdated ones — judged in the same read that
 // answers the list, so a quote that can still be rebound is repaired first
 // and never counts as an orphan; paths narrow which orphans fall — or with
 // all everything the project holds, which is what the sheet's delete-all
@@ -387,12 +419,12 @@ func (s *Server) handleEditorCommentsDelete(c *gin.Context) {
 		pick = func(linecomment.Comment) bool { return true }
 	case req.Outdated:
 		for _, view := range s.reconciledLineComments(p) {
-			if view.Outdated && (len(req.Paths) == 0 || linecomment.MatchesAnyPath(req.Paths, view.Path)) {
+			if view.Outdated && (len(req.Paths) == 0 || view.OnPath(req.Paths)) {
 				named[view.ID] = true
 			}
 		}
 	case len(req.Paths) > 0:
-		pick = func(comment linecomment.Comment) bool { return linecomment.MatchesAnyPath(req.Paths, comment.Path) }
+		pick = func(comment linecomment.Comment) bool { return comment.OnPath(req.Paths) }
 	default:
 		for _, id := range req.IDs {
 			named[id] = true

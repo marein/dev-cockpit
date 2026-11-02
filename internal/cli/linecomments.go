@@ -36,23 +36,27 @@ func newLineCommentListCommand(opts *inspectOptions) *cobra.Command {
 	filter := lineCommentFilter{}
 	cmd := &cobra.Command{
 		Use:   "line-comment-list <project>",
-		Short: "Show the line comments of a project",
+		Short: "Show the line comments and project comments of a project",
 		Long: "Show the line comments of one project, the threads pinned to single lines in the " +
-			"editor. Each entry starts with the quoted file, the line and the id `line-comment-remove`, " +
-			"`line-comment-add --reply` and `forge-comment-publish` take, and is marked resolved once its thread is. " +
+			"editor, and the project comments, threads on the whole project, which come first. Each entry " +
+			"starts with the quoted file and the line, or with project for a project comment, then the id " +
+			"`line-comment-remove`, `line-comment-add --reply` and `forge-comment-publish` take, " +
+			"and is marked resolved once its thread is. " +
 			"The quoted code line follows after >, each line of the note after |, then each reply under reply " +
 			"with its time, its lines after | too. A character that prints nothing is written as its escape. " +
 			"Each line a guest wrote through a shared link starts with guest and the link's name. A review " +
 			"thread of the forge starts each line with the forge and the author there and ends with its link " +
-			"and the thread id `forge-thread-reply` and `forge-thread-resolve` take; it changes on the forge " +
-			"alone. Every read holds the quotes against the files: a quote " +
+			"and the thread id `forge-thread-reply` and `forge-thread-resolve` take, marked `takes no resolve` where " +
+			"the forge does not resolve it; it changes on the forge alone. A general thread of the forge is a " +
+			"project comment, one without a thread id takes no reply. " +
+			"Every read holds the quotes against the files: a quote " +
 			"that stands in its file exactly once follows it to the new line on its own, and a " +
 			"comment whose quote is gone, ambiguous, or whose file is missing is marked outdated, " +
 			"still anchored at its last known line. The list is capped at the first ones and says " +
 			"how many more there are; `--path` keeps the matching files, `--contains` the comments " +
 			"carrying a word in the note or the quoted line, compared case insensitively, and " +
 			"`--outdated` only the marked ones, `--open` only the threads not resolved, all " +
-			"before the cap. `--path` may repeat, the " +
+			"before the cap; `--path` and `--outdated` leave the project comments out. `--path` may repeat, the " +
 			"values or together, and each one is an exact file, a folder that keeps everything " +
 			"under it, or a glob where * stays inside a path segment and ** crosses them, like " +
 			"'**/assistant.go'.",
@@ -113,20 +117,24 @@ func trimmedAll(values []string) []string {
 // the link a guest wrote it through, or of its author on the forge a review
 // thread there comes from, Forge that forge's kind, empty for the user's own.
 // URL is the thread's page there, Thread its id the writes on a thread take,
-// Resolved says the thread is resolved.
+// none where it takes no reply, Unresolvable says it takes no resolve,
+// Resolved that the thread is resolved, Project that it stands on the whole
+// project, without a path and a line.
 type lineCommentEntry struct {
-	ID       string
-	Path     string
-	Line     int
-	LineText string
-	Text     string
-	Author   string
-	Forge    string
-	URL      string
-	Thread   string
-	Replies  []lineReplyEntry
-	Resolved bool
-	Outdated bool
+	ID           string
+	Project      bool
+	Path         string
+	Line         int
+	LineText     string
+	Text         string
+	Author       string
+	Forge        string
+	URL          string
+	Thread       string
+	Unresolvable bool
+	Replies      []lineReplyEntry
+	Resolved     bool
+	Outdated     bool
 }
 
 // lineReplyEntry is one reply of a thread: its text, the name of the link a
@@ -151,8 +159,10 @@ func lineCommentEntries(answer map[string]any) []lineCommentEntry {
 		resolved, _ := m["resolved"].(bool)
 		quote, _ := m["lineText"].(string)
 		author, _ := m["author"].(string)
+		project, _ := m["project"].(bool)
 		entry := lineCommentEntry{
 			ID:       text(m["id"]),
+			Project:  project,
 			Path:     text(m["path"]),
 			Line:     int(line),
 			LineText: quote,
@@ -165,6 +175,7 @@ func lineCommentEntries(answer map[string]any) []lineCommentEntry {
 			entry.Forge = text(origin["kind"])
 			entry.URL, _ = origin["url"].(string)
 			entry.Thread, _ = origin["thread"].(string)
+			entry.Unresolvable, _ = origin["unresolvable"].(bool)
 		}
 		replies, _ := m["replies"].([]any)
 		for _, item := range replies {
@@ -267,6 +278,12 @@ func formatLineComments(project string, filter lineCommentFilter, answer map[str
 		}
 	}
 	for _, entry := range shown {
+		if entry.Project {
+			b.WriteString("Entries marked project stand on the whole project, not on a line of a file.\n")
+			break
+		}
+	}
+	for _, entry := range shown {
 		lead := "  "
 		switch {
 		case entry.Forge != "":
@@ -281,7 +298,7 @@ func formatLineComments(project string, filter lineCommentFilter, answer map[str
 		if entry.Resolved {
 			mark += "  resolved"
 		}
-		fmt.Fprintf(&b, "%s%q:%d  id %s%s\n", lead, entry.Path, entry.Line, entry.ID, mark)
+		fmt.Fprintf(&b, "%s%s  id %s%s\n", lead, entry.place(), entry.ID, mark)
 		if quote := shorten(entry.LineText, 160); quote != "" {
 			fmt.Fprintf(&b, "%s  > %s\n", lead, plaintext.Visible(quote))
 		}
@@ -303,6 +320,9 @@ func formatLineComments(project string, filter lineCommentFilter, answer map[str
 		}
 		if entry.Thread != "" {
 			thread = append(thread, "id "+plaintext.Visible(entry.Thread))
+			if entry.Unresolvable {
+				thread = append(thread, "takes no resolve")
+			}
 		}
 		if len(thread) > 0 {
 			fmt.Fprintf(&b, "%s  thread %s\n", lead, strings.Join(thread, ", "))
@@ -314,6 +334,14 @@ func formatLineComments(project string, filter lineCommentFilter, answer map[str
 	return b.String()
 }
 
+// place is where an entry stands: the quoted file and the line, or project.
+func (entry lineCommentEntry) place() string {
+	if entry.Project {
+		return "project"
+	}
+	return fmt.Sprintf("%q:%d", entry.Path, entry.Line)
+}
+
 // writeNoteLines writes every line of a note behind lead and |.
 func writeNoteLines(b *strings.Builder, lead, note string) {
 	for _, line := range strings.Split(strings.TrimSpace(note), "\n") {
@@ -323,26 +351,34 @@ func writeNoteLines(b *strings.Builder, lead, note string) {
 
 func newLineCommentAddCommand(opts *inspectOptions) *cobra.Command {
 	reply := ""
+	wide := false
 	cmd := &cobra.Command{
-		Use:   "line-comment-add <project> <path> <line> <text> | <project> --reply <id> <text>",
-		Short: "Pin a line comment to one line of a file, or reply to one",
+		Use:   "line-comment-add <project> <path> <line> <text> | <project> --project-wide <text> | <project> --reply <id> <text>",
+		Short: "Pin a comment to one line of a file or to the project, or reply to one",
 		Long: "Add a line comment the way the editor does: the note lands on the given 1-based " +
 			"line of the project relative file, the server reads the quoted code line from the " +
 			"file itself, and every open editor of the project follows live. The answer carries " +
-			"the id `line-comment-remove` takes. With `--reply` the text is a reply to the thread " +
-			"with that id from `line-comment-list` instead, on a review thread of the forge use " +
-			"`forge-thread-reply`.",
+			"the id `line-comment-remove` takes. With `--project-wide` the text is a project comment " +
+			"instead, a thread on the whole project without a file and a line. With `--reply` the text " +
+			"is a reply to the thread with that id from `line-comment-list`, a project comment's " +
+			"included, on a review thread of the forge use `forge-thread-reply`.",
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if reply != "" {
-				return runLineCommentReply(cmd.OutOrStdout(), *opts, args[0], reply, strings.Join(args[1:], " "))
-			}
-			if len(args) < 4 {
-				return errors.New("give the project, the path, the line and the text, or the project, --reply <id> and the text")
+			note := strings.Join(args[1:], " ")
+			switch {
+			case reply != "" && wide:
+				return errors.New("give --reply or --project-wide, not both")
+			case reply != "":
+				return runLineCommentReply(cmd.OutOrStdout(), *opts, args[0], reply, note)
+			case wide:
+				return runProjectCommentAdd(cmd.OutOrStdout(), *opts, args[0], note)
+			case len(args) < 4:
+				return errors.New("give the project, the path, the line and the text, the project, --project-wide and the text, or the project, --reply <id> and the text")
 			}
 			return runLineCommentAdd(cmd.OutOrStdout(), *opts, args[0], args[1], args[2], strings.Join(args[3:], " "))
 		},
 	}
+	cmd.Flags().BoolVar(&wide, "project-wide", false, "add a project comment, a thread on the whole project, instead of one on a line")
 	cmd.Flags().StringVar(&reply, "reply", "", "reply to the thread with this id instead of adding one")
 	return cmd
 }
@@ -366,8 +402,37 @@ func runLineCommentReply(out io.Writer, opts inspectOptions, project, id, note s
 	if !ok {
 		return fmt.Errorf("%s holds no comment %s, `line-comment-list` names the ones there are", project, plaintext.Visible(strings.TrimSpace(id)))
 	}
+	fmt.Fprintf(out, "reply added to comment %s %s in %s\n", text(comment["id"]), answeredPlace(comment), project)
+	return nil
+}
+
+// answeredPlace is where the thread a write answered stands, the way its
+// answer line says it.
+func answeredPlace(comment map[string]any) string {
+	if whole, _ := comment["project"].(bool); whole {
+		return "on the project"
+	}
 	line, _ := comment["line"].(float64)
-	fmt.Fprintf(out, "reply added to comment %s at %s:%d in %s\n", text(comment["id"]), plaintext.Visible(text(comment["path"])), int(line), project)
+	return fmt.Sprintf("at %s:%d", plaintext.Visible(text(comment["path"])), int(line))
+}
+
+func runProjectCommentAdd(out io.Writer, opts inspectOptions, project, note string) error {
+	if strings.TrimSpace(note) == "" {
+		return errors.New("nothing to add, the comment text is empty")
+	}
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	answer, err := client.PostJSON(lineCommentsPath(project), map[string]any{
+		"project": true,
+		"text":    note,
+	}, lineCommentTimeout)
+	if err != nil {
+		return err
+	}
+	comment, _ := answer["comment"].(map[string]any)
+	fmt.Fprintf(out, "project comment added in %s, id %s\n", project, text(comment["id"]))
 	return nil
 }
 
@@ -405,8 +470,9 @@ func newLineCommentResolveCommand(opts *inspectOptions) *cobra.Command {
 		Use:   "line-comment-resolve <project> <id>",
 		Short: "Resolve a line comment thread, or open it again",
 		Long: "Resolve the thread with the id from `line-comment-list` the way the editor does, " +
-			"with `--reopen` open it again. Every open editor of the project follows live. A review " +
-			"thread of the forge is refused, it resolves there with `forge-thread-resolve`.",
+			"with `--reopen` open it again. Every open editor of the project follows live. A thread of " +
+			"the forge is refused with what it takes there: `forge-thread-resolve` where the forge resolves " +
+			"it, `forge-thread-reply` alone where it does not.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLineCommentResolve(cmd.OutOrStdout(), *opts, args[0], args[1], !reopen)
@@ -444,18 +510,26 @@ func runLineCommentResolve(out io.Writer, opts inspectOptions, project, id strin
 	if !resolved {
 		state = "open again"
 	}
-	line, _ := comment["line"].(float64)
-	fmt.Fprintf(out, "comment %s at %s:%d in %s is %s\n", text(comment["id"]), plaintext.Visible(text(comment["path"])), int(line), project, state)
+	fmt.Fprintf(out, "comment %s %s in %s is %s\n", text(comment["id"]), answeredPlace(comment), project, state)
 	return nil
 }
 
 // refuseForgeThread words the refusal before the request, the server's own
-// does not know the command that resolves the thread on the forge.
+// does not know the commands that write on the forge. It names only what the
+// thread takes there, the way the server's answer marks it.
 func refuseForgeThread(entries []lineCommentEntry, id string) error {
 	for _, entry := range entries {
-		if entry.ID == id && entry.Forge != "" {
-			return fmt.Errorf("%s is a review thread of the forge, resolve it there with `forge-thread-resolve` and the thread id `line-comment-list` prints for it", plaintext.Visible(id))
+		if entry.ID != id || entry.Forge == "" {
+			continue
 		}
+		shown := plaintext.Visible(id)
+		switch {
+		case entry.Thread == "":
+			return fmt.Errorf("%s is a note of the forge without a thread id, it takes no reply and no resolve until `line-comment-list` prints one for it", shown)
+		case entry.Unresolvable:
+			return fmt.Errorf("%s is a comment the forge does not resolve, `forge-thread-reply` answers it with the thread id `line-comment-list` prints for it", shown)
+		}
+		return fmt.Errorf("%s is a review thread of the forge, resolve it there with `forge-thread-resolve` and the thread id `line-comment-list` prints for it", shown)
 	}
 	return nil
 }
@@ -474,7 +548,8 @@ func newLineCommentRemoveCommand(opts *inspectOptions) *cobra.Command {
 			"a folder that clears everything under it, or a glob where * stays inside a path " +
 			"segment and ** crosses them, like '**/assistant.go'. Every open editor of the " +
 			"project follows live. Removing is final, there is no way back. A review thread of " +
-			"the forge is never removed here.",
+			"the forge is never removed here, and a project comment goes only by its id, `--path` " +
+			"and `--outdated` never take one.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLineCommentRemove(cmd.OutOrStdout(), *opts, args[0], args[1:], paths, outdated)

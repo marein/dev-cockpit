@@ -51,10 +51,12 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 				// The instructions say only that an outdated note lost its
 				// anchor; how a quote is judged and when it follows its line
 				// is read here.
-				"Every read holds the quotes against the files", "follows it to the new line on its own"}},
+				"Every read holds the quotes against the files", "follows it to the new line on its own",
+				"the project comments, threads on the whole project, which come first", "`--path` and `--outdated` leave the project comments out"}},
+		{"line-comment-add", []string{"project-wide", "reply"}, []string{"a project comment", "a thread on the whole project without a file and a line", "a project comment's included"}},
 		{"line-comment-resolve", []string{"reopen"}, []string{"`forge-thread-resolve`"}},
 		{"line-comment-remove", []string{"path", "outdated"},
-			[]string{"`--outdated` combines with `--path`", "* stays inside a path segment and ** crosses them"}},
+			[]string{"`--outdated` combines with `--path`", "* stays inside a path segment and ** crosses them", "`--path` and `--outdated` never take one"}},
 		// The instructions carry the rules of a compose run; what a stack is,
 		// what a command that asks first does, how long it waits, where the
 		// question is turned off and how the output is capped is read here.
@@ -113,20 +115,20 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 		// them, the token it needs and where the question is turned off are
 		// read here.
 		{"forge-comment-publish", []string{"all"}, []string{"the branch HEAD is on", "the ids `line-comment-list` prints", "with `--all` every comment the user or you wrote",
-			"A review thread of the forge, a guest's comment and one with replies do not publish", "has to stand in the pushed head", "a line not pushed is refused, push it first",
+			"and project comments as general comments of it", "A review thread of the forge, a guest's comment and one with replies do not publish", "has to stand in the pushed head", "a line not pushed is refused, push it first",
 			"an outdated comment no push carries", "one the change request's diff shows", "else the whole call is refused",
-			"becomes that review thread among the line comments", "the scope api on GitLab", "Pull requests read and write",
+			"becomes that review thread among the line comments", "a project comment that general thread among the project comments", "the scope api on GitLab", "Pull requests read and write",
 			"waits for the user's approval", "do not run it again while it waits", "Review comment approval", "Settings › Assistants › Approvals; you cannot",
 			"Without the question they are published at once"}},
 		// The instructions name the writes on a thread and that they ask
 		// first; which thread they take, what is refused, the token they
 		// need and where the question is turned off are read here.
 		{"forge-thread-reply", []string{"branch", "resolve"}, []string{"the branch HEAD is on unless `--branch` names another", "the thread id `forge-show --threads` and `line-comment-list` print and a forge-review-comment event names",
-			"`fixed in abc123`", "at most 16 KiB", "`--resolve` resolves the thread after the reply", "A general thread of the conversation is refused",
+			"`fixed in abc123`", "at most 16 KiB", "`--resolve` resolves the thread after the reply", "on its diff or a general one", "A comment of GitHub's conversation is no thread and is refused",
 			"shows it once that review is submitted", "the scope api on GitLab", "Pull requests read and write", "waits for the user's approval",
 			"do not run it again while it waits", "Review thread approval", "Settings › Assistants › Approvals; you cannot", "Without the question it is posted at once"}},
 		{"forge-thread-resolve", []string{"branch"}, []string{"the branch HEAD is on unless `--branch` names another", "the thread id `forge-show --threads` and `line-comment-list` print and a forge-review-comment event names",
-			"A thread resolved already, one the forge does not resolve and a general one are refused", "`forge-thread-reply --resolve`, one question for both",
+			"A thread resolved already and one the forge does not resolve are refused, a GitLab comment that started no thread and a comment of GitHub's conversation among them", "`forge-thread-reply --resolve`, one question for both",
 			"the Developer role", "the scope api on GitLab", "Pull requests read and write",
 			"waits for the user's approval", "do not run it again while it waits", "Review thread approval", "Settings › Assistants › Approvals; you cannot",
 			"Without the question it is resolved at once"}},

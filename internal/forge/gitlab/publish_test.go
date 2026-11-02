@@ -27,8 +27,9 @@ const (
 
 // fakePublish answers a merge request the way GitLab 19.5 does: its diff refs,
 // null while GitLab makes the version, its diffs over two pages, a changed
-// file, a renamed one and a deleted one, and a new discussion on a position
-// with its note, refusing what refusals names by path.
+// file, a renamed one and a deleted one, and a new discussion on a position,
+// or a general one without, with its note, refusing what refusals names by
+// path.
 type fakePublish struct {
 	mu       sync.Mutex
 	refs     bool
@@ -69,6 +70,10 @@ func (f *fakePublish) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.bodies = append(f.bodies, sent)
 		position, _ := sent["position"].(map[string]any)
 		w.WriteHeader(http.StatusCreated)
+		if position == nil {
+			fmt.Fprintf(w, `{"id":"5c3e4ab2","individual_note":false,"notes":[{"id":368,"type":"DiscussionNote","body":%q,"author":{"id":1,"username":"root","name":"Administrator"},"created_at":"2026-10-29T18:32:29.871Z","system":false,"resolvable":true,"resolved":false}]}`, sent["body"])
+			return
+		}
 		fmt.Fprintf(w, `{"id":"911e4861dcb1eb17548d492248368aeee08a78e7","individual_note":false,"resolvable":true,"resolved":false,"notes":[{"id":368,"type":"DiffNote","body":%q,"author":{"id":1,"username":"root","name":"Administrator","state":"active","web_url":"http://127.0.0.1:3180/root"},"created_at":"2026-10-29T18:32:29.871Z","updated_at":"2026-10-29T18:32:29.871Z","system":false,"noteable_id":139,"noteable_type":"MergeRequest","project_id":78,"commit_id":null,"position":{"base_sha":%q,"start_sha":%q,"head_sha":%q,"old_path":%q,"new_path":%q,"position_type":"text","old_line":%v,"new_line":%v,"line_range":null},"resolvable":true,"resolved":false,"resolved_by":null,"resolved_at":null,"suggestions":[],"confidential":false,"internal":false,"imported":false,"imported_from":"none","noteable_iid":1,"commands_changes":{}}]}`,
 			sent["body"], publishBase, publishBase, publishHead, position["old_path"], position["new_path"], orNull(position["old_line"]), position["new_line"])
 	default:
@@ -190,5 +195,23 @@ func TestARefusedNoteIsSaidPlainly(t *testing.T) {
 		if err == nil || !strings.HasPrefix(err.Error(), c.want) || strings.Contains(err.Error(), token) {
 			t.Errorf("%d %s answered %v", c.code, c.body, err)
 		}
+	}
+}
+
+// A general comment opens a discussion without a position, a quick action in
+// it behind a backslash, its note linking its place on the page; a refusal
+// says why like one on a line.
+func TestAGeneralCommentOpensADiscussionWithoutAPlace(t *testing.T) {
+	fake, b := publishFixture(t)
+	note, err := gitlab.Provider{}.PublishGeneral(publishContext(t), forge.NewClient(), b, token, publishChange, "Ready?\n/merge")
+	if err != nil || note.ID != "368" || note.Author != "root" || note.URL != publishPage+"#note_368" {
+		t.Fatalf("the note reads %+v, %v", note, err)
+	}
+	if raw, _ := json.Marshal(fake.bodies); len(fake.bodies) != 1 || string(raw) != `[{"body":"Ready?\n\\/merge"}]` {
+		t.Fatalf("the comment was sent as %s", raw)
+	}
+	fake.refusals["POST "+publishMR+"/discussions"] = refusal{http.StatusForbidden, scopeAnswer}
+	if _, err = (gitlab.Provider{}).PublishGeneral(publishContext(t), forge.NewClient(), b, token, publishChange, "x"); err == nil || err.Error() != "The token may not write to GitLab: give it the scope api." {
+		t.Fatalf("a token without the scope api answered %v", err)
 	}
 }

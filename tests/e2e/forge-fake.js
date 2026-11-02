@@ -68,10 +68,12 @@ const { execFileSync } = require("child_process");
 // diff of the files the runner sets in state.diffFiles, each { path, old,
 // patch }, none unless it sets some. GitLab opens a discussion on a line its
 // patch shows, refusing a line both sides share that names no old line the
-// way GitLab does, and the Enterprise Server posts a review comment; each
-// one posted is kept in state.published and stands among the review threads
-// from then on, so the poller's read finds it. state.readOnly refuses them
-// the way a token without the right to write is refused.
+// way GitLab does, or a general one without a position, and the Enterprise
+// Server posts a review comment, or a comment of the conversation; each one
+// posted is kept in state.published and stands among the review threads or
+// the conversation from then on, so the poller's read finds it.
+// state.readOnly refuses them the way a token without the right to write is
+// refused.
 //
 // The writes of P17: GitLab adds a note to a discussion of the merge request
 // 4 and resolves one, the Enterprise Server answers a review thread and
@@ -158,7 +160,7 @@ const diffLine = (state, path, line) => {
 // P17: the runner's or the fake's own, then one for each note published.
 function gitlabDiscussionsOf(state) {
   const published = state.published.filter((n) => n.kind === "gitlab").map((n) => gitlabDiscussion(`p${n.id}`, false, [
-    gitlabNote(n.id, "root", n.body, { resolvable: true, at: { head: state.head, path: n.path, newLine: n.line, oldLine: n.old } }),
+    gitlabNote(n.id, "root", n.body, { resolvable: true, ...(n.general ? {} : { at: { head: state.head, path: n.path, newLine: n.line, oldLine: n.old } }) }),
   ]));
   return [...(state.discussions || gitlabDiscussions)(state), ...published];
 }
@@ -310,6 +312,11 @@ function handler(token, log, state, hooks) {
       if (!authed) return json(401, { message: "401 Unauthorized" });
       return readBody((sent) => {
         if (state.readOnly) return json(403, { error: "insufficient_scope", error_description: "The request requires higher privileges than provided by the access token.", scope: "api" });
+        if (!sent.position) {
+          const id = 50 + state.published.length;
+          state.published.push({ kind: "gitlab", general: true, id, body: sent.body });
+          return json(201, gitlabDiscussion(`p${id}`, false, [gitlabNote(id, "root", sent.body, { resolvable: true })]));
+        }
         const at = sent.position || {};
         const shown = diffLine(state, at.new_path, at.new_line);
         if (at.head_sha !== state.head || at.base_sha !== BASE_SHA || at.start_sha !== BASE_SHA || !shown || (shown.old && at.old_line !== shown.old)) {
@@ -451,8 +458,18 @@ function handler(token, log, state, hooks) {
         if (head !== "octo:feature") return json(200, state.pulls.filter((pull) => pull.head.label === head).reverse(), headers);
         return json(200, [pull(8, "From a fork of the same owner", "octo/app-fork"), pull(7, "Fix the login", "octo/app")], headers);
       }
+      const issueComment = (id, author, body, at) => ({ id, node_id: `IC_kwDOe2e${id}`, html_url: `${web}/pull/7#issuecomment-${id}`, body, user: { login: author }, created_at: at, updated_at: at });
+      if (repo[1] === "issues/7/comments" && req.method === "POST") {
+        return readBody((sent) => {
+          if (state.readOnly) return json(403, { message: "Resource not accessible by personal access token", documentation_url: "https://docs.github.com/rest/issues/comments", status: "403" }, headers);
+          const id = 60 + state.published.length;
+          state.published.push({ kind: "github-conversation", id, body: sent.body });
+          json(201, issueComment(id, "octocat", sent.body, "2026-10-29T10:00:00Z"), headers);
+        });
+      }
       if (repo[1] === "issues/7/comments") {
-        return json(200, [{ id: 11, node_id: "IC_kwDOe2e11", html_url: `${web}/pull/7#issuecomment-11`, body: "Looks good\r\nbut see the threads", user: { login: "hubot" }, created_at: "2026-10-28T10:20:00Z", updated_at: "2026-10-28T10:20:00Z" }], headers);
+        const published = state.published.filter((n) => n.kind === "github-conversation").map((n) => issueComment(n.id, "octocat", n.body, "2026-10-29T10:00:00Z"));
+        return json(200, [issueComment(11, "hubot", "Looks good\r\nbut see the threads", "2026-10-28T10:20:00Z"), ...published], headers);
       }
       if (repo[1] === "pulls/7/reviews") {
         const review = (id, kind, body, at) => ({ id, node_id: `PRR_kwDOe2e${id}`, user: { login: "octocat" }, body, state: kind, html_url: `${web}/pull/7#pullrequestreview-${id}`, ...(at ? { submitted_at: at } : {}), commit_id: state.head });

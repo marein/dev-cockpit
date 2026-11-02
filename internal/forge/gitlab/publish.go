@@ -75,10 +75,16 @@ func (Provider) PublishNote(ctx context.Context, c *forge.Client, b forge.Bindin
 	if p.OldLine > 0 {
 		position["old_line"] = p.OldLine
 	}
+	return startDiscussion(ctx, a, b, ch, map[string]any{"body": asText(p.Body), "position": position})
+}
+
+// startDiscussion opens a discussion of the merge request ch with what sent
+// holds and answers its first note.
+func startDiscussion(ctx context.Context, a forge.API, b forge.Binding, ch forge.Change, sent map[string]any) (forge.Note, error) {
 	var made discussion
 	path := "/projects/" + url.PathEscape(b.Path) + "/merge_requests/" + strconv.Itoa(ch.Number) + "/discussions"
 	ref := "merge request !" + strconv.Itoa(ch.Number)
-	if err := a.Post(ctx, path, map[string]any{"body": asText(p.Body), "position": position}, &made); err != nil {
+	if err := a.Post(ctx, path, sent, &made); err != nil {
 		var status *forge.StatusError
 		if errors.As(err, &status) && status.Code == http.StatusForbidden && !insufficientScope(status.Body) {
 			return forge.Note{}, fmt.Errorf("The token's account may not comment on %s in %s.", ref, b.Address())
@@ -91,4 +97,10 @@ func (Provider) PublishNote(ctx context.Context, c *forge.Client, b forge.Bindin
 	n := made.Notes[0]
 	id := strconv.FormatInt(n.ID, 10)
 	return forge.Note{ID: id, Author: n.Author.Username, Body: n.Body, Created: n.CreatedAt, URL: ch.URL + "#note_" + id}, nil
+}
+
+// PublishGeneral opens a discussion of the merge request without a place on
+// its diff, a thread GitLab answers and resolves like one on a line.
+func (Provider) PublishGeneral(ctx context.Context, c *forge.Client, b forge.Binding, token string, ch forge.Change, body string) (forge.Note, error) {
+	return startDiscussion(ctx, api(c, b.Host, token), b, ch, map[string]any{"body": asText(body)})
 }

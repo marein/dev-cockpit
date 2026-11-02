@@ -186,10 +186,11 @@ func (f *forgePublishFixture) publish(t *testing.T, local bool, id string, form 
 	return rec.Code, decodeJSON(t, rec)
 }
 
+// stored is the comment with that id, or the published one that had it.
 func (f *forgePublishFixture) stored(t *testing.T, id string) linecomment.Comment {
 	t.Helper()
 	for _, c := range f.s.lineComments.List("app") {
-		if c.ID == id {
+		if c.ID == id || c.Was == id {
 			return c
 		}
 	}
@@ -199,7 +200,8 @@ func (f *forgePublishFixture) stored(t *testing.T, id string) linecomment.Commen
 
 // A click publishes the comment at its line of the diff, a line the change
 // adds without its old line, one both sides share with it, and each one
-// published becomes its note of the forge, keeping its id and its line.
+// published becomes its note of the forge, keeping its line, under the id
+// its thread comes back under.
 func TestAClickPublishesCommentsAsNotesOfTheForge(t *testing.T) {
 	f := newForgePublishFixture(t)
 	added := f.comment(t, 4, "\tname := bb", "Why bb?", "")
@@ -209,7 +211,7 @@ func TestAClickPublishesCommentsAsNotesOfTheForge(t *testing.T) {
 	}
 	c := f.stored(t, added.ID)
 	want := linecomment.Forge{Kind: "gitlab", Note: "301", URL: "https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_301", At: linecomment.Place{Path: "src/login.go", Line: 4, Quote: "\tname := bb", Quoted: true}}
-	if c.Forge == nil || *c.Forge != want || c.Author != "root" || c.Text != "Why bb?" || c.Line != 4 {
+	if c.Forge == nil || *c.Forge != want || c.Author != "root" || c.Text != "Why bb?" || c.Line != 4 || c.ID == added.ID || c.Was != added.ID {
 		t.Fatalf("the published comment reads %+v %+v", c, c.Forge)
 	}
 	first := f.comment(t, 1, "package login", "Name it auth?", "")

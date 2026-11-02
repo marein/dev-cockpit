@@ -184,7 +184,7 @@ func TestAPublishTakesNoThreadWithReplies(t *testing.T) {
 	if !s.Published("p", map[string]ForgeThread{resolved.ID: forgeThread("40", "root", "Fine", 5, "c := 3")}) {
 		t.Fatal("the resolved thread was not published")
 	}
-	if c := forgeOf(t, s, "40"); c.Resolved || c.ID != resolved.ID {
+	if c := forgeOf(t, s, "40"); c.Resolved || c.Was != resolved.ID {
 		t.Fatalf("the published thread reads %+v", c)
 	}
 	for _, c := range s.List("p") {

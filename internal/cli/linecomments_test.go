@@ -103,7 +103,7 @@ func TestFormatLineCommentsFiltersOpenThreads(t *testing.T) {
 }
 
 func TestRefuseForgeThreadPointsToTheForge(t *testing.T) {
-	entries := []lineCommentEntry{{ID: "own"}, {ID: "f1", Forge: "gitlab", Thread: "d1"}}
+	entries := []lineCommentEntry{{ID: "own"}, {ID: "f1", Forge: "gitlab", Thread: "d1"}, {ID: "f2", Forge: "gitlab", Thread: "d6", Unresolvable: true}, {ID: "f3", Forge: "github", Unresolvable: true}}
 	if err := refuseForgeThread(entries, "own"); err != nil {
 		t.Fatalf("the user's own thread is refused: %v", err)
 	}
@@ -113,6 +113,14 @@ func TestRefuseForgeThreadPointsToTheForge(t *testing.T) {
 	err := refuseForgeThread(entries, "f1")
 	if err == nil || !strings.Contains(err.Error(), "`forge-thread-resolve`") {
 		t.Fatalf("a thread of the forge is not refused with the way there: %v", err)
+	}
+	err = refuseForgeThread(entries, "f2")
+	if err == nil || !strings.Contains(err.Error(), "does not resolve") || !strings.Contains(err.Error(), "`forge-thread-reply`") || strings.Contains(err.Error(), "forge-thread-resolve") {
+		t.Fatalf("a comment the forge does not resolve is pointed to %v", err)
+	}
+	err = refuseForgeThread(entries, "f3")
+	if err == nil || !strings.Contains(err.Error(), "without a thread id") || strings.Contains(err.Error(), "forge-thread-") {
+		t.Fatalf("a note without a thread is pointed to %v", err)
 	}
 }
 
@@ -194,7 +202,8 @@ const forgeLine = "Lines marked with a forge are its review threads, they change
 // A review thread on the forge is marked in front of every line of its entry
 // with the forge and the author there of the note the line belongs to,
 // resolved once the thread is, and ends with the link to the thread and its
-// id where it has them; the list explains the mark once, only when it shows
+// id where it has them, marked where the forge does not resolve it; the
+// list explains the mark once, only when it shows
 // such a thread, and never the guest's line for the forge's authors.
 func TestFormatLineCommentsMarksTheThreadsOfTheForge(t *testing.T) {
 	page := "https://gitlab.example.com/team/app/-/merge_requests/4#note_29"
@@ -208,14 +217,17 @@ func TestFormatLineCommentsMarksTheThreadsOfTheForge(t *testing.T) {
 			"forge": map[string]any{"kind": "gitlab", "label": "GitLab", "icon": "ti-brand-gitlab"}},
 		map[string]any{"id": "f3", "path": "a.txt", "line": float64(9), "text": "Just published", "author": "root",
 			"forge": map[string]any{"kind": "gitlab", "label": "GitLab", "icon": "ti-brand-gitlab", "thread": "d2\u202e"}},
+		map[string]any{"id": "f4", "path": "a.txt", "line": float64(11), "text": "Ready?", "author": "root",
+			"forge": map[string]any{"kind": "gitlab", "label": "GitLab", "icon": "ti-brand-gitlab", "thread": "d6", "unresolvable": true}},
 	)
 	out := formatLineComments("proj", lineCommentFilter{}, answer)
-	want := "Line comments in \"proj\" (4)\n" + forgeLine +
+	want := "Line comments in \"proj\" (5)\n" + forgeLine +
 		"  \"a.txt\":1  id own\n    > one\n    | mine\n" +
 		"  gitlab \"root\"  \"a.txt\":4  id f1  resolved\n  gitlab \"root\"    > name := b\n  gitlab \"root\"    | New name?\n  gitlab \"root\"    | bb maybe\n" +
 		"  gitlab \"alice\"    reply 2026-10-30 09:15\n  gitlab \"alice\"    | Yes.\n  gitlab \"root\"    thread " + page + ", id d1\n" +
 		"  gitlab \"alice\"  \"a.txt\":7  id f2  outdated\n  gitlab \"alice\"    | Gone line\n" +
-		"  gitlab \"root\"  \"a.txt\":9  id f3\n  gitlab \"root\"    | Just published\n  gitlab \"root\"    thread id d2\\u202e\n"
+		"  gitlab \"root\"  \"a.txt\":9  id f3\n  gitlab \"root\"    | Just published\n  gitlab \"root\"    thread id d2\\u202e\n" +
+		"  gitlab \"root\"  \"a.txt\":11  id f4\n  gitlab \"root\"    | Ready?\n  gitlab \"root\"    thread id d6, takes no resolve\n"
 	if out != want {
 		t.Fatalf("the list reads\n%s\nwant\n%s", out, want)
 	}
@@ -248,5 +260,54 @@ func TestFormatLineCommentsListsTheRepliesOfAThread(t *testing.T) {
 	}
 	if found := formatLineComments("proj", lineCommentFilter{contains: "BECAUSE"}, answer); !strings.Contains(found, "id own") || strings.Contains(found, "id other") {
 		t.Fatalf("the word filter misses the reply:\n%s", found)
+	}
+}
+
+// A project comment leads the list marked project, without a file, a line or
+// a quote, its replies under it, and --open and --contains work on it.
+func TestFormatLineCommentsMarksTheProjectComments(t *testing.T) {
+	answer := lineCommentsAnswer(
+		map[string]any{"id": "pc1", "project": true, "path": "", "line": float64(0), "text": "Rename the shop", "replies": []any{
+			map[string]any{"text": "agreed", "author": "Anna", "updatedAt": "2026-11-02T08:00:00Z"},
+		}},
+		map[string]any{"id": "pc2", "project": true, "path": "", "line": float64(0), "text": "done already", "resolved": true},
+		map[string]any{"id": "ln1", "path": "a.txt", "line": float64(2), "lineText": "two", "text": "a line"},
+	)
+	all := formatLineComments("proj", lineCommentFilter{}, answer)
+	for _, want := range []string{
+		"Entries marked project stand on the whole project, not on a line of a file.\n",
+		"\n  project  id pc1\n    | Rename the shop\n",
+		"  guest \"Anna\"    | agreed\n",
+		"\n  project  id pc2  resolved\n",
+		"\n  \"a.txt\":2  id ln1\n",
+	} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("output misses %q:\n%s", want, all)
+		}
+	}
+	if strings.Index(all, "id pc1") > strings.Index(all, "id ln1") || strings.Contains(all, `"":0`) {
+		t.Fatalf("the project comments do not lead or show a place:\n%s", all)
+	}
+	open := formatLineComments("proj", lineCommentFilter{open: true}, answer)
+	if !strings.Contains(open, "id pc1") || strings.Contains(open, "id pc2") {
+		t.Fatalf("--open does not work on project comments:\n%s", open)
+	}
+	byWord := formatLineComments("proj", lineCommentFilter{contains: "AGREED"}, answer)
+	if !strings.Contains(byWord, "id pc1") || strings.Contains(byWord, "id ln1") || !strings.Contains(byWord, "(1)") {
+		t.Fatalf("--contains does not search a project comment's replies:\n%s", byWord)
+	}
+	lines := formatLineComments("proj", lineCommentFilter{}, lineCommentsAnswer(answer["comments"].([]any)[2].(map[string]any)))
+	if strings.Contains(lines, "Entries marked project") {
+		t.Fatalf("a list without a project comment explains them:\n%s", lines)
+	}
+}
+
+// The answer line of a reply or a resolve says where the thread stands.
+func TestAnsweredPlaceNamesTheProjectOrTheLine(t *testing.T) {
+	if got := answeredPlace(map[string]any{"project": true, "path": "", "line": float64(0)}); got != "on the project" {
+		t.Fatalf("a project comment answers %q", got)
+	}
+	if got := answeredPlace(map[string]any{"path": "a\nb.txt", "line": float64(3)}); got != `at a\nb.txt:3` {
+		t.Fatalf("a line comment answers %q", got)
 	}
 }

@@ -17,26 +17,27 @@ import (
 // on Side, 0 for one on the whole file, and Outdated says the diff moved on
 // from it; a general one names no path. Reply says the note answers its
 // thread, which Opener began, empty for an author the forge no longer
-// names, and Resolved whether the thread is. Thread is the forge's id of a
-// thread on the diff, which the writes on a thread take, "" for a general
-// one.
+// names, and Resolved whether the thread is. Thread is the forge's id of the
+// thread, which the writes on a thread take, "" for a note the forge keeps
+// alone, and Resolvable says the forge resolves it too.
 type ReviewReport struct {
-	Project  string
-	Branch   string
-	Forge    string
-	Address  string
-	Change   ChangeRequest
-	Author   string
-	Body     string
-	URL      string
-	Path     string
-	Line     int
-	Side     string
-	Outdated bool
-	Reply    bool
-	Opener   string
-	Resolved bool
-	Thread   string
+	Project    string
+	Branch     string
+	Forge      string
+	Address    string
+	Change     ChangeRequest
+	Author     string
+	Body       string
+	URL        string
+	Path       string
+	Line       int
+	Side       string
+	Outdated   bool
+	Reply      bool
+	Opener     string
+	Resolved   bool
+	Thread     string
+	Resolvable bool
 }
 
 // reviewBodyRunes bounds what an event quotes of a note, so the line that
@@ -67,7 +68,7 @@ func reviewHeadline(report ReviewReport) string {
 type reviewEventData struct {
 	Project, Branch, Forge, Address, Author, Did, Where, URL, Thread string
 	Change                                                           ChangeRequest
-	Resolved, Cut                                                    bool
+	Resolved, Resolvable, Cut                                        bool
 	Text                                                             string
 	Cockpit                                                          string
 }
@@ -125,18 +126,19 @@ func reviewQuote(body string) (string, bool) {
 // the note's page and text, and the command that reads every thread.
 func reviewBody(report ReviewReport) string {
 	data := reviewEventData{
-		Project:  plaintext.Visible(report.Project),
-		Branch:   plaintext.Visible(report.Branch),
-		Forge:    plaintext.Visible(report.Forge),
-		Address:  plaintext.Visible(report.Address),
-		Author:   plaintext.Visible(reviewAuthor(report.Author)),
-		Did:      reviewDid(report),
-		Where:    reviewWhere(report),
-		URL:      plaintext.Visible(report.URL),
-		Thread:   plaintext.Visible(report.Thread),
-		Change:   report.Change.visible(),
-		Resolved: report.Resolved,
-		Cockpit:  shortCockpit,
+		Project:    plaintext.Visible(report.Project),
+		Branch:     plaintext.Visible(report.Branch),
+		Forge:      plaintext.Visible(report.Forge),
+		Address:    plaintext.Visible(report.Address),
+		Author:     plaintext.Visible(reviewAuthor(report.Author)),
+		Did:        reviewDid(report),
+		Where:      reviewWhere(report),
+		URL:        plaintext.Visible(report.URL),
+		Thread:     plaintext.Visible(report.Thread),
+		Change:     report.Change.visible(),
+		Resolved:   report.Resolved,
+		Resolvable: report.Resolvable,
+		Cockpit:    shortCockpit,
 	}
 	data.Text, data.Cut = reviewQuote(report.Body)
 	return strings.TrimSuffix(render("review_event.md.tmpl", data), "\n")

@@ -188,7 +188,7 @@ func pickIDs(ids ...string) func(Comment) bool {
 }
 
 func pickPaths(patterns ...string) func(Comment) bool {
-	return func(c Comment) bool { return MatchesAnyPath(patterns, c.Path) }
+	return func(c Comment) bool { return c.OnPath(patterns) }
 }
 
 func TestCommentsRemoveByPathFilters(t *testing.T) {

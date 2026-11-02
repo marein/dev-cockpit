@@ -42,8 +42,8 @@ func globSegments(pattern, parts []string) bool {
 	return globSegments(pattern[1:], parts[1:])
 }
 
-// MatchesAnyPath answers whether target matches one of the filter values.
-func MatchesAnyPath(patterns []string, target string) bool {
+// matchesAnyPath answers whether target matches one of the filter values.
+func matchesAnyPath(patterns []string, target string) bool {
 	for _, pattern := range patterns {
 		if matchPath(pattern, target) {
 			return true

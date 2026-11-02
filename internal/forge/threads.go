@@ -32,8 +32,10 @@ type Note struct {
 // the change request has moved on from, its line one of that version. Commit
 // is the commit whose version of the file holds that line, for a reader to
 // take the line's text from; a forge that names none gives the text as
-// Quote. A general thread names no path. Resolvable says whether the forge
-// resolves it, Resolved whether it is. ID is the forge's own.
+// Quote. A general thread names no path, and Single marks one the forge
+// keeps as a note alone, no thread, which takes no reply. Resolvable says
+// whether the forge resolves it, Resolved whether it is. ID is the forge's
+// own.
 type Thread struct {
 	ID         string
 	Path       string
@@ -42,9 +44,17 @@ type Thread struct {
 	Commit     string
 	Quote      string
 	Outdated   bool
+	Single     bool
 	Resolvable bool
 	Resolved   bool
 	Notes      []Note
+}
+
+// Takes says which writes the thread takes: a reply, which a note the forge
+// keeps alone does not, and a resolve, which only a thread the forge
+// resolves does. Every offer, hint and refusal of a write asks here.
+func (t Thread) Takes() (reply, resolve bool) {
+	return !t.Single, !t.Single && t.Resolvable
 }
 
 // Review is what was said on a change request, the threads on its diff and

@@ -7,4 +7,4 @@ The thread stands resolved.{{end}}
 {{end}}
 The branch {{md .Branch}} in {{md .Project}} on {{.Forge}} {{md .Address}}.
 `{{.Cockpit}} forge-show {{quote .Project}} --branch {{quote .Branch}} --threads` reads every thread while the branch has that {{.Change.Noun}}.{{with .Thread}}
-`{{$.Cockpit}} forge-thread-reply {{quote $.Project}} {{quote .}} --branch {{quote $.Branch}} <text>` answers this thread, `--resolve` resolves it too, once the user approves.{{end}}
+`{{$.Cockpit}} forge-thread-reply {{quote $.Project}} {{quote .}} --branch {{quote $.Branch}} <text>` answers this thread{{if $.Resolvable}}, `--resolve` resolves it too{{end}}, once the user approves.{{if not $.Resolvable}} {{$.Forge}} does not resolve it.{{end}}{{end}}

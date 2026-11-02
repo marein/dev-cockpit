@@ -2,8 +2,15 @@ import { labelNodes } from "@dc/contextmenu";
 import { el } from "@dc/dom";
 
 export function sortComments(list) {
-  return [...list].sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
+  return [...list].sort((a, b) => {
+    if (!!a.project !== !!b.project) return a.project ? -1 : 1;
+    return a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1;
+  });
 }
+
+export const PROJECT_PLACE = "Project comment";
+
+export const placeOf = (comment) => (comment.project ? PROJECT_PLACE : `${comment.path}:${comment.line}`);
 
 const flatLine = (text) => String(text || "").replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
 
@@ -59,9 +66,10 @@ const repliesOf = (comment) => comment.replies || [];
 export const replyCount = (n) => (n === 1 ? "1 reply" : `${n} replies`);
 
 // commentRow is what one entry of the Line comments sheet shows, as the
-// sheet's own row takes it: the path on one line with the number of replies
-// behind it and the first note flattened to one, so nothing a comment holds
-// breaks out of its entry, and under an outdated one the line it was made on.
+// sheet's own row takes it: the path on one line, or Project comment, with
+// the number of replies behind it and the first note flattened to one, so
+// nothing a comment holds breaks out of its entry, and under an outdated one
+// the line it was made on.
 export function commentRow(comment) {
   const note = flatLine(comment.text);
   const quote = String(comment.lineText || "").trim();
@@ -70,7 +78,9 @@ export function commentRow(comment) {
   const row = {
     icon: "ti-message-circle",
     iconClass: comment.outdated ? "text-orange" : resolved(comment) ? "text-green" : undefined,
-    label: { head: visibleLine(comment.path), tail: `:${comment.line}${replies ? ` · ${replyCount(replies)}` : ""}` },
+    label: comment.project
+      ? { head: PROJECT_PLACE, tail: replies ? ` · ${replyCount(replies)}` : "" }
+      : { head: visibleLine(comment.path), tail: `:${comment.line}${replies ? ` · ${replyCount(replies)}` : ""}` },
     title: [...noteLines(comment), ...repliesOf(comment).flatMap(noteLines), ...(resolved(comment) ? ["Resolved"] : []), ...(comment.outdated ? [outdated] : [])].join("\n"),
   };
   if (!comment.outdated) return { ...row, sub: note };

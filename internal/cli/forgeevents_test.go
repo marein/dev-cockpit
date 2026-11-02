@@ -47,8 +47,8 @@ func TestAPipelineEndIsReportedInTheForgesWords(t *testing.T) {
 }
 
 // A new note reaches the assistants in the words of its forge, with where
-// it stands, a reply with whose thread it answers, and one on the diff with
-// the id of its thread.
+// it stands, a reply with whose thread it answers, one on the diff with the
+// id of its thread and whether the forge resolves it.
 func TestANewNoteIsReportedInTheForgesWords(t *testing.T) {
 	kind := forge.Kind{ID: "gitlab", Label: "GitLab", ChangeNoun: "merge request", ChangeMark: "!"}
 	thread := forge.Thread{ID: "d1", Path: "src/login.go", Line: 4, Side: forge.NewSide, Outdated: true, Resolvable: true, Resolved: true, Notes: []forge.Note{
@@ -65,7 +65,7 @@ func TestANewNoteIsReportedInTheForgesWords(t *testing.T) {
 		Project: "shop", Branch: "feature", Forge: "GitLab", Address: "gitlab.example.com/team/shop",
 		Change: assistant.ChangeRequest{Noun: "merge request", Ref: "!4", Title: "Fix the login", State: "open", Draft: true, Target: "main", URL: "https://gitlab.example.com/team/shop/-/merge_requests/4"},
 		Author: "alice", Body: "Yes, bb.", URL: "https://gitlab.example.com/team/shop/-/merge_requests/4#note_33",
-		Path: "src/login.go", Line: 4, Side: "new", Outdated: true, Reply: true, Opener: "root", Resolved: true, Thread: "d1",
+		Path: "src/login.go", Line: 4, Side: "new", Outdated: true, Reply: true, Opener: "root", Resolved: true, Thread: "d1", Resolvable: true,
 	}
 	if got := reviewReport(n); !reflect.DeepEqual(got, want) {
 		t.Fatalf("reported %+v, want %+v", got, want)
@@ -75,8 +75,16 @@ func TestANewNoteIsReportedInTheForgesWords(t *testing.T) {
 		t.Fatalf("the thread's first note reported %+v", got)
 	}
 	n.Thread.Path = ""
-	if got := reviewReport(n); got.Thread != "" {
-		t.Fatalf("a general thread named the id %q a write on a thread of the diff takes", got.Thread)
+	if got := reviewReport(n); got.Thread != "d1" || got.Path != "" {
+		t.Fatalf("a general thread reported %+v", got)
+	}
+	n.Thread.Resolvable = false
+	if got := reviewReport(n); got.Thread != "d1" || got.Resolvable {
+		t.Fatalf("a comment the forge does not resolve reported %+v", got)
+	}
+	n.Thread.Single = true
+	if got := reviewReport(n); got.Thread != "" || got.Resolvable {
+		t.Fatalf("a note the forge keeps alone named the id %q a write on a thread takes", got.Thread)
 	}
 }
 

@@ -40,6 +40,36 @@ func TestTheProjectTagsTravelWithTheProjects(t *testing.T) {
 	}
 }
 
+// The project comments stand in the line comments' file of their project,
+// so they travel with the projects the way the line comments do.
+func TestTheProjectCommentsTravelWithTheLineComments(t *testing.T) {
+	src, dirs := testService(t)
+	seedSource(t, dirs)
+	const comments = `[{"id":"pc1","project":true,"path":"","line":0,"text":"rename","updatedAt":"2026-11-02T08:00:00Z"},{"id":"lc1","path":"a.txt","line":1,"text":"fix","updatedAt":"2026-11-02T08:00:00Z"}]`
+	file := filepath.Join("line-comments", "demo.json")
+	if err := os.MkdirAll(filepath.Join(dirs.state, "line-comments"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirs.state, file), []byte(comments), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := src.Export(&buf, []string{"projects"}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	dst, dstDirs := testService(t)
+	id, err := dst.SavePending(encrypted(t, buf.Bytes()), "test-pw")
+	if err != nil {
+		t.Fatalf("save pending: %v", err)
+	}
+	if _, err := dst.Apply(id, []string{"projects"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dstDirs.state, file)); err != nil || string(data) != comments {
+		t.Fatalf("the comments were not restored: %q, %v", data, err)
+	}
+}
+
 // The forge hosts the user added and the projects' bindings travel in a
 // section of their own, never with the settings, and whoever listens hears
 // the sections an import wrote into once all of it is on disk.

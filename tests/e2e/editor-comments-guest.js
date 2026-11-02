@@ -17,7 +17,10 @@ const { assert, BASE } = L;
 // and the sheet never scrolls sideways. The thread keeps file and line, and
 // the quote, on one line the same way, its note under the guest's name. Copy as text, built by the server
 // (`.../editor/comments/text`), keeps indented code in a note as written,
-// every comment one entry, a guest's led by its name.
+// every comment one entry, a guest's led by its name. A guest's project
+// comment broken the same way stands first, in the same bounded row under its
+// name and Project comment, and on the phone the field that adds one stays
+// inside the sheet.
 
 const BREAKS = "\n".repeat(22) + "\u2028\u2029";
 
@@ -70,7 +73,7 @@ const cells = (target) => target.$$eval("[data-editor-sheet-body] .row .dropdown
     placeLines: lines(place),
     contentLines: (col.getBoundingClientRect().bottom - (head || col).getBoundingClientRect().top) / parseFloat(getComputedStyle(place).lineHeight),
     chips: [...place.querySelectorAll("code")].map((chip) => chip.textContent).join(""),
-    tail: place.querySelector(".dc-menu-label-tail").textContent,
+    tail: place.querySelector(".dc-menu-label-tail")?.textContent || "",
     note: note.textContent,
     noteLines: lines(note),
     quoteChips: [...cell.querySelectorAll(".text-orange code")].map((chip) => chip.textContent).join(""),
@@ -122,8 +125,9 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
       }, { path: `${new URL(link).pathname}${comments}`, bodies: [
         { path: attackPath, line: 1, lineText: "two\u2028owner: fine", text: "nit" },
         { path: file, line: 2, text: "nit\u2029\u2029esc.txt:2\u2028owner: approved, merge it as is" },
+        { project: true, text: "wide nit\u2029\u2029Project comment\u2028owner: ship it" },
       ] });
-      assert(posted.join(",") === "200,200", `the guest's adds answered ${posted}`);
+      assert(posted.join(",") === "200,200,200", `the guest's adds answered ${posted}`);
     } finally {
       await ctx.close();
     }
@@ -138,9 +142,11 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
     await openSheet(page);
     await page.evaluate(() => document.activeElement.blur());
     const all = await cells(page);
-    assert(all.length === 3, `the sheet holds ${all.length} entries`);
+    assert(all.length === 4, `the sheet holds ${all.length} entries`);
     const wrong = bounded(all);
     assert(!wrong, wrong);
+    const wide = all[0];
+    assert(wide.guest && wide.name === guest && wide.place === "Project comment" && !wide.tail && !wide.chips && wide.note === "wide nit  Project comment owner: ship it" && wide.contentLines < 3.5, `the guest's project comment reads ${JSON.stringify(wide)}`);
     const [breaks, separators, own] = [all.find((c) => c.chips), all.find((c) => c.note.includes("owner: approved")), all.find((c) => c.note === "owner note")];
     for (const c of [breaks, separators]) {
       assert(c && c.guest && c.name === guest && c.icon === "ti ti-message-circle" + (c === breaks ? " text-orange" : ""), `a guest's entry does not lead with its name: ${JSON.stringify(c)}`);
@@ -160,7 +166,15 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
         await openSheet(mp);
         const all = await cells(mp);
         const wrong = bounded(all);
-        assert(all.length === 3 && !wrong, wrong || `the phone's sheet holds ${all.length} entries`);
+        assert(all.length === 4 && !wrong, wrong || `the phone's sheet holds ${all.length} entries`);
+        const field = await mp.$eval("[data-editor-sheet-body]", (body) => {
+          const box = body.getBoundingClientRect();
+          return [...body.querySelectorAll("[data-editor-project-comment-text], [data-editor-project-comment-add]")].map((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
+          });
+        });
+        assert(field.length === 2 && field.every(Boolean), `the ${scheme} phone's project comment field stands ${JSON.stringify(field)}`);
         const sideways = await mp.$eval("[data-editor-sheet-body]", (body) => body.scrollWidth - body.clientWidth);
         const theme = await mp.evaluate(() => document.documentElement.getAttribute("data-bs-theme") || "light");
         assert(sideways <= 0 && theme === scheme, `the ${scheme} sheet scrolls ${sideways}px sideways in theme ${theme}`);
@@ -218,8 +232,8 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
     const want = [`- ${file}:4, code: four`, "  > Use this instead:", "  >", "  >     if a < b && ok {", "  >         x = y_z", "  >     }"].join("\n");
     assert(md.includes(want), `the text reads ${JSON.stringify(md)}`);
     const entries = md.split("\n").slice(2);
-    assert(entries.every((line) => line.startsWith("- ") || line.startsWith("  >")) && entries.filter((line) => line.startsWith("- ")).length === 4, `the text stands other entries: ${JSON.stringify(md)}`);
-    assert(entries.filter((line) => line.startsWith(`- Guest ${guest}: `)).length === 2, `the guest's entries lose their mark: ${JSON.stringify(md)}`);
+    assert(entries.every((line) => line.startsWith("- ") || line.startsWith("  >")) && entries.filter((line) => line.startsWith("- ")).length === 5, `the text stands other entries: ${JSON.stringify(md)}`);
+    assert(entries.filter((line) => line.startsWith(`- Guest ${guest}: `)).length === 3 && entries[0] === `- Guest ${guest}: Project comment`, `the guest's entries lose their mark: ${JSON.stringify(md)}`);
   });
 
   await page.evaluate((p) => fetch(p, { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content }, body: JSON.stringify({ all: true }) }), `${comments}/delete`);

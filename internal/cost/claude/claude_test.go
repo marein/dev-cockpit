@@ -550,10 +550,13 @@ func TestATranscriptThatComesBackIsNotBookedAgain(t *testing.T) {
 }
 
 // A total no session can reach is refused where money enters the ledger,
-// and what is booked next to it stays exact.
+// and what is booked next to it stays exact. The ledger runs on the clock,
+// which folds old hours into days and drops old months, so the call stands
+// an hour before now.
 func TestAnAbsurdTotalIsNotBooked(t *testing.T) {
 	h := newHarness(t)
-	h.append(h.path("-p-shop", "s1"), assistant("msg_1", "req_1", "claude-opus-5-5", t0, 1000, 1000, 0, 0, 0))
+	at := time.Now().UTC().Add(-time.Hour)
+	h.append(h.path("-p-shop", "s1"), assistant("msg_1", "req_1", "claude-opus-5-5", at, 1000, 1000, 0, 0, 0))
 	h.append(h.path("-p-shop", "s2"), stateLine(map[string]float64{"claude-opus-5-5": 1.7e308}, false))
 	h.append(h.path("-p-shop", "s3"), `{"type":"cost-state","totalCostUSD":1.7e308,"modelUsage":{"claude-opus-5-5":{"costUSD":1.7e308},"claude-opus-5-5[1m]":{"costUSD":1.7e308}}}`+"\n")
 	s := cost.New(t.TempDir(), func(string) (string, string) { return "", "" }, h.src)
@@ -561,7 +564,7 @@ func TestAnAbsurdTotalIsNotBooked(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := 0.0
-	for _, p := range s.Query(time.UTC, cost.Span{From: t0.Add(-time.Hour)}).Projects {
+	for _, p := range s.Query(time.UTC, cost.Span{From: at.Add(-time.Hour)}).Projects {
 		sum += p.USD
 	}
 	near(t, "total", sum, opus(1000, 1000, 0, 0, 0))

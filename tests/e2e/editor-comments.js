@@ -4,10 +4,12 @@ const { guestChecks } = require("./editor-comments-guest");
 const { threadChecks } = require("./editor-comments-threads");
 
 // Line comments in the editor: notes pinned to single lines. Routes: GET
-// /projects/:name/editor/comments (the project's notes, ordered by file then
-// line; ?path= narrows for the CLI), POST .../editor/comments (upsert one:
-// without an id a new note, with one an edit, path change included; a save
-// without a quote gets the code line read from the disk), POST
+// /projects/:name/editor/comments (the project's notes, the project comments
+// first, then by file and line; ?path= narrows for the CLI and leaves the
+// project comments out), POST .../editor/comments (upsert one: without an id
+// a new note, with one an edit, path change included; a save without a quote
+// gets the code line read from the disk; project: true without path and line
+// is a project comment, a thread on the whole project), POST
 // .../editor/comments/delete ({ids}, {paths} or {all}), POST
 // .../editor/comments/move (one file's lines after the buffer edited around
 // them, posted by the save alone). State lives per project in

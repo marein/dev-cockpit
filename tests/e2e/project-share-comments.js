@@ -29,10 +29,17 @@ const { guestPage, openCommentsSheet, menuLabels, closeMenu, openFile, marked, l
 // the person icon, its note flattened to one line, no box and no bar) and
 // text, where the note stays as written inside the guest's entry, its
 // path's Unicode spaces and its quote's escape shown as escapes, and the
-// sheet cell's title names it on every line. Switching Comment off in the
+// sheet cell's title names it on every line. WebKit refuses to read the
+// clipboard, there the text comes from the route Copy as text copies. Switching Comment off in the
 // link's Edit refuses the guest's next write at once, from a hand built
 // request and from its page still open, whose reload offers no comment
-// anymore.
+// anymore. A guest with Comment adds a project comment through the field of
+// the sheet and replies to the owner's, each the owner's news naming the
+// guest and the project, sees the owner's project comment with Open thread
+// alone, its own with Delete, and a hand built edit, resolve or delete of
+// the owner's changes nothing; another link's guest reads it under the
+// guest's name, and with Comment taken away the reloaded page lists the
+// owner's project comment without the field.
 
 const APISOCK = process.env.APISOCK || "/apisock/s";
 
@@ -105,7 +112,7 @@ async function write(gp, text) {
   await dialogGone(gp);
 }
 
-module.exports.commentChecks = async function commentChecks({ browser, page, run, bag, fx, origin, postAs, getAs, fetchRaw, waitText, openShare, madeLink, editLink, saveEdit, sharingRows }) {
+module.exports.commentChecks = async function commentChecks({ engine, browser, page, run, bag, fx, origin, postAs, getAs, fetchRaw, waitText, openShare, madeLink, editLink, saveEdit, sharingRows }) {
   const anna = `anna-${fx.tag}`;
   const bert = `Bert <b>${fx.tag}</b>`;
   const links = {};
@@ -334,6 +341,68 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       await waitText(async () => String((await noted(`owner-note-${fx.tag}`)).replies?.length || 0), "0", "the guest's delete of its reply");
     });
 
+    await run("a guest adds a project comment in the sheet and replies to the owner's, each the owner's news, and changes only its own", async () => {
+      const unread = async () => (JSON.parse((await getAs(page, "/notifications")).text).notifications || []).filter((n) => n.targetId === `comments:${fx.project}` && !n.read);
+      const ownerWide = `owner-wide-${fx.tag}`;
+      const annaWide = `anna-wide-${fx.tag}`;
+      const reply = `anna-wide-reply-${fx.tag}`;
+      const readNews = async () => {
+        await page.goto(`${BASE}/projects/${fx.project}/editor?view=comments`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 15000 });
+        await waitText(async () => String((await unread()).length), "0", "the read of the guests' news");
+      };
+      await readNews();
+      const made = await postAs(page, `/projects/${fx.project}/editor/comments`, { project: true, text: ownerWide }, { json: true });
+      assert(made.ok, `the owner's project comment answered ${made.status}: ${made.text}`);
+      await waitText(() => page.textContent("[data-editor-sheet-body]"), ownerWide, "the owner's open sheet");
+      const gp = links.anna.page;
+      await openCommentsSheet(gp);
+      await waitText(() => sheetLines(gp), ownerWide, "Anna's open sheet");
+      await gp.fill("[data-editor-project-comment-text]", annaWide);
+      await gp.click("[data-editor-project-comment-add]");
+      const stored = JSON.parse(await waitText(async () => JSON.stringify(await noted(annaWide) || ""), anna, "Anna's project comment"));
+      assert(stored.project && stored.author === anna && stored.path === "" && stored.line === 0 && !("link" in stored) && !stored.mine, `the owner reads ${JSON.stringify(stored)}`);
+      const commented = JSON.parse(await waitText(async () => JSON.stringify(await unread()), annaWide, "the owner's news of the project comment"))[0];
+      assert(commented.title === "Guest commented." && commented.detail === `${anna} on ${fx.project}: ${annaWide}` && commented.url === `/projects/${fx.project}/editor?view=comments`, `the news reads ${JSON.stringify(commented)}`);
+      await waitText(() => sheetLines(page), `${anna}: ${annaWide}`, "the owner's open sheet");
+      const order = (await sheetLines(page)).split("\n").filter((line) => line.includes(fx.tag));
+      assert(order.length > 2 && order[0].endsWith("wide-" + fx.tag) && order[1].endsWith("wide-" + fx.tag), `the project comments do not stand first: ${JSON.stringify(order)}`);
+      await readNews();
+      const cellMenu = async (text) => {
+        await sleep(400);
+        await gp.locator("[data-editor-sheet-body] .row .dropdown-item", { hasText: text }).click();
+        await gp.waitForSelector(".dc-context-menu", { timeout: 4000 });
+        return menuLabels(gp);
+      };
+      const own = await cellMenu(annaWide);
+      assert(own.join("|") === "Open thread|Delete", `its own project comment's menu reads ${JSON.stringify(own)}`);
+      await closeMenu(gp);
+      const owners = await cellMenu(ownerWide);
+      assert(owners.join("|") === "Open thread", `the owner's project comment's menu reads ${JSON.stringify(owners)}`);
+      await pick(gp, "Open thread");
+      const opened = await thread(gp);
+      const title = await gp.textContent("[data-editor-comment-title]");
+      assert(title === "Project comment" && opened.notes.join("|") === `Owner: ${ownerWide}` && opened.reply && !opened.resolve, `the owner's project thread reads ${JSON.stringify({ title, opened })}`);
+      await write(gp, reply);
+      const replied = JSON.parse(await waitText(async () => JSON.stringify(await unread()), reply, "the owner's news of the reply"))[0];
+      assert(replied.title === "Guest replied." && replied.detail === `${anna} on ${fx.project}: ${reply}`, `the news reads ${JSON.stringify(replied)}`);
+      const ownerNote = await noted(ownerWide);
+      assert(ownerNote.replies.length === 1 && ownerNote.replies[0].author === anna, `the reply is stored as ${JSON.stringify(ownerNote)}`);
+      const edit = await asGuest(links.anna, "/comments", { id: ownerNote.id, project: true, text: "taken" });
+      const resolve = await asGuest(links.anna, "/comments/resolve", { id: ownerNote.id, resolved: true });
+      const del = await asGuest(links.anna, "/comments/delete", { ids: [ownerNote.id] });
+      assert(edit.status === 403 && resolve.status === 403 && del.status === 200 && JSON.parse(del.body).removed === 0, `the hand built writes answered ${edit.status}, ${resolve.status}, ${del.status}: ${del.body}`);
+      assert((await noted(ownerWide)).id === ownerNote.id && !(await noted(ownerWide)).resolved, "the owner's project comment moved");
+      await waitText(() => sheetText(links.bert.page), `${anna}: ${annaWide}`, "Bert's sheet");
+      await cellMenu(annaWide);
+      await pick(gp, "Delete");
+      await L.confirmSwal(gp);
+      await waitText(async () => String(!!(await noted(annaWide))), "false", "Anna's delete of her project comment");
+      await gp.click("[data-editor-sheet-close]");
+      const dropped = await postAs(page, `/projects/${fx.project}/editor/comments/reply/delete`, { thread: ownerNote.id, id: ownerNote.replies[0].id }, { json: true });
+      assert(dropped.ok && !(await noted(ownerWide)).replies, `the owner's delete of the reply answered ${dropped.status}: ${dropped.text}`);
+    });
+
     await run("the author shows for the owner, every guest and the local API, the owner changes and deletes a guest's comment", async () => {
       await page.goto(`${BASE}/projects/${fx.project}/editor`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector(".editor-file", { timeout: 15000 });
@@ -411,7 +480,9 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       assert(!ownerCell.guest && !ownerCell.name && cells.every((c) => c.tags === 0 && !c.bar), `the sheet reads ${JSON.stringify(cells)}`);
       await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Copy as text" }).click();
       await page.locator(".dc-toast", { hasText: "Copied the line comments" }).first().waitFor({ timeout: 6000 });
-      const md = await page.evaluate(() => navigator.clipboard.readText());
+      const md = engine === "chromium"
+        ? await page.evaluate(() => navigator.clipboard.readText())
+        : (await getAs(page, `/projects/${fx.project}/editor/comments/text`)).text;
       const entries = md.split("\n").filter((line) => line.startsWith("- "));
       assert(entries.length === (await notes()).length && md.split("\n").slice(2).every((line) => line.startsWith("- ") || line.startsWith("  >")), `the text stands ${entries.length} entries: ${JSON.stringify(md)}`);
       for (const want of [
@@ -447,6 +518,18 @@ module.exports.commentChecks = async function commentChecks({ browser, page, run
       const items = await menuAt(gp, 1);
       assert(!items.includes("Add line comment"), `the reloaded page offers ${JSON.stringify(items)}`);
       await closeMenu(gp);
+      await openCommentsSheet(gp);
+      await waitText(() => sheetLines(gp), `owner-wide-${fx.tag}`, "the reloaded sheet");
+      assert(await gp.locator("[data-editor-project-comment-form]").count() === 0, "the reloaded sheet offers a project comment");
+      await gp.locator("[data-editor-sheet-body] .row .dropdown-item", { hasText: `owner-wide-${fx.tag}` }).click();
+      await gp.waitForSelector(".dc-context-menu", { timeout: 4000 });
+      const wide = await menuLabels(gp);
+      assert(wide.join("|") === "Open thread", `the read only project comment's menu reads ${JSON.stringify(wide)}`);
+      await closeMenu(gp);
+      await gp.click("[data-editor-sheet-close]");
+      const owner = await noted(`owner-wide-${fx.tag}`);
+      const removed = await postAs(page, `/projects/${fx.project}/editor/comments/delete`, { ids: [owner.id] }, { json: true });
+      assert(removed.ok && JSON.parse(removed.text).removed === 1, `removing the owner's project comment answered ${removed.status}: ${removed.text}`);
     });
   } finally {
     for (const ctx of contexts) await ctx.close().catch(() => {});

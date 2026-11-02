@@ -1,8 +1,10 @@
 // Package linecomment keeps the editor's line comments per project: a thread
 // on one line of one file, its first note and the replies under it, so a pass
 // over the code survives a reload and follows the user to another device. A
-// review thread on the forge a project is bound to is a line comment thread
-// too, one with a forge origin, kept in step with the forge by SyncForge.
+// project comment is the same thread on the whole project, without a place.
+// A review thread on the forge a project is bound to is a line comment thread
+// too, one with a forge origin, kept in step with the forge by SyncForge, and
+// a general thread there a project comment.
 package linecomment
 
 import (
@@ -39,9 +41,14 @@ type Service struct {
 // the link it came through as its author and that link's id, which decides
 // what the guest may change. A thread of the forge carries its authors there
 // and where it came from. The owner's notes carry none of it. UpdatedAt is when
-// the first note was last written, a move of its line leaves it.
+// the first note was last written, a move of its line leaves it. Project marks
+// a thread on the whole project, which has no path, no line and no quote and is
+// never outdated; a thread keeps what it stands on for good. Was is the id an
+// own comment had before its publish gave it the one of its thread of the
+// forge, so a page that still holds the old one finds it.
 type Comment struct {
 	ID        string    `json:"id"`
+	Project   bool      `json:"project,omitempty"`
 	Path      string    `json:"path"`
 	Line      int       `json:"line"`
 	LineText  string    `json:"lineText,omitempty"`
@@ -51,6 +58,7 @@ type Comment struct {
 	Forge     *Forge    `json:"forge,omitempty"`
 	Replies   []Reply   `json:"replies,omitempty"`
 	Resolved  bool      `json:"resolved,omitempty"`
+	Was       string    `json:"was,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
@@ -111,6 +119,10 @@ var errPathTooLong = errors.New("That file path is too long.")
 
 // errUnread refuses a write over a file that is there but could not be read.
 var errUnread = errors.New("The line comments could not be read, nothing was changed.")
+
+// errStandsFor refuses an edit that would move a thread between a line and
+// the project.
+var errStandsFor = errors.New("A comment stays on what it was made on, a line or the project.")
 
 const (
 	// MaxPerProject bounds the notes people write in one project, first
@@ -177,8 +189,9 @@ func (s *Service) removeFile(project string) bool {
 	return false
 }
 
-// List answers the project's comments ordered the way the sheet reads: by
-// file, then by line. A project without any answers empty, never nil.
+// List answers the project's comments ordered the way the sheet reads: the
+// project comments first, then by file and by line. A project without any
+// answers empty, never nil.
 func (s *Service) List(project string) []Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -191,12 +204,24 @@ func (s *Service) List(project string) []Comment {
 }
 
 func sortComments(list []Comment) {
-	sort.SliceStable(list, func(i, j int) bool {
-		if list[i].Path != list[j].Path {
-			return list[i].Path < list[j].Path
-		}
-		return list[i].Line < list[j].Line
-	})
+	sort.SliceStable(list, func(i, j int) bool { return before(list[i], list[j]) })
+}
+
+// before is the order of the sheet.
+func before(a, b Comment) bool {
+	switch {
+	case a.Project != b.Project:
+		return a.Project
+	case a.Path != b.Path:
+		return a.Path < b.Path
+	}
+	return a.Line < b.Line
+}
+
+// OnPath reports whether c is a line comment on a file one of the path filter
+// values matches. A project comment stands on no file and matches none.
+func (c Comment) OnPath(patterns []string) bool {
+	return !c.Project && matchesAnyPath(patterns, c.Path)
 }
 
 // Save stores the first note of a thread w writes and says whether that
@@ -205,13 +230,18 @@ func sortComments(list []Comment) {
 // keeps who wrote it, the replies and the resolved state; without one a new
 // thread is minted under w's name. An id nobody holds is a thread deleted on
 // another device meanwhile, and it is not resurrected: the save answers
-// unchanged. A thread of the forge is refused.
+// unchanged. A thread of the forge is refused, and so is an edit that would
+// move a thread between a line and the project. A project comment never
+// stores a place.
 func (s *Service) Save(project string, next Comment, w Writer) (Comment, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list, err := s.read(project)
 	if err != nil {
 		return Comment{}, false, err
+	}
+	if next.Project {
+		next.Path, next.Line, next.LineText = "", 0, ""
 	}
 	if next.ID == "" {
 		if countOwn(list) >= MaxPerProject {
@@ -235,6 +265,9 @@ func (s *Service) Save(project string, next Comment, w Writer) (Comment, bool, e
 		}
 		if !w.May(list[i]) {
 			return Comment{}, false, ErrNotYours
+		}
+		if next.Project != list[i].Project {
+			return Comment{}, false, errStandsFor
 		}
 		// TODO(v2.0.0): a released build took a path of any length, a note
 		// keeps the one it holds.
