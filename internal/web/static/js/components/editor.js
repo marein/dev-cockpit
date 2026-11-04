@@ -8,7 +8,7 @@ import { onServerEvent } from "@dc/events";
 import { focusRow, followPointer, labelNodes, menuJustClosed, openMenu, openedByKeyboard, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
 import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { applyFold } from "@dc/fold";
-import { copyPending, copyText, el, escapeHtml, syncAnimations } from "@dc/dom";
+import { copyPending, copyText, el, escapeHtml, isModEnter, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens, rankTokens } from "@dc/filter";
@@ -26,17 +26,17 @@ import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPrevie
 import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
 import { showPreview, wirePreviewLinks } from "@dc/editor-preview";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
-import { PROJECT_PLACE, authorHead, commentRow, findUniqueQuoteLine, noteEntry, noteStart, placeNodes, placeOf, replyCount, resolved, sortComments, visibleLine } from "@dc/editor-comments";
+import { PROJECT_PLACE, authorHead, commentRow, findUniqueQuoteLine, noteStart, placeNodes, placeOf, postForgeThread, publishComments, publishQuestion, publishWords, replyCount, resolved, sortComments, visibleLine, writeLineComment } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
 import { changeList } from "@dc/editor-changes";
 import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-marks";
 import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl, setupSettingsUI } from "@dc/editor-settings";
 import { createTextarea } from "@dc/editor-textarea";
+import { collapseOption, unifiedDiff } from "@dc/inline-diff";
 import * as projectSort from "@dc/project-sort";
 import { paletteGroups } from "@dc/project-palette";
 import { singleFlight } from "@dc/single-flight";
 import * as store from "@dc/store";
-import { relativeTime } from "dc-time";
 
 const MAX_SAVED_TREE_DIRS = 200;
 // How long the palette's draft waits after the last keystroke. Short, because
@@ -3163,7 +3163,7 @@ async function init(root) {
     // A deleted file is not on the disk and a directory is not a file, so
     // there is nothing to open for either; the row still commits them.
     canOpen: (entry) => !entry.path.endsWith("/") && gitKind(entry) !== "deleted" && gitKind(entry) !== "conflict",
-    open: (entry) => diffAgainst(entry.path, DIFF_REV),
+    open: (entry) => diffAgainst(entry.path, DIFF_REV, renamedFrom(entry)),
     active: () => commitOn,
     onPick: () => {
       syncCommitControls();
@@ -3274,6 +3274,17 @@ async function init(root) {
     }
   }
 
+  // A link from an assistant's Uncommitted opens a file as the commit view
+  // shows it, its diff against HEAD, a deleted one read only as HEAD has it.
+  function openCommitFile(path) {
+    if (gitFiles.get(path) === "deleted") return openRevisionFile({ rev: DIFF_REV, label: DIFF_REV, path });
+    return diffAgainst(path, DIFF_REV, renamedFrom(commitChanges.find((entry) => entry.path === path)));
+  }
+
+  function renamedFrom(entry) {
+    return entry?.from && entry.from !== entry.path ? entry.from : "";
+  }
+
   // openCommit is "bring the commit view up", whatever stands: a view that is
   // already on but sits in a closed drawer or a folded column still has to
   // become visible, which is what the entry in the git sheet promises.
@@ -3302,10 +3313,13 @@ async function init(root) {
     if (pointerMedia.matches) commitFilterEl.focus();
   }
 
-  async function openPageView(view, reveal) {
+  async function openPageView(view, reveal, file = "", suggested = false) {
     await gitFirstAnswer;
     if (signal.aborted) return;
-    if (view === "commit") openCommit({ reveal });
+    if (view === "commit") {
+      openCommit({ reveal: reveal && !file });
+      if (file) void openCommitFile(file);
+    } else if (view === "compare" && (file || suggested)) void openRevdiffSuggested(file, reveal);
     else if (view === "compare") openRevdiff({ reveal });
     else if (view === "pipeline" && gitRepo && !guest) {
       await forgeFirstAnswer;
@@ -3573,7 +3587,7 @@ async function init(root) {
     syncCommitControls();
   }, { signal });
   commitMsgEl.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "Enter") {
+    if (isModEnter(e)) {
       e.preventDefault();
       e.stopPropagation();
       void doCommit();
@@ -3618,6 +3632,7 @@ async function init(root) {
   let revdiffSeq = 0;
   let revdiffAnswer = null;
   let revdiffLoading = false;
+  let revdiffRound = Promise.resolve();
   let revdiffTotals = { added: 0, removed: 0 };
   // The working copy is a pick of its own and never a name: whatever is
   // typed into the picker is a revision, so no typing can turn into it.
@@ -3817,12 +3832,42 @@ async function init(root) {
       revdiffList.restoreState();
       revdiffList.render();
       syncRevdiffControls();
-      void loadRevdiff();
+      revdiffRound = loadRevdiff();
     }
     if (!reveal) return;
     if (mobileMedia.matches) openDrawer();
     else if (treeFolded) toggleDrawer();
     if (pointerMedia.matches) revdiffFilterEl.focus();
+  }
+
+  // A link from an assistant's Changes opens the comparison on the pair the
+  // repository suggests, the one Changes lists: the pair goes back to that
+  // suggestion as the reset does, and a file the link names opens as its row
+  // opens it, a deleted one as the left side had it, one that no longer
+  // differs as the file itself. Without a file the panel is what shows.
+  async function openRevdiffSuggested(path, reveal) {
+    store.remove(revdiffKey);
+    Object.assign(revdiffPair, readRevdiffPair());
+    revdiffAnswer = null;
+    if (revdiffOn) {
+      paintRevdiffHead();
+      revdiffRound = loadRevdiff();
+    }
+    openRevdiff({ reveal: reveal && !path });
+    if (!path) return;
+    await revdiffRound;
+    if (signal.aborted) return;
+    const answer = revdiffAnswer;
+    const entry = answer && (answer.files || []).find((f) => f.path === path);
+    if (!entry) {
+      await openPath(path);
+      return;
+    }
+    if (answer.worktree && revdiffKind(entry) === "deleted") {
+      openFileMenuItem(entry, "deleted", { rev: answer.base, label: revdiffLeftLabel(answer) }, null).action();
+      return;
+    }
+    await openRevisionDiff(entry);
   }
 
   // openRevdiffAt opens the comparison on a pair somebody named, the way a
@@ -5848,11 +5893,7 @@ async function init(root) {
   // An author marks a guest's note, only the owner's own ones without a
   // reply publish, a project comment as a general one.
   const publishable = (c) => !guest && !c.forge && !c.author && !(c.replies || []).length;
-  const publishWords = (picked) => {
-    const general = picked.filter((c) => c.project).length;
-    if (general && general === picked.length) return { each: "a general comment", aside: "" };
-    return { each: "a review thread", aside: general ? ", a project comment a general one" : "" };
-  };
+  const publishCounts = (picked) => [picked.length, picked.filter((c) => c.project).length];
   const publishOffer = () => {
     const el = forgeFragment?.querySelector("[data-forge-publish]");
     return el ? { forge: el.dataset.forgePublishForge, noun: el.dataset.forgePublishNoun, ref: el.dataset.forgePublishRef } : null;
@@ -5860,9 +5901,7 @@ async function init(root) {
   const threadsOffer = () => {
     const el = forgeFragment?.querySelector("[data-forge-threads]");
     return el ? {
-      forge: el.dataset.forgeThreadsForge,
-      noun: el.dataset.forgeThreadsNoun,
-      ref: el.dataset.forgeThreadsRef,
+      hint: el.dataset.forgeThreadsHint,
       reply: el.hasAttribute("data-forge-threads-reply"),
       resolve: el.hasAttribute("data-forge-threads-resolve"),
     } : null;
@@ -6006,23 +6045,17 @@ async function init(root) {
   // A thread deleted on another device meanwhile answers gone, the list is
   // read again instead of keeping the stale one.
   async function writeComment(path, payload, failed) {
-    try {
-      const res = await postJSON(`${base}${path}`, payload);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || failed);
-      if (data.gone || !data.comment) {
-        await loadComments();
-        return true;
-      }
-      const idx = comments.findIndex((c) => c.id === data.comment.id);
-      if (idx >= 0) comments[idx] = data.comment;
-      else comments.push(data.comment);
-      paintComments();
+    const data = await writeLineComment(`${base}${path}`, payload, failed);
+    if (!data) return false;
+    if (data.gone || !data.comment) {
+      await loadComments();
       return true;
-    } catch (err) {
-      notifyError(err.message || failed);
-      return false;
     }
+    const idx = comments.findIndex((c) => c.id === data.comment.id);
+    if (idx >= 0) comments[idx] = data.comment;
+    else comments.push(data.comment);
+    paintComments();
+    return true;
   }
 
   const saveComment = (payload) => writeComment("/comments", payload, "The comment could not be saved.");
@@ -6065,7 +6098,7 @@ async function init(root) {
         commentModalSaveBtn.addEventListener("click", send, { signal: wires.signal });
         commentModalTextEl.addEventListener("input", () => commentModalTextEl.classList.remove("is-invalid"), { signal: wires.signal });
         commentModalTextEl.addEventListener("keydown", (ev) => {
-          if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key === "Enter") {
+          if (isModEnter(ev)) {
             ev.preventDefault();
             ev.stopPropagation();
             send();
@@ -6123,25 +6156,14 @@ async function init(root) {
   // name of its link.
   const noteName = (note) => (note.mine || (!guest && !note.author) ? "You" : note.author || "Owner");
 
-  function noteWhen(at) {
-    const stamp = new Date(at || "");
-    if (Number.isNaN(stamp.getTime()) || stamp.getTime() <= 0) return null;
-    return el("time", { datetime: stamp.toISOString(), title: stamp.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }), class: "text-nowrap" }, relativeTime(stamp));
-  }
-
-  const noteButton = (icon, label, action) => {
-    const button = el("button", { type: "button", class: "btn btn-sm btn-ghost-secondary btn-icon", title: label, "aria-label": label }, el("i", { class: `ti ${icon}`, "aria-hidden": "true" }));
-    button.addEventListener("click", action);
-    return button;
-  };
-
   // openThread opens a thread: the whole conversation, a field for a reply
   // and the switch that resolves the thread or opens it again. A pencil edits
   // a note of your own or a guest's in the same field, a reply's bin closes
   // the dialog for the confirm. A thread of the forge takes its reply and its
   // resolve there, the owner's alone and only where the forge takes them, and
-  // is never opened again from here. The conversation follows the comments
-  // while the dialog stands.
+  // is never opened again from here. The notes are the server's rendering of
+  // the thread, the assistant's project view shows the same, pulled again
+  // while the dialog stands and the comments move.
   async function openThread(thread) {
     let editing = null;
     let current = thread;
@@ -6150,15 +6172,7 @@ async function init(root) {
     const offer = forge ? threadsOffer() : null;
     const writes = forge ? !guest && !!offer?.reply && !!forge.thread : can("comments");
     const mayToggle = (c) => !editing && (forge ? writes && offer.resolve && !forge.unresolvable && !resolved(c) : mayChange(c));
-    const nameOf = (note) => (forge ? note.author || forge.label : noteName(note));
-    const edit = (id, text, title) => {
-      editing = { id };
-      commentModalTitleEl.textContent = title;
-      commentModalTextEl.value = text;
-      commentModalTextEl.classList.remove("is-invalid");
-      paint();
-      commentModalTextEl.focus();
-    };
+    const wires = new AbortController();
     let dropReply = null;
     const paintControls = () => {
       const c = current;
@@ -6169,34 +6183,48 @@ async function init(root) {
       commentModalSaveBtn.textContent = editing ? "Save" : toggling ? (resolved(c) ? "Reopen" : "Resolve") : "Reply";
       commentModalInvalidEl.textContent = editing && !editing.id ? "A comment is required." : "A reply is required.";
     };
-    const paint = () => {
+    const paintState = () => {
       current = live();
-      const c = current;
-      const replyEntry = (r) => noteEntry({
-        name: nameOf(r),
-        when: noteWhen(r.updatedAt),
-        text: r.text,
-        buttons: !forge && mayChangeReply(r) ? [
-          noteButton("ti-pencil", "Edit reply", () => edit(r.id, r.text, "Edit reply")),
-          noteButton("ti-trash", "Delete reply", () => {
-            dropReply = r;
-            window.bootstrap.Modal.getOrCreateInstance(commentModalEl).hide();
-          }),
-        ] : [],
-      });
-      commentModalThreadEl.replaceChildren(
-        noteEntry({
-          name: nameOf(c),
-          when: noteWhen(c.updatedAt),
-          text: c.text,
-          buttons: mayChange(c) ? [noteButton("ti-pencil", "Edit comment", () => edit("", c.text, c.project ? "Edit project comment" : "Edit line comment"))] : [],
-        }),
-        ...(c.replies || []).map(replyEntry),
-      );
-      commentModalAuthorEl.textContent = resolved(c) ? "Resolved" : "";
-      commentModalAuthorEl.hidden = !resolved(c);
+      commentModalAuthorEl.textContent = resolved(current) ? "Resolved" : "";
+      commentModalAuthorEl.hidden = !resolved(current);
       if (writes) paintControls();
     };
+    let notesAsked = 0;
+    const paint = async () => {
+      paintState();
+      const asked = ++notesAsked;
+      let html;
+      try {
+        html = await getText(`${base}/comments/thread?id=${encodeURIComponent(current.id)}`, { signal: wires.signal });
+      } catch {
+        return;
+      }
+      if (asked !== notesAsked || wires.signal.aborted) return;
+      commentModalThreadEl.innerHTML = html;
+      await window.app?.loadElements?.(commentModalThreadEl);
+    };
+    const edit = (id) => {
+      const c = live();
+      const note = id ? (c.replies || []).find((r) => r.id === id) : c;
+      if (!note) return;
+      editing = { id };
+      commentModalTitleEl.textContent = id ? "Edit reply" : c.project ? "Edit project comment" : "Edit line comment";
+      commentModalTextEl.value = note.text;
+      commentModalTextEl.classList.remove("is-invalid");
+      paintState();
+      commentModalTextEl.focus();
+    };
+    commentModalThreadEl.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-comment-note-edit], [data-comment-note-drop]");
+      if (!button) return;
+      const id = button.closest("[data-comment-note]")?.dataset.commentNote || "";
+      if (button.hasAttribute("data-comment-note-edit")) {
+        edit(id);
+        return;
+      }
+      dropReply = (live().replies || []).find((r) => r.id === id) || null;
+      if (dropReply) window.bootstrap.Modal.getOrCreateInstance(commentModalEl).hide();
+    }, { signal: wires.signal });
     commentModalTitleEl.textContent = thread.project ? PROJECT_PLACE : "Line comment";
     if (thread.project) commentModalHead("", 0, "");
     else commentModalHead(thread.path, thread.line, currentLineText(thread.path, thread.line, thread));
@@ -6215,13 +6243,13 @@ async function init(root) {
     }
     if (writes) {
       commentModalTextEl.readOnly = false;
-      if (forge) commentModalHintEl.textContent = `It is posted on ${offer.noun} ${offer.ref} on ${offer.forge}, for everybody who can read it there.`;
+      if (forge) commentModalHintEl.textContent = offer.hint;
       commentModalTextEl.placeholder = "Your reply";
       commentModalResolveEl.checked = false;
     }
-    paint();
+    commentModalThreadEl.replaceChildren();
+    await paint();
     threadDialog = paint;
-    const wires = new AbortController();
     if (writes) {
       commentModalTextEl.addEventListener("input", paintControls, { signal: wires.signal });
       commentModalResolveEl.addEventListener("change", paintControls, { signal: wires.signal });
@@ -6239,7 +6267,7 @@ async function init(root) {
       }
       const toggle = mayToggle(c) && commentModalResolveEl.checked;
       if (!text && !toggle) return markInvalid();
-      if (forge) return (await writeThread(c.forge.thread, { body: text, resolve: toggle })) || null;
+      if (forge) return (await postForgeThread(`${forgeBase}/thread`, { thread: c.forge.thread, body: text, resolve: toggle })) || null;
       if (text && !(await saveReply(c, text))) return null;
       if (toggle && !(await resolveThread(c, !resolved(c)))) return text ? true : null;
       return true;
@@ -6257,21 +6285,9 @@ async function init(root) {
     await saveComment({ id: "", path, line, lineText, text: outcome.text });
   }
 
-  // A published comment comes back as a note of the forge with the
-  // linecomments event, the toast only says it went.
-  async function publishComments(ids) {
-    try {
-      const response = await postForm(`${forgeBase}/publish`, ids.map((id) => ["id", id]));
-      await ensureOk(response, "The comments could not be published.");
-      notifySuccess((await response.json()).message);
-    } catch (err) {
-      notifyError(err.message);
-    }
-  }
-
   const publishItem = (comment, label) => {
     const offer = publishOffer();
-    return offer && publishable(comment) && { label, icon: "ti-send", hint: offer.ref, action: () => void publishComments([comment.id]) };
+    return offer && publishable(comment) && { label, icon: "ti-send", hint: offer.ref, action: () => void publishComments(`${forgeBase}/publish`, [comment.id]) };
   };
 
   async function publishAllDialog() {
@@ -6280,35 +6296,8 @@ async function init(root) {
     const ids = picked.map((c) => c.id);
     const count = ids.length;
     if (!offer || !count) return;
-    const words = publishWords(picked);
-    const becomes = count === 1 ? `It becomes ${words.each}` : `Each becomes ${words.each} of its own`;
-    if (!(await confirmDialog({
-      title: count === 1 ? "Publish the comment?" : `Publish all ${count} comments?`,
-      text: `${becomes} on ${offer.noun} ${offer.ref} on ${offer.forge}${words.aside}, for everybody who can read it there.`,
-      confirmText: "Publish",
-    }))) return;
-    await publishComments(ids);
-  }
-
-  // The line comments follow with the linecomments event once the forge is
-  // read again, the toast only says it went. A resolve refused after the
-  // reply went still answers that the reply is posted: its dialog closes, a
-  // second Reply would post it twice.
-  async function writeThread(thread, { body = "", resolve = false }) {
-    const fields = [["thread", thread]];
-    if (body) fields.push(["body", body]);
-    if (resolve) fields.push(["resolve", "1"]);
-    let replied = false;
-    try {
-      const response = await postForm(`${forgeBase}/thread`, fields);
-      if (!response.ok) replied = (await response.clone().json().catch(() => ({}))).replied === true;
-      await ensureOk(response, body ? "The reply could not be posted." : "The thread could not be resolved.");
-      notifySuccess((await response.json()).message);
-      return true;
-    } catch (err) {
-      notifyError(err.message);
-      return replied;
-    }
+    if (!(await confirmDialog(publishQuestion(...publishCounts(picked), offer)))) return;
+    await publishComments(`${forgeBase}/publish`, ids);
   }
 
   const forgeLinkItem = (note) => note.forge.url && {
@@ -6529,7 +6518,7 @@ async function init(root) {
     const onLines = list.filter((c) => !c.project);
     const form = projectCommentFormEl && sheetBodyEl.contains(projectCommentFormEl) ? projectCommentFormEl : null;
     const offer = publishOffer();
-    const words = publishWords(list.filter(publishable));
+    const words = publishWords(...publishCounts(list.filter(publishable)));
     const top = [
       sheetActionRow({
         icon: "ti-copy",
@@ -9611,7 +9600,7 @@ async function init(root) {
       // changes a file sits on the key somebody hits by reflex.
       e.preventDefault();
       void replaceRow(quickOpenActive);
-    } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "Enter") {
+    } else if (isModEnter(e)) {
       // What a Ctrl+click has meant on the web forever: it opens behind, the
       // palette keeps the focus and the mark moves on, so a list is walked once
       // and read afterwards.
@@ -10292,7 +10281,7 @@ async function init(root) {
     projectCommentAddBtn.addEventListener("click", () => void addProjectComment(), { signal });
     projectCommentTextEl.addEventListener("input", () => projectCommentTextEl.classList.remove("is-invalid"), { signal });
     projectCommentTextEl.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === "Enter") {
+      if (isModEnter(e)) {
         e.preventDefault();
         e.stopPropagation();
         void addProjectComment();
@@ -11434,15 +11423,19 @@ async function init(root) {
   const openFileAt = (file, line, col) => {
     void openPath(file, { jump: line > 0 ? { line, character: Math.max(0, col - 1) } : null });
   };
-  if (root.dataset.editorFile) openFileAt(root.dataset.editorFile, Number(root.dataset.editorLine), Number(root.dataset.editorCol));
-  else if (tabs.length === 0 && mobileMedia.matches) openDrawer();
-  if (pageTerminal && termOpen && onDesktop()) void activateTermPane(pageTerminal, { focus: true });
   const linkedView = root.dataset.editorView || "";
+  // With the compare or the commit view a linked file opens as that view
+  // shows it, see openRevdiffSuggested and openCommitFile, and not on its own
+  // first.
+  const linkedFile = root.dataset.editorFile || "";
+  if (linkedFile && linkedView !== "compare" && linkedView !== "commit") openFileAt(linkedFile, Number(root.dataset.editorLine), Number(root.dataset.editorCol));
+  else if (!linkedFile && tabs.length === 0 && mobileMedia.matches) openDrawer();
+  if (pageTerminal && termOpen && onDesktop()) void activateTermPane(pageTerminal, { focus: true });
   // The pipeline and the line comments stand in a sheet over the editor, no
   // panel of it, so the panel the editor stood on last opens beneath them.
   const sheetView = linkedView === "pipeline" || linkedView === "comments";
   const panelView = linkedView && !sheetView ? linkedView : store.get(viewKey, "");
-  if (panelView) void openPageView(panelView, panelView === linkedView);
+  if (panelView) void openPageView(panelView, panelView === linkedView, panelView === linkedView ? linkedFile : "", panelView === linkedView && root.dataset.editorPair === "suggested");
   if (sheetView) void openPageView(linkedView, true);
   // A file link from this editor's own terminal panel opens in place, a page
   // load would restart the panel's terminals.
@@ -12131,12 +12124,6 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     return mergeMod;
   }
 
-  // How many unchanged lines stay visible around a change when the folding is
-  // on. Three reads well on a phone and on a wide screen, it is not worth a
-  // setting.
-  const collapseMargin = 3;
-  const collapseOption = (spec) => (spec.collapse ? { margin: collapseMargin } : undefined);
-
   // Whether the two sided view currently holds two files rather than a file and
   // a revision. Both are a MergeView; only this tells them apart.
   let compareOn = false;
@@ -12281,7 +12268,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     const view = new merge.MergeView({
       a: { doc: spec.left.doc, extensions: sideExtensions(leftLang) },
       b: { doc: spec.right.doc, extensions: sideExtensions(rightLang) },
-      collapseUnchanged: collapseOption(spec),
+      collapseUnchanged: collapseOption(spec.collapse),
       highlightChanges: true,
       gutter: true,
     });
@@ -12327,7 +12314,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       const view = new merge.MergeView({
         a: { doc: spec.original, extensions: readOnlyExtensions(langExt) },
         b: { doc, extensions: editableExtensions(langExt, blame) },
-        collapseUnchanged: collapseOption(spec),
+        collapseUnchanged: collapseOption(spec.collapse),
         highlightChanges: true,
         gutter: true,
       });
@@ -12385,15 +12372,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   function buildUnified(merge, spec) {
     dropUnified();
     editorView.dispatch({
-      effects: mergeConf.reconfigure(merge.unifiedMergeView({
-        original: spec.original,
-        // Nothing in the editor writes a chunk back into the buffer, the
-        // revision side is there to be read.
-        mergeControls: false,
-        gutter: true,
-        highlightChanges: true,
-        collapseUnchanged: collapseOption(spec),
-      })),
+      effects: mergeConf.reconfigure(unifiedDiff(merge, spec.original, spec.collapse)),
     });
     unifiedOn = true;
   }

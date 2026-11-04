@@ -1,0 +1,464 @@
+{{/* The projects one assistant's jobs work in, the aside's first tab. A card
+     is the project with its working copy as git reads it, what the forge
+     poller read of its branch, and the jobs of this assistant in it as the
+     rows of the jobs tab wear them, cut to the state and the way to the
+     coder: the rest of a job is one tab over. */}}
+{{define "assistant_projects_list.gohtml"}}
+<div data-assistant-body data-assistant-projects-needs="{{.Needs}}">
+  {{if .Projects}}
+  <div class="d-flex flex-column gap-2" data-assistant-projects>
+    {{range .Projects}}
+    <div class="card{{if .Needs}} border-danger{{end}}" data-assistant-project="{{.Name}}">
+      {{template "assistant_project_head.gohtml" .}}
+      {{if .Forge}}{{template "assistant_project_forge.gohtml" (dict "Name" .Name "Forge" .Forge)}}{{end}}
+      {{if or .ReviewLine .Git.Read}}
+      <div class="list-group list-group-flush border-top border-bottom-0">
+        {{template "assistant_project_review_line.gohtml" .}}
+        {{if .Git.Read}}{{template "assistant_project_changes_line.gohtml" .}}{{end}}
+      </div>
+      {{end}}
+      <div class="list-group list-group-flush border-top border-bottom-0 bg-surface-secondary rounded-bottom py-1" data-assistant-project-jobs>
+        {{range .ShownJobs}}{{template "assistant_project_job.gohtml" (dict "Job" . "Tab" $)}}{{end}}
+        {{if .Older}}
+        <div class="collapse" id="{{.FoldID}}" data-assistant-fold>
+          {{range .OlderJobs}}{{template "assistant_project_job.gohtml" (dict "Job" . "Tab" $)}}{{end}}
+        </div>
+        <button type="button" class="btn btn-link btn-sm text-secondary align-self-start px-3" data-bs-toggle="collapse" data-bs-target="#{{.FoldID}}" aria-expanded="false" aria-controls="{{.FoldID}}" data-assistant-project-older>{{template "assistant_fold_label.gohtml" .OlderLabel}}</button>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+    {{if .Older}}
+    <button type="button" class="btn btn-link btn-sm text-secondary px-0 align-self-start dc-tap" aria-expanded="{{.Unfolded}}" data-assistant-older>{{template "assistant_fold_label.gohtml" .OlderLabel}}</button>
+    {{range .Folded}}<span hidden data-assistant-project-folded="{{.}}"></span>{{end}}
+    {{end}}
+  </div>
+  {{else}}
+  <div class="text-secondary small py-2" data-assistant-projects-empty>A project shows here once a job of this assistant works in it.</div>
+  {{end}}
+</div>
+{{end}}
+
+{{/* A card's head, on the card and over the project it opens: the project
+     by its name, its working copy and whether and why it needs the user. */}}
+{{define "assistant_project_head.gohtml"}}
+<div class="card-body px-3 py-2 d-flex align-items-center gap-2">
+  <span class="dc-term-icon" aria-hidden="true"><i class="ti {{with .Forge}}{{.Kind.Icon}}{{else}}ti-folder{{end}}"></i></span>
+  <div class="min-w-0 flex-fill">
+    <div class="d-flex align-items-center gap-2">
+      <div class="fw-medium text-truncate min-w-0 flex-fill">{{if .URL}}<a class="text-reset text-decoration-none" href="{{.URL}}" data-assistant-project-link>{{.Name}}</a>{{else}}{{.Name}}{{end}}</div>
+      {{if .Needs}}<span class="badge bg-red-lt flex-shrink-0" data-assistant-project-needs>Needs you</span>{{end}}
+    </div>
+    {{template "assistant_project_git.gohtml" .Git}}
+    {{if .Needs}}<div class="small text-red" data-assistant-project-needs-why>{{.NeedsWhy}}</div>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "assistant_project_git.gohtml"}}
+<div class="d-flex align-items-center gap-1 text-secondary small font-monospace" data-assistant-project-git>
+  {{- if not .Repo}}<span class="text-truncate" data-assistant-project-norepo>no git repository</span>
+  {{- else if not .Read}}<span class="text-truncate" data-assistant-project-unread>git did not answer</span>
+  {{- else}}
+  <i class="ti {{if .Detached}}ti-git-commit{{else}}ti-git-branch{{end}} flex-shrink-0" aria-hidden="true"></i>
+  <span class="text-truncate" title="{{if .Detached}}Detached HEAD at {{.Branch}}{{else}}Checked out branch {{.Branch}}{{end}}" data-assistant-project-branch>{{.Branch}}</span>
+  <span class="flex-shrink-0" aria-hidden="true">·</span>
+  {{- if .Counted}}
+  <span class="flex-shrink-0 text-nowrap" title="Commits ahead of and behind {{.Upstream}}" data-assistant-project-ahead="{{.Ahead}}" data-assistant-project-behind="{{.Behind}}">↑{{.Ahead}} ↓{{.Behind}}</span>
+  {{- else if .Upstream}}
+  <span class="flex-shrink-0 text-nowrap" title="{{.Upstream}} does not exist" data-assistant-project-upstream-gone>upstream gone</span>
+  {{- else}}
+  <span class="flex-shrink-0 text-nowrap" data-assistant-project-no-upstream>no upstream</span>
+  {{- end}}
+  {{- end}}
+</div>
+{{end}}
+
+{{/* The card's line of what the Changes section counts, the commits since
+     the split and the files and lines of the pair the editor's compare opens
+     on, with what the working copy holds uncommitted, which opens the project
+     on its changes. Where the line runs out of room the counts give way, what
+     is uncommitted stands whole. */}}
+{{define "assistant_project_changes_line.gohtml"}}
+{{- $s := .Git.Since}}
+<button type="button" class="list-group-item list-group-item-action d-flex align-items-center gap-2 px-3 py-2 small" title="{{if $s.Read}}{{$s.Base}}{{else}}{{$s.Error}}{{end}}" data-assistant-project-changes data-assistant-project-open="{{.Name}}" data-assistant-project-section="changes">
+  <i class="ti ti-file-diff text-secondary flex-shrink-0" aria-hidden="true"></i>
+  <span class="d-flex gap-1 min-w-0 text-start">
+    {{- if $s.Read}}
+    <span class="text-truncate"><span data-assistant-project-commits="{{$s.Commits}}">{{$s.CommitsLine}}</span> · <span data-assistant-project-files="{{$s.Changed}}">{{$s.FilesLine}}</span>{{if or $s.Added $s.Removed}} · <span class="text-green" data-assistant-project-added="{{$s.Added}}">+{{$s.Added}}</span> <span class="text-red" data-assistant-project-removed="{{$s.Removed}}">−{{$s.Removed}}</span>{{end}}</span>
+    {{- end}}
+    <span class="text-nowrap flex-shrink-0">{{if $s.Read}}· {{end}}<span{{if .Git.Changed}} class="text-warning"{{end}} data-assistant-project-changed="{{.Git.Changed}}">{{if .Git.Changed}}{{.Git.Changed}} uncommitted{{else}}clean{{end}}</span></span>
+  </span>
+  <i class="ti ti-chevron-right text-secondary ms-auto flex-shrink-0" aria-hidden="true"></i>
+</button>
+{{end}}
+
+{{/* The lines of what the forge poller read of a card's branch: the change
+     request, else that a pushed branch has none, the pipeline with its
+     stages and why the last read failed. */}}
+{{define "assistant_project_forge.gohtml"}}
+{{- $f := .Forge}}
+{{- template "assistant_project_change.gohtml" $f}}
+{{- with $f.Pipeline}}
+<div class="border-top px-3 py-2 d-flex align-items-center gap-2 small" data-assistant-project-pipeline="{{.Status}}">
+  <i class="ti {{$f.PipelineIcon}} text-{{$f.PipelineColor}} flex-shrink-0" aria-hidden="true"></i>
+  {{- if .URL}}
+  <a class="text-reset text-decoration-none flex-shrink-0" href="{{.URL}}" target="_blank" rel="noopener" title="{{$f.PipelineTitle}}" data-assistant-project-pipeline-link>Pipeline</a>
+  {{- else}}
+  <span class="flex-shrink-0" title="{{$f.PipelineTitle}}">Pipeline</span>
+  {{- end}}
+  {{- with $f.Stages}}
+  <div class="progress progress-separated w-25 flex-shrink-0" role="img" aria-label="{{$f.StagesLabel}}" title="{{$f.StagesLabel}}" data-assistant-project-stages>
+    {{- range .}}<div class="progress-bar flex-fill {{.Bar}}" data-assistant-project-stage="{{.Status}}"></div>{{end -}}
+  </div>
+  {{- end}}
+  <span class="text-truncate min-w-0 flex-fill {{if eq .Status "failed"}}text-red{{else}}text-secondary{{end}}" data-assistant-project-pipeline-note>{{$f.PipelineNote}}</span>
+  {{- with $f.Retry}}
+  <button type="button" class="btn btn-sm flex-shrink-0 my-n1" title="{{.Label}}: {{.Sub}}" data-assistant-project-retry data-git-retry="{{$f.RetryURL}}" data-git-project="{{$.Name}}" data-git-retry-branch="{{.Branch}}" data-git-retry-head="{{.Head}}" data-git-retry-pipeline="{{.Pipeline}}"><i class="ti ti-reload me-1" aria-hidden="true"></i>{{$f.Kind.Retry}}</button>
+  {{- end}}
+</div>
+{{- end}}
+{{- template "assistant_project_problem.gohtml" $f}}
+{{end}}
+
+{{/* The card's line of the open line comment threads, the forge's and the
+     local ones, on a line and on the project, and the comments a publish would post, which opens the
+     project on its reviews. */}}
+{{define "assistant_project_review_line.gohtml"}}
+{{- with .ReviewLine}}
+<button type="button" class="list-group-item list-group-item-action d-flex align-items-center gap-2 px-3 py-2 small" data-assistant-project-review data-assistant-project-open="{{$.Name}}" data-assistant-project-section="reviews" data-assistant-project-threads="{{$.Threads}}" data-assistant-project-unpublished="{{$.Unpublished}}">
+  <i class="ti ti-message-circle text-secondary flex-shrink-0" aria-hidden="true"></i><span class="text-truncate min-w-0 text-start">{{.}}</span><i class="ti ti-chevron-right text-secondary ms-auto flex-shrink-0" aria-hidden="true"></i>
+</button>
+{{- end}}
+{{end}}
+
+{{/* The change request of a card's branch, else that a pushed branch has
+     none: on the card and over the project it opens. */}}
+{{define "assistant_project_change.gohtml"}}
+{{- $f := .}}
+{{- with $f.Change}}
+<div class="border-top px-3 py-2 d-flex align-items-center gap-2 small" data-assistant-project-change="{{.State}}"{{if .Draft}} data-assistant-project-draft{{end}}>
+  <i class="ti {{$f.ChangeIcon}} text-{{$f.ChangeColor}} flex-shrink-0" aria-hidden="true"></i>
+  {{- if .URL}}
+  <a class="text-reset text-decoration-none text-truncate min-w-0 flex-fill" href="{{.URL}}" target="_blank" rel="noopener" title="{{$f.ChangeTitle}}" data-assistant-project-change-link><span class="fw-medium">{{$f.ChangeRef}}</span> {{.Title}}</a>
+  {{- else}}
+  <span class="text-truncate min-w-0 flex-fill" title="{{$f.ChangeTitle}}"><span class="fw-medium">{{$f.ChangeRef}}</span> {{.Title}}</span>
+  {{- end}}
+  <span class="text-secondary text-nowrap flex-shrink-0" data-assistant-project-change-state>{{if .Draft}}draft · {{end}}{{.State}}</span>
+</div>
+{{- else with $f.NoChange}}
+<div class="border-top px-3 py-2 d-flex align-items-center gap-2 small text-secondary" data-assistant-project-no-change>
+  <i class="ti ti-git-pull-request flex-shrink-0" aria-hidden="true"></i><span class="text-truncate min-w-0">{{.}}</span>
+</div>
+{{- end}}
+{{end}}
+
+{{define "assistant_project_problem.gohtml"}}
+{{- with .Problem}}
+<div class="border-top px-3 py-2 d-flex align-items-start gap-2 small text-warning" data-assistant-project-problem>
+  <i class="ti ti-alert-triangle flex-shrink-0 mt-1" aria-hidden="true"></i><span class="min-w-0 text-break">{{.}}</span>
+</div>
+{{- end}}
+{{end}}
+
+{{/* The text of a control over the rows past the first ones of a list, the
+     half that says what a press does next shows by the control's
+     aria-expanded. */}}
+{{define "assistant_fold_label.gohtml"}}<span data-fold-shut>{{.Shut}}</span><span data-fold-open>{{.Open}}</span>{{end}}
+
+{{/* A job of the card: the coder by its state icon and name, the way to it,
+     the way the Coders tab leads there, a stopped coder resumed. */}}
+{{define "assistant_project_job.gohtml"}}
+{{- $j := .Job}}
+{{- if and $j.Stopped (not .Tab.Access.Guest)}}
+{{template "assistant_job_resume.gohtml" (dict "Job" $j "CSRF" .Tab.CSRFToken "Row" true)}}
+{{- else if $j.URL}}
+<a class="list-group-item list-group-item-action border-0 d-flex align-items-center gap-2 px-3 py-1 small" href="{{$j.URL}}" data-assistant-project-job="{{$j.Terminal}}" data-assistant-project-job-link>
+  {{template "assistant_job_state.gohtml" $j}}<span class="text-truncate min-w-0">{{$j.Name}}</span>
+</a>
+{{- else}}
+<div class="list-group-item border-0 d-flex align-items-center gap-2 px-3 py-1 small" data-assistant-project-job="{{$j.Terminal}}">
+  {{template "assistant_job_state.gohtml" $j}}<span class="text-truncate min-w-0">{{$j.Name}}</span>
+</div>
+{{- end}}
+{{end}}
+
+{{/* A card opened inside the aside: its head and change request, then the
+     review threads of its branch and its changes, a switch between the two
+     where both stand. Back stands first, so the way out is where the eye
+     starts. */}}
+{{define "assistant_project_view.gohtml"}}
+{{- $r := .Reviews}}{{$shows := .Shows}}{{$seg := .Segmented}}
+<div data-assistant-project-view-body="{{.Card.Name}}" data-section="{{$shows}}">
+  <button type="button" class="btn btn-link btn-sm text-primary text-decoration-none px-0 mb-2" data-assistant-project-back><i class="ti ti-chevron-left me-1" aria-hidden="true"></i>Projects</button>
+  <div class="card mb-3{{if .Card.Needs}} border-danger{{end}}" data-assistant-project-view-card>
+    {{template "assistant_project_head.gohtml" .Card}}
+    {{with .Card.Forge}}{{template "assistant_project_change.gohtml" .}}{{template "assistant_project_problem.gohtml" .}}{{end}}
+  </div>
+  {{- if $seg}}
+  <div class="nav nav-segmented w-100 mb-3" role="tablist">
+    <button type="button" class="nav-link{{if eq $shows "reviews"}} active{{end}}" id="assistant-project-reviews-tab" data-bs-toggle="tab" data-bs-target="#assistant-project-reviews" role="tab" aria-controls="assistant-project-reviews" aria-selected="{{eq $shows "reviews"}}" data-assistant-project-switch="reviews">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>{{$r.Count}}</span></button>
+    <button type="button" class="nav-link{{if eq $shows "changes"}} active{{end}}" id="assistant-project-changes-tab" data-bs-toggle="tab" data-bs-target="#assistant-project-changes" role="tab" aria-controls="assistant-project-changes" aria-selected="{{eq $shows "changes"}}" data-assistant-project-switch="changes">Changes{{with .Changes.Since}}{{if .Read}}<span class="badge bg-secondary-lt" title="{{.CommitsLine}}" data-assistant-project-changes-count>{{.Commits}}</span>{{end}}{{end}}</button>
+  </div>
+  {{- end}}
+  <div class="tab-content">
+  {{- if .HasReviews}}
+  <section class="tab-pane{{if eq $shows "reviews"}} active{{end}}" id="assistant-project-reviews"{{if $seg}} role="tabpanel" aria-labelledby="assistant-project-reviews-tab"{{end}} data-assistant-project-reviews="{{$r.Count}}"{{with $r.ThreadURL}} data-thread-url="{{.}}" data-branch="{{$r.Branch}}"{{end}}{{with $r.CommentsURL}} data-comments-url="{{.}}"{{end}}>
+    {{- if not $seg}}
+    <h3 class="d-flex align-items-center gap-2 small text-uppercase text-secondary fw-medium mb-2">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>{{$r.Count}}</span></h3>
+    {{- end}}
+    {{- with $r.Unpublished}}
+    <div class="d-flex align-items-center gap-2 border border-warning rounded px-3 py-2 mb-2 small" data-assistant-project-unpublished-box="{{len .}}">
+      <i class="ti ti-message-plus text-warning flex-shrink-0" aria-hidden="true"></i>
+      <span class="min-w-0 flex-fill">{{$r.UnpublishedLine}}</span>
+      {{- with $r.Publish}}
+      <button type="button" class="btn btn-sm flex-shrink-0" title="Publish them on {{.Noun}} {{.Ref}} on {{.Forge}}" data-assistant-project-publish="{{$r.PublishURL}}" data-forge-publish-forge="{{.Forge}}" data-forge-publish-noun="{{.Noun}}" data-forge-publish-ref="{{.Ref}}" data-ids="{{join $r.Unpublished " "}}" data-general="{{$r.UnpublishedGeneral}}"><i class="ti ti-send me-1" aria-hidden="true"></i>{{$r.PublishLabel}}</button>
+      {{- end}}
+    </div>
+    {{- end}}
+    {{- if $r.Open}}
+    <div class="d-flex flex-column gap-2" data-assistant-project-threads-open>
+      {{- range $r.Open}}{{template "assistant_project_thread.gohtml" (dict "Thread" . "Reviews" $r)}}{{end}}
+    </div>
+    {{- else}}
+    <div class="text-secondary small py-1" data-assistant-project-threads-none>No open thread.</div>
+    {{- end}}
+    {{- with $r.Resolved}}
+    <button type="button" class="btn btn-link btn-sm text-secondary px-0 mt-2" data-bs-toggle="collapse" data-bs-target="#{{$r.ResolvedFold}}" aria-expanded="false" aria-controls="{{$r.ResolvedFold}}" data-assistant-project-resolved-toggle>{{template "assistant_fold_label.gohtml" $r.ResolvedLabel}}</button>
+    <div class="collapse" id="{{$r.ResolvedFold}}" data-assistant-fold>
+      <div class="d-flex flex-column gap-2 pt-1" data-assistant-project-threads-resolved>
+        {{- range .}}{{template "assistant_project_thread.gohtml" (dict "Thread" . "Reviews" $r "Resolved" true)}}{{end}}
+      </div>
+    </div>
+    {{- end}}
+  </section>
+  {{- end}}
+  {{- with .Changes}}
+  <section class="tab-pane{{if eq $shows "changes"}} active{{end}}" id="assistant-project-changes"{{if $seg}} role="tabpanel" aria-labelledby="assistant-project-changes-tab"{{end}} data-assistant-project-changes-section>
+    {{- if not $seg}}
+    <h3 class="small text-uppercase text-secondary fw-medium mb-2">Changes</h3>
+    {{- end}}
+    {{template "assistant_project_changes.gohtml" .}}
+  </section>
+  {{- end}}
+  </div>
+</div>
+{{end}}
+
+{{/* The Changes section: on top the files the working copy holds
+     uncommitted against HEAD while it holds any, then the pair the editor's
+     compare opens on in the editor's names, the base and the working copy
+     since they split, its counts, its files with the largest change first
+     and the commits since the split. The rows past the first ones of a list
+     stand behind a fold, which holds them once the view was pulled with that
+     list unfolded. */}}
+{{define "assistant_project_changes.gohtml"}}
+{{- $s := .Since}}
+{{- if or .Uncommitted .UncommittedUnread}}
+<div class="border-bottom pb-2 mb-3" data-assistant-uncommitted>
+  <h4 class="d-flex align-items-center gap-2 small text-secondary fw-medium mb-1"><span class="text-uppercase">Uncommitted</span>{{with .Uncommitted}}<span class="badge bg-secondary-lt" data-assistant-uncommitted-count>{{.Count}}</span>{{end}}<span class="ms-auto fw-normal">against HEAD</span></h4>
+  {{- with .Uncommitted}}
+  {{template "assistant_changed_files.gohtml" .}}
+  {{- else}}
+  <div class="small text-secondary py-1" data-assistant-uncommitted-unread>git did not answer.</div>
+  {{- end}}
+</div>
+{{- end}}
+{{- if $s.Read}}
+<div class="d-flex flex-wrap align-items-center column-gap-2 row-gap-1 small mb-2" title="{{$s.Base}}" data-assistant-changes-base>
+  <span class="d-inline-flex align-items-center gap-1 min-w-0"><span class="text-secondary">from</span> <i class="ti ti-git-branch text-secondary flex-shrink-0" aria-hidden="true"></i> <span class="text-truncate fw-medium" data-assistant-changes-from>{{$s.From}}</span></span>
+  <span class="d-inline-flex align-items-center gap-1"><span class="text-secondary">to</span> <i class="ti ti-file-pencil text-secondary flex-shrink-0" aria-hidden="true"></i> <span class="fw-medium" data-assistant-changes-to>{{$s.To}}</span></span>
+  {{- with $s.Split}}
+  <span class="text-secondary" data-assistant-changes-split>since the split at <span class="font-monospace">{{.}}</span></span>
+  {{- end}}
+</div>
+<div class="d-flex flex-wrap gap-4 mb-2" data-assistant-changes-counts>
+  <div><div class="h3 mb-0" data-assistant-changes-commits>{{$s.Commits}}</div><div class="small text-secondary">{{if eq $s.Commits 1}}commit{{else}}commits{{end}}</div></div>
+  <div><div class="h3 mb-0" data-assistant-changes-files>{{$s.Changed}}</div><div class="small text-secondary">{{if eq $s.Changed 1}}file{{else}}files{{end}}</div></div>
+  <div><div class="h3 mb-0 text-green" data-assistant-changes-added>+{{$s.Added}}</div><div class="small text-secondary">added</div></div>
+  <div><div class="h3 mb-0 text-red" data-assistant-changes-removed>−{{$s.Removed}}</div><div class="small text-secondary">removed</div></div>
+</div>
+{{- if .Files.Shown}}
+{{template "assistant_changed_files.gohtml" .Files}}
+{{- else}}
+<div class="small text-secondary py-1" data-assistant-changed-none>No file differs.</div>
+{{- end}}
+<h4 class="d-flex align-items-center gap-2 small text-uppercase text-secondary fw-medium mt-3 mb-1">Commits<span class="badge bg-secondary-lt">{{$s.Commits}}</span></h4>
+{{- if not .LogRead}}
+<div class="small text-secondary py-1" data-assistant-changes-commits-unread>git did not answer.</div>
+{{- else if not .Commits.Shown}}
+<div class="small text-secondary py-1" data-assistant-changes-commits-none>No commit.</div>
+{{- else}}
+<div class="d-flex flex-column gap-1" data-assistant-changes-log>
+  {{- range .Commits.Shown}}{{template "assistant_changes_commit.gohtml" .}}{{end}}
+</div>
+{{- if .Commits.More}}
+<div class="collapse{{if .Commits.Unfolded}} show{{end}}" id="{{.CommitsFold}}" data-assistant-fold data-assistant-rest="commits">
+  {{- if .Commits.Unfolded}}
+  <div class="d-flex flex-column gap-1 pt-1" data-assistant-changes-log>
+    {{- range .Commits.Rest}}{{template "assistant_changes_commit.gohtml" .}}{{end}}
+  </div>
+  {{- else}}
+  <div class="small text-secondary py-1" data-assistant-rest-wait>Loading…</div>
+  {{- end}}
+</div>
+<button type="button" class="btn btn-link btn-sm text-secondary px-0" data-bs-toggle="collapse" data-bs-target="#{{.CommitsFold}}" aria-expanded="{{.Commits.Unfolded}}" aria-controls="{{.CommitsFold}}" data-assistant-changes-older>{{template "assistant_fold_label.gohtml" .OlderCommitsLabel}}</button>
+{{- end}}
+{{- if .Commits.Truncated}}{{template "assistant_changes_cut.gohtml" .CompareURL}}{{end}}
+{{- end}}
+{{- else if $s.Error}}
+<div class="d-flex align-items-start gap-2 small text-warning mb-3" data-assistant-changes-error><i class="ti ti-alert-triangle flex-shrink-0 mt-1" aria-hidden="true"></i><span class="min-w-0 text-break">{{$s.Error}}</span></div>
+{{- else}}
+<div class="small text-secondary py-1" data-assistant-changes-no-commit>The repository has no commit yet.</div>
+{{- end}}
+{{end}}
+
+{{/* A list of changed files of Changes: its first rows, the rest behind a
+     fold, and the end saying so where git's output cap cut it. */}}
+{{define "assistant_changed_files.gohtml"}}
+<div class="list-group list-group-flush" data-assistant-changed-files="{{.List}}">
+  {{- range .Shown}}{{template "assistant_changed_file.gohtml" .}}{{end}}
+</div>
+{{- if .More}}
+<div class="collapse{{if .Unfolded}} show{{end}}" id="{{.Fold}}" data-assistant-fold data-assistant-rest="{{.List}}">
+  {{- if .Unfolded}}
+  <div class="list-group list-group-flush" data-assistant-changed-files="{{.List}}">
+    {{- range .Rest}}{{template "assistant_changed_file.gohtml" .}}{{end}}
+  </div>
+  {{- else}}
+  <div class="small text-secondary py-1" data-assistant-rest-wait>Loading…</div>
+  {{- end}}
+</div>
+<button type="button" class="btn btn-link btn-sm text-secondary px-0" data-bs-toggle="collapse" data-bs-target="#{{.Fold}}" aria-expanded="{{.Unfolded}}" aria-controls="{{.Fold}}" data-assistant-changed-more="{{.List}}">{{template "assistant_fold_label.gohtml" .MoreLabel}}</button>
+{{- end}}
+{{- if .Truncated}}{{template "assistant_changes_cut.gohtml" .URL}}{{end}}
+{{end}}
+
+{{/* The end of a list git's output cap cut, with the editor on the whole
+     list where the reader may go there. */}}
+{{define "assistant_changes_cut.gohtml"}}
+<div class="d-flex flex-wrap align-items-center gap-2 small text-secondary mt-1" data-assistant-changes-cut>
+  <span>git cut the list off.</span>
+  {{- with .}}<a class="btn btn-sm" href="{{.}}" data-file-link data-assistant-changes-compare><i class="ti ti-code me-1" aria-hidden="true"></i>Open in the editor</a>{{end}}
+</div>
+{{end}}
+
+{{/* A commit since the split: its short hash, subject, author and age. */}}
+{{define "assistant_changes_commit.gohtml"}}
+<div class="d-flex align-items-start gap-2 small" data-assistant-changes-commit="{{.Short}}">
+  <span class="font-monospace text-primary flex-shrink-0">{{.Short}}</span>
+  <div class="min-w-0">
+    <div class="text-break" data-assistant-changes-subject>{{template "visible_line.gohtml" .Subject}}</div>
+    <div class="text-secondary text-truncate"><span data-assistant-changes-author>{{template "visible_line.gohtml" .Author}}</span>{{with .When}} · <dc-time datetime="{{.}}" relative></dc-time>{{end}}</div>
+  </div>
+</div>
+{{end}}
+
+{{/* A changed file: the editor's mark, its name, the lines that came and
+     went with a bar of its share, under it the folder or where it came from.
+     It unfolds its diff as its list compares it, drawn when the fold opens,
+     or the line that stands in its place, and the button that opens the
+     editor on it where the reader may go there. */}}
+{{define "assistant_changed_file.gohtml"}}
+<div data-assistant-changed-file="{{.Path}}">
+  <button type="button" class="list-group-item list-group-item-action border-0 rounded px-2 py-1" data-bs-toggle="collapse" data-bs-target="#{{.Fold}}" aria-expanded="false" aria-controls="{{.Fold}}" data-assistant-changed-toggle>
+    <span class="d-flex align-items-center gap-2 small">
+      <span class="font-monospace fw-bold text-center flex-shrink-0 w-3 {{.MarkClass}}" title="{{.MarkLabel}}" data-assistant-changed-mark>{{.Mark}}</span>
+      <span class="text-truncate min-w-0 font-monospace" title="{{.Path}}" data-assistant-changed-name>{{template "visible_line.gohtml" .Name}}</span>
+      {{- if .Binary}}
+      <span class="ms-auto text-secondary flex-shrink-0">binary</span>
+      {{- else}}
+      <span class="font-monospace text-nowrap ms-auto flex-shrink-0" data-assistant-changed-lines><span class="text-green">+{{.Added}}</span> <span class="text-red">−{{.Removed}}</span></span>
+      <span class="progress progress-sm flex-shrink-0" style="width: 3rem" aria-hidden="true"><span class="progress-bar bg-green" style="width: {{.AddedBar}}%"></span><span class="progress-bar bg-red" style="width: {{.RemovedBar}}%"></span></span>
+      {{- end}}
+    </span>
+    {{- if .Renamed}}
+    <span class="d-block small text-secondary text-break font-monospace ps-4" data-assistant-changed-dir>{{template "visible_line.gohtml" .From}} → {{template "visible_line.gohtml" .Path}}</span>
+    {{- else if .Dir}}
+    <span class="d-block small text-secondary text-break font-monospace ps-4" data-assistant-changed-dir>{{template "visible_line.gohtml" .Dir}}</span>
+    {{- end}}
+  </button>
+  <div class="collapse" id="{{.Fold}}" data-assistant-fold>
+    <div class="border rounded overflow-hidden mt-1 mb-2">
+      {{- with .DiffNote}}
+      <div class="small text-secondary px-2 py-1" data-assistant-diff-note>{{.}}</div>
+      {{- else}}
+      <div class="small" data-assistant-diff data-list="{{.List}}" data-path="{{.Path}}">
+        <div class="text-secondary px-2 py-1" data-assistant-diff-wait>Loading…</div>
+        <div class="text-secondary px-2 py-1" hidden data-assistant-diff-note></div>
+        <div class="dc-inline-diff" hidden data-assistant-diff-view></div>
+      </div>
+      {{- end}}
+      {{- with .URL}}
+      <div class="d-flex border-top px-2 py-1">
+        <a class="btn btn-sm" href="{{.}}" data-file-link data-assistant-changed-open><i class="ti ti-code me-1" aria-hidden="true"></i>Open in the editor</a>
+      </div>
+      {{- end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{/* One line comment thread, of the forge or local: where it stands,
+     opening the editor there, or that it stands on the project, where it lives, the code line it quotes, its
+     notes as every thread shows them, and for the owner what the thread
+     takes, with the hand off to the assistant beside: a thread of the forge
+     on the forge, a local one through the editor's line comments. The reply
+     form waits under it. */}}
+{{define "assistant_project_thread.gohtml"}}
+{{- $t := .Thread}}{{$r := .Reviews}}{{$offer := $r.Threads}}
+{{- $reply := or $t.Writes (and $t.Thread $offer $offer.Reply)}}
+{{- $resolve := and (not .Resolved) (or $t.Writes (and $t.Thread $offer $offer.Resolve (not $t.Unresolvable)))}}
+{{- $reopen := and .Resolved $t.Writes}}
+<div class="card" data-assistant-thread="{{$t.ID}}"{{with $t.Thread}} data-thread="{{.}}"{{end}}{{if $t.Local}} data-assistant-thread-local{{end}}>
+  <div class="d-flex align-items-center gap-2 px-3 py-2 small text-secondary bg-surface-secondary border-bottom rounded-top">
+    {{- if $t.Project}}
+    <i class="ti ti-folder flex-shrink-0" aria-hidden="true"></i>
+    <span class="text-truncate min-w-0" title="On the project, not on a line" data-assistant-thread-project>Project comment</span>
+    {{- else if $t.FileURL}}
+    <i class="ti ti-file flex-shrink-0" aria-hidden="true"></i>
+    <a class="text-reset text-truncate min-w-0 font-monospace" href="{{$t.FileURL}}" title="{{$t.Place}}" data-file-link data-assistant-thread-file>{{template "visible_line.gohtml" $t.Path}}:{{$t.Line}}</a>
+    {{- else}}
+    <i class="ti ti-file flex-shrink-0" aria-hidden="true"></i>
+    <span class="text-truncate min-w-0 font-monospace" title="{{$t.Place}}" data-assistant-thread-file>{{template "visible_line.gohtml" $t.Path}}:{{$t.Line}}</span>
+    {{- end}}
+    {{- if $t.Outdated}}<span class="badge bg-orange-lt flex-shrink-0" title="The quoted line is no longer in the file exactly once." data-assistant-thread-outdated>outdated</span>{{end}}
+    {{- if $t.Local}}
+    <span class="badge bg-secondary-lt ms-auto flex-shrink-0" title="{{$t.Origin}}" data-assistant-thread-origin="local">local</span>
+    {{- else}}
+    <span class="badge bg-secondary-lt ms-auto flex-shrink-0" title="{{$t.Origin}}" data-assistant-thread-origin="forge"><i class="ti {{$t.ForgeIcon}} me-1" aria-hidden="true"></i>{{$t.ForgeLabel}}</span>
+    {{- end}}
+    {{- with $t.ForgeURL}}<a class="text-reset flex-shrink-0" href="{{.}}" target="_blank" rel="noopener" title="Open the thread on {{$t.ForgeLabel}}" aria-label="Open the thread on {{$t.ForgeLabel}}" data-assistant-thread-forge><i class="ti ti-external-link" aria-hidden="true"></i></a>{{end}}
+  </div>
+  {{- with $t.Quote}}
+  <div class="px-3 py-1 small font-monospace text-truncate border-bottom" data-assistant-thread-quote>{{template "visible_line.gohtml" .}}</div>
+  {{- end}}
+  <div class="px-3 pb-2" data-assistant-thread-notes>{{template "line_comment_notes.gohtml" $t.Notes}}</div>
+  {{- if or $reply $resolve $reopen $t.Handoff}}
+  <div class="d-flex flex-wrap align-items-center gap-2 px-3 pb-2" data-assistant-thread-actions>
+    {{- if $reply}}<button type="button" class="btn btn-sm" aria-expanded="false" data-assistant-thread-reply-open><i class="ti ti-message-reply me-1" aria-hidden="true"></i>Reply</button>{{end}}
+    {{- with $t.Handoff}}<button type="button" class="btn btn-sm" title="Draft a message naming this thread" data-assistant-thread-handoff="{{.}}"><i class="ti ti-sparkles me-1" aria-hidden="true"></i>Hand off</button>{{end}}
+    {{- if $resolve}}<button type="button" class="btn btn-sm ms-auto" title="Resolve the thread{{if not $t.Local}} on {{$offer.Forge}}{{end}}" data-assistant-thread-resolve><i class="ti ti-check me-1" aria-hidden="true"></i>Resolve</button>{{end}}
+    {{- if $reopen}}<button type="button" class="btn btn-sm ms-auto" title="Reopen the thread" data-assistant-thread-reopen><i class="ti ti-arrow-back-up me-1" aria-hidden="true"></i>Reopen</button>{{end}}
+  </div>
+  {{- end}}
+  {{- if $reply}}
+  <form class="px-3 pb-2" hidden novalidate data-assistant-thread-reply{{with $t.Thread}} data-thread="{{.}}"{{end}}>
+    <textarea class="form-control form-control-sm" name="body" rows="3" maxlength="16384" placeholder="Your reply" aria-label="Your reply" data-assistant-thread-reply-text></textarea>
+    <div class="invalid-feedback">A reply is required.</div>
+    {{- if not $t.Local}}
+    <div class="form-hint">{{$offer.Hint}}</div>
+    {{- end}}
+    <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+      {{- if $resolve}}
+      <label class="form-check mb-0 small"><input class="form-check-input" type="checkbox" name="resolve" value="1" data-assistant-thread-reply-resolve><span class="form-check-label">Resolve the thread</span></label>
+      {{- else if $reopen}}
+      <label class="form-check mb-0 small"><input class="form-check-input" type="checkbox" name="resolve" value="0" data-assistant-thread-reply-resolve><span class="form-check-label">Reopen the thread</span></label>
+      {{- end}}
+      <button type="button" class="btn btn-sm ms-auto" data-assistant-thread-reply-cancel>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary" data-assistant-thread-reply-send>Reply</button>
+    </div>
+  </form>
+  {{- end}}
+</div>
+{{end}}

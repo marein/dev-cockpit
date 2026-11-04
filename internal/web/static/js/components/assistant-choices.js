@@ -1,6 +1,6 @@
 import { postForm, ensureOk, getText, getJSON } from "@dc/http";
 import { notifyError } from "@dc/toast";
-import { growTextarea, keepGrown } from "@dc/dom";
+import { growTextarea, isModEnter, keepGrown } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 
 // The composer's draft waits the same 200ms for the same reason: a word being
@@ -40,7 +40,7 @@ class AssistantChoices extends HTMLElement {
     }, { signal });
     this.form.addEventListener("keydown", (event) => {
       if (!event.target.matches("textarea")) return;
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key === "Enter") {
+      if (isModEnter(event)) {
         event.preventDefault();
         void this.send();
       }

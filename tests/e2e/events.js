@@ -5,8 +5,8 @@ const { assert, BASE, sleep } = L;
 // form (POST /assistants/triggers with form=new, the path and the fields
 // `trigger-new` posts, opened in the create dialog like every other form
 // that makes something), the row in the aside's Triggers tab, New trigger
-// standing at the head of that tab and nowhere else, the two tabs sharing the
-// row in equal halves down to a phone, the count on a tab standing raised at
+// standing at the head of that tab and nowhere else, the three tabs sharing
+// the row in equal thirds down to a phone, the count on a tab standing raised at
 // the word with its bottom edge on the label's middle line and moving nothing
 // when it comes and goes, a shut row still carrying its actions while it folds
 // only its text, a coder's row leading to no trigger form,
@@ -356,8 +356,8 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     return `trigger ${jobSub}`;
   });
 
-  // The plus used to hang beside the two tabs, so it stood there with Steered
-  // coders open: a control next to both halves that only ever made a trigger.
+  // The plus used to hang beside the two tabs, so it stood there with Coders
+  // open: a control next to both halves that only ever made a trigger.
   // It belongs to the triggers and is the tab pane's own child now, which is
   // what makes it go away with the tab without anybody switching a visibility.
   await run("New trigger stands at the head of the triggers tab and nowhere else", async () => {
@@ -365,7 +365,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     const plus = page.locator("#assistant-triggers [data-assistant-trigger-new]");
     await plus.waitFor({ state: "attached", timeout: 15000 });
-    assert(!(await plus.isVisible()), "it shows while the coders tab is the open one");
+    assert(!(await plus.isVisible()), "it shows while another tab is the open one");
     const strip = await page.evaluate(() =>
       !!document.querySelector("[data-assistant-coders-tab]")?.closest("[role=tablist]")?.parentElement?.querySelector(":scope > [data-assistant-trigger-new]"));
     assert(!strip, "it still hangs beside the tab strip");
@@ -519,11 +519,12 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     return "haiku on the row and in the list, refused when wrong, cleared by an empty post";
   });
 
-  // The two halves are the row's width and not their text: `Steered coders` is
-  // the longer name and used to take the larger share, which left the strip
-  // crooked. Equal halves only hold while the longer name fits into one, so
-  // this is measured where the room runs out, on the phone.
-  await run("the two tabs share the row in equal halves, on a phone too", async () => {
+  // The three tabs are thirds of the row's width and not of their text: a
+  // longer name would take a larger share, which leaves the strip crooked.
+  // Equal thirds only hold while the longest name fits into one, so this is
+  // measured where the room runs out, on the phone, where the icons step
+  // aside.
+  await run("the three tabs share the row in equal thirds, on a phone too", async () => {
     const measure = (p) => p.evaluate(() => {
       const strip = document.querySelector("[data-assistant-coders-tab]").parentElement;
       const read = (sel) => {
@@ -531,7 +532,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
         const rect = el.getBoundingClientRect();
         const style = getComputedStyle(el);
         // The content is the icon, the words and the count, measured as they
-        // are laid out, so what is left over is the room the half still has.
+        // are laid out, so what is left over is the room the third still has.
         let content = 0;
         for (const node of el.childNodes) {
           if (node.nodeType === Node.TEXT_NODE) {
@@ -539,7 +540,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
             const range = document.createRange();
             range.selectNodeContents(node);
             content += range.getBoundingClientRect().width;
-          } else if (node.nodeType === Node.ELEMENT_NODE && !node.classList.contains("d-none")) {
+          } else if (node.nodeType === Node.ELEMENT_NODE && getComputedStyle(node).display !== "none") {
             const cs = getComputedStyle(node);
             content += node.getBoundingClientRect().width + parseFloat(cs.marginLeft) + parseFloat(cs.marginRight);
           }
@@ -551,16 +552,19 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
           lines: Math.round((el.scrollHeight - (parseFloat(style.paddingTop) + parseFloat(style.paddingBottom))) / parseFloat(style.lineHeight)),
         };
       };
-      return { strip: strip.getBoundingClientRect().width, coders: read("[data-assistant-coders-tab]"), triggers: read("[data-assistant-triggers-tab]") };
+      return {
+        strip: strip.getBoundingClientRect().width,
+        projects: read("[data-assistant-projects-tab]"),
+        coders: read("[data-assistant-coders-tab]"),
+        triggers: read("[data-assistant-triggers-tab]"),
+      };
     });
     const check = (where, m) => {
-      assert(Math.abs(m.coders.width - m.triggers.width) <= 1,
-        `${where}: the halves are not equal: ${JSON.stringify(m)}`);
-      assert(Math.abs(m.coders.width + m.triggers.width - m.strip) <= 1,
-        `${where}: the halves do not fill the row: ${JSON.stringify(m)}`);
-      for (const [name, tab] of [["Steered coders", m.coders], ["Triggers", m.triggers]]) {
+      const tabs = [["Projects", m.projects], ["Coders", m.coders], ["Triggers", m.triggers]];
+      for (const [name, tab] of tabs) {
+        assert(Math.abs(tab.width - m.strip / 3) <= 1, `${where}: ${name} is not a third: ${JSON.stringify(m)}`);
         assert(tab.lines === 1, `${where}: ${name} wrapped: ${JSON.stringify(m)}`);
-        assert(tab.content <= tab.width, `${where}: ${name} does not fit its half: ${JSON.stringify(m)}`);
+        assert(tab.content <= tab.width, `${where}: ${name} does not fit its third: ${JSON.stringify(m)}`);
       }
     };
 
@@ -577,7 +581,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
     await sleep(400);
     const phone = await measure(mp);
     check("phone", phone);
-    return `halves ${desktop.coders.width.toFixed(0)}px on the desktop, ${phone.coders.width.toFixed(0)}px on the phone, the longer name needing ${phone.coders.content.toFixed(0)}px`;
+    return `thirds ${desktop.coders.width.toFixed(0)}px on the desktop, ${phone.coders.width.toFixed(0)}px on the phone, the longest name needing ${phone.coders.content.toFixed(0)}px`;
   });
 
   // The count is a note at the word, not a second word beside it: it stands
@@ -620,10 +624,10 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
           beside: +(b.left - l.right).toFixed(1),
         };
       };
-      return { coders: read("[data-assistant-coders-tab]"), triggers: read("[data-assistant-triggers-tab]") };
+      return { projects: read("[data-assistant-projects-tab]"), coders: read("[data-assistant-coders-tab]"), triggers: read("[data-assistant-triggers-tab]") };
     });
     const check = (where, m) => {
-      for (const [name, tab] of [["Steered coders", m.coders], ["Triggers", m.triggers]]) {
+      for (const [name, tab] of [["Projects", m.projects], ["Coders", m.coders], ["Triggers", m.triggers]]) {
         assert(tab.position === "absolute", `${where}: ${name} carries its count in the flow: ${JSON.stringify(tab)}`);
         assert(tab.still, `${where}: ${name} moves when the number comes and goes: ${JSON.stringify(tab)}`);
         assert(Math.abs(tab.onMid) <= 1, `${where}: ${name} does not stand on the word's middle line: ${JSON.stringify(tab)}`);
@@ -658,6 +662,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
   await run("a shut row still carries its actions, and folds only its text", async () => {
     await openAssistant(page, assistant);
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.click("[data-assistant-coders-tab]");
     await page.waitForSelector(`[data-assistant-job="${coderID}"]`, { timeout: 15000 });
     const read = (kind, id, actions, text) => page.evaluate(([kind, id, actions, text]) => {
       const row = document.querySelector(`[data-assistant-${kind}="${id}"]`);
@@ -707,6 +712,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
   // the button a phone sees.
   await run("a trigger is made over the list alone, and the counts cover both halves", async () => {
     await openAssistant(page, assistant);
+    await page.click("[data-assistant-coders-tab]");
     await page.waitForSelector(`[data-assistant-job="${coderID}"] [data-assistant-job-open]`, { state: "attached", timeout: 15000 });
     const before = await counts(page);
     assert(before.coders === 1 && before.triggers === 1 && before.watching === 2,
@@ -760,6 +766,7 @@ L.runFeature("events", async ({ page, run, mobilePage }) => {
   // arrives.
   await run("an event swaps the lists without closing what is open", async () => {
     await openAssistant(page, assistant);
+    await page.click("[data-assistant-coders-tab]");
     await page.click(`[data-assistant-job="${coderID}"] [data-assistant-job-fold]`);
     await page.waitForSelector(`[data-assistant-job="${coderID}"] [data-assistant-job-details].show`, { timeout: 8000 });
     await page.click("[data-assistant-triggers-tab]");

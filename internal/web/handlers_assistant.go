@@ -122,6 +122,12 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 	data.Page = s.page(c, title, "assistants")
 	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
 	data.Triggers = s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, current.ID, false)
+	data.ProjectsListURL, data.ProjectsWatchURL, data.ProjectViewURL, data.ProjectDiffURL = assistantProjectsURLs("", current.ID)
+	// A pull keeps the aside it stands beside, so it reads no working copy.
+	if c.GetHeader(pullHeader) == "" {
+		data.Projects = s.assistantProjectsData(c.Request.Context(), current.ID, false)
+		data.Projects.CSRFToken = data.CSRFToken
+	}
 	// The one number on the button that opens the aside: both kinds of standing
 	// work, because the aside holds both and the button is the only thing a
 	// phone sees of it.

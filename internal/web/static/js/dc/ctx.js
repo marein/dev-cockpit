@@ -5,60 +5,71 @@ const MIN_CTX_WIDTH = 200;
 const pageArea = () => document.querySelector(".dc-app")?.dataset.area || "";
 export const areaKey = (kind, area = pageArea()) => `dc-ctx-${kind}:${area}`;
 const clampWidth = (px) => Math.round(Math.min(Math.max(px, MIN_CTX_WIDTH), Math.max(MIN_CTX_WIDTH, window.innerWidth * 0.5)));
-const applyWidth = (app, px) => {
-  if (px > 0) app.style.setProperty("--dc-ctx-w", `${clampWidth(px)}px`);
-  else app.style.removeProperty("--dc-ctx-w");
+const applyWidth = (app, prop, px) => {
+  if (px > 0) app.style.setProperty(prop, `${clampWidth(px)}px`);
+  else app.style.removeProperty(prop);
 };
+
+function resizable(app, box, handle, { prop, kind, fromRight = false }) {
+  applyWidth(app, prop, parseInt(get(areaKey(kind), "0"), 10) || 0);
+  if (!handle) return;
+  let dragging = false;
+  let width = 0;
+  let timer = null;
+  const saveWidth = () => {
+    timer = null;
+    if (width > 0) set(areaKey(kind), String(width));
+  };
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove("active");
+    if (timer !== null) window.clearTimeout(timer);
+    saveWidth();
+  };
+  handle.addEventListener("mousedown", (e) => e.preventDefault());
+  handle.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    width = 0;
+    handle.classList.add("active");
+    handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    if (e.buttons === 0) {
+      endDrag();
+      return;
+    }
+    const rect = box.getBoundingClientRect();
+    width = clampWidth(fromRight ? rect.right - e.clientX : e.clientX - rect.left);
+    applyWidth(app, prop, width);
+    if (timer === null) timer = window.setTimeout(saveWidth, 150);
+  });
+  handle.addEventListener("pointerup", endDrag);
+  handle.addEventListener("pointercancel", endDrag);
+  handle.addEventListener("lostpointercapture", endDrag);
+  handle.addEventListener("dblclick", () => {
+    applyWidth(app, prop, 0);
+    remove(areaKey(kind));
+  });
+}
 
 export function initCtxLayout() {
   const app = document.querySelector(".dc-app");
-  const ctx = app?.querySelector(":scope > .dc-ctx");
-  if (!app || !ctx || ctx.dataset.ctxLayout) return;
-  ctx.dataset.ctxLayout = "1";
-  applyWidth(app, parseInt(get(areaKey("width"), "0"), 10) || 0);
-  const handle = ctx.querySelector("[data-ctx-resize]");
-  if (handle) {
-    let dragging = false;
-    let width = 0;
-    let timer = null;
-    const saveWidth = () => {
-      timer = null;
-      if (width > 0) set(areaKey("width"), String(width));
-    };
-    const endDrag = () => {
-      if (!dragging) return;
-      dragging = false;
-      handle.classList.remove("active");
-      if (timer !== null) window.clearTimeout(timer);
-      saveWidth();
-    };
-    handle.addEventListener("mousedown", (e) => e.preventDefault());
-    handle.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      width = 0;
-      handle.classList.add("active");
-      handle.setPointerCapture(e.pointerId);
-    });
-    handle.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      if (e.buttons === 0) {
-        endDrag();
-        return;
-      }
-      width = clampWidth(e.clientX - ctx.getBoundingClientRect().left);
-      applyWidth(app, width);
-      if (timer === null) timer = window.setTimeout(saveWidth, 150);
-    });
-    handle.addEventListener("pointerup", endDrag);
-    handle.addEventListener("pointercancel", endDrag);
-    handle.addEventListener("lostpointercapture", endDrag);
-    handle.addEventListener("dblclick", () => {
-      applyWidth(app, 0);
-      remove(areaKey("width"));
-    });
+  if (!app) return;
+  const ctx = app.querySelector(":scope > .dc-ctx");
+  if (ctx && !ctx.dataset.ctxLayout) {
+    ctx.dataset.ctxLayout = "1";
+    resizable(app, ctx, ctx.querySelector("[data-ctx-resize]"), { prop: "--dc-ctx-w", kind: "width" });
+    const body = ctx.querySelector(".dc-ctx-body");
+    if (body && ctx.hasAttribute("data-ctx-keep-scroll")) keepCtxScroll(body, pageArea());
   }
-  const body = ctx.querySelector(".dc-ctx-body");
-  if (body && ctx.hasAttribute("data-ctx-keep-scroll")) keepCtxScroll(body, pageArea());
+  const asideHandle = app.querySelector("[data-ctx-resize=aside]");
+  const aside = asideHandle?.parentElement;
+  if (aside && !aside.dataset.ctxLayout) {
+    aside.dataset.ctxLayout = "1";
+    resizable(app, aside, asideHandle, { prop: "--dc-aside-w", kind: "aside-width", fromRight: true });
+  }
 }
 
 export function keepCtxScroll(body, area) {

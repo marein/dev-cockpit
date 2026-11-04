@@ -19,9 +19,10 @@ var ErrRevision = errors.New("The revision is not known to this repository.")
 // itself refuses in a ref name. The underscore belongs in front as much as
 // anywhere else: git takes "_wip" and the editor's own branch names are built
 // from \w, so leaving it out of the first position refused a name this app
-// creates itself. Whether the name exists is the rev-parse below, this only
-// keeps an option out of an argument.
-var revPattern = regexp.MustCompile(`^[A-Za-z0-9_@][A-Za-z0-9._/~^@{}-]*$`)
+// creates itself. A plus and letters beyond ASCII stand in names git takes
+// too, a tag's build metadata among them. Whether the name exists is the
+// rev-parse below, this only keeps an option out of an argument.
+var revPattern = regexp.MustCompile(`^[\p{L}\p{N}_@][\p{L}\p{M}\p{N}._/~^@{}+-]*$`)
 
 // FileAt returns a file's bytes at a revision, HEAD when rev is empty. The
 // second value is false when the path simply does not exist there, which is

@@ -18,7 +18,8 @@
      data-editor-view="{{.View}}"
      data-editor-file="{{.File}}"
      data-editor-line="{{.Line}}"
-     data-editor-col="{{.Col}}">
+     data-editor-col="{{.Col}}"
+     data-editor-pair="{{if .Suggested}}suggested{{end}}">
   <div class="editor-body">
     <div class="editor-tree-col">
       <div class="dc-ctx-head editor-pane-header">

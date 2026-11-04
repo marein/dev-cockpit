@@ -11,7 +11,7 @@ func docsForgeTopic() DocsTopic {
 		Key:      "forges",
 		Title:    "Forges",
 		Icon:     "ti-git-pull-request",
-		Lead:     "Change requests, pipelines and review threads of GitLab and GitHub, on the project row, in the editor and for the assistants.",
+		Lead:     "Change requests, pipelines and review threads of GitLab and GitHub, on the project row, in the editor, on an assistant's project cards and for the assistants.",
 		LinkURL:  "/settings/forges",
 		LinkText: "Open forges",
 		Items: []DocsItem{
@@ -54,7 +54,7 @@ func docsForgeTopic() DocsTopic {
 			},
 			{
 				Title: "Run failed jobs again",
-				Desc:  `<em>Retry failed jobs</em>, on GitHub <em>Re-run failed jobs</em>, in the forge sheet, its <em>Jobs</em> and the git menu of the project's row runs the failed jobs of a failed pipeline again, <em>Retry job</em> in a job's log that job. The forge is read again first: a branch pushed since or a job that ran again is refused. A commit status and a check run of another app cannot run again, the row names them. An assistant retries only once you approve, see Approvals under Assistants.`,
+				Desc:  `<em>Retry failed jobs</em>, on GitHub <em>Re-run failed jobs</em>, in the forge sheet, its <em>Jobs</em> and the git menu of the project's row, and <em>Retry</em>, on GitHub <em>Re-run</em>, on a project card of an assistant run the failed jobs of a failed pipeline again, <em>Retry job</em> in a job's log that job. The forge is read again first: a branch pushed since or a job that ran again is refused. A commit status and a check run of another app cannot run again, the row names them. An assistant retries only once you approve, see Approvals under Assistants.`,
 			},
 			{
 				Title: "Open a change request",
@@ -62,11 +62,11 @@ func docsForgeTopic() DocsTopic {
 			},
 			{
 				Title: "Publish line comments",
-				Desc:  `Your own line comments publish as review comments on the open change request of the branch HEAD is on, each a thread of its own: <em>Publish</em> in its entry of <em>Line comments</em>, <em>Publish comment</em> in the line's menu, <em>Publish all comments</em> in the list. Its line has to be in the pushed head and in the change request's diff, else the publish is refused as a whole. A project comment publishes as a general comment of the change request, without a line. A published comment becomes that review thread, a project comment that general thread. A guest's comment and one with replies do not publish. On GitLab a line of a comment, reply or description that opens with a slash goes behind a backslash, so it runs no quick action like <code>/merge</code>. An assistant publishes with <code>forge-comment-publish</code> only once you approve.`,
+				Desc:  `Your own line comments publish as review comments on the open change request of the branch HEAD is on, each a thread of its own: <em>Publish</em> in its entry of <em>Line comments</em>, <em>Publish comment</em> in the line's menu, <em>Publish all comments</em> in the list, <em>Publish as review</em>, or <em>Publish</em> with a project comment among them, in an assistant's project view. Its line has to be in the pushed head and in the change request's diff, else the publish is refused as a whole. A project comment publishes as a general comment of the change request, without a line. A published comment becomes that review thread, a project comment that general thread. A guest's comment and one with replies do not publish. On GitLab a line of a comment, reply or description that opens with a slash goes behind a backslash, so it runs no quick action like <code>/merge</code>. An assistant publishes with <code>forge-comment-publish</code> only once you approve.`,
 			},
 			{
 				Title: "Answer and resolve review threads",
-				Desc:  `<em>Open thread</em> on a review thread of the forge offers a reply and, while it is unresolved, <em>Resolve the thread</em>, after the reply or alone. A general thread takes them too on GitLab, which resolves only a comment that started a thread; a comment of GitHub's conversation is no thread and stays read only. A resolved thread reopens on the forge, not here. On GitLab a resolve needs the Developer role or the token's own merge request. GitHub shows a reply filed under a pending review of the token's account once that review is submitted. An assistant answers with <code>forge-thread-reply</code> and resolves with <code>forge-thread-resolve</code> only once you approve.`,
+				Desc:  `<em>Open thread</em> on a review thread of the forge offers a reply and, while it is unresolved, <em>Resolve the thread</em>, after the reply or alone; <em>Reply</em> and <em>Resolve</em> on a thread in an assistant's project view do the same. A general thread takes them too on GitLab, which resolves only a comment that started a thread; a comment of GitHub's conversation is no thread and stays read only. A resolved thread reopens on the forge, not here. On GitLab a resolve needs the Developer role or the token's own merge request. GitHub shows a reply filed under a pending review of the token's account once that review is submitted. An assistant answers with <code>forge-thread-reply</code> and resolves with <code>forge-thread-resolve</code> only once you approve.`,
 			},
 			{
 				Title: "Pipeline events",

@@ -111,6 +111,7 @@ func (s *Server) renderProjectEditor(c *gin.Context, p project.Project) {
 		File:         strings.TrimSpace(c.Query("file")),
 		Line:         positiveQuery(c, "line"),
 		Col:          positiveQuery(c, "col"),
+		Suggested:    c.Query("pair") == "suggested",
 	}
 	if g, ok := guestOf(c); ok {
 		data.Projects = s.guestSwitcher(g, p.Name)

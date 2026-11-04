@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -75,16 +76,42 @@ func listsAll(c *gin.Context) bool {
 	return all
 }
 
-// stoppedCoders are the coders with no session running that can be resumed,
-// by id, which is what a job's and a trigger's row resume instead of opening.
-func (s *Server) stoppedCoders() map[string]bool {
-	stopped := map[string]bool{}
+// coderRun is where a coder session stands. One that neither runs nor can be
+// resumed is gone and reads as the zero value.
+type coderRun int
+
+const (
+	_ coderRun = iota
+	coderRunning
+	coderStopped
+)
+
+// coderRuns says by session id where each coder stands: a job's row draws it,
+// and a job's and a trigger's row resume a stopped one instead of opening it.
+func (s *Server) coderRuns() map[string]coderRun {
+	runs := map[string]coderRun{}
 	for _, co := range s.coders {
-		for _, session := range co.Snapshot().Inactive {
-			stopped[session.SessionID] = true
+		snap := co.Snapshot()
+		for _, r := range snap.Running {
+			runs[r.Identifier] = coderRunning
+		}
+		for _, session := range snap.Inactive {
+			runs[session.SessionID] = coderStopped
 		}
 	}
-	return stopped
+	return runs
+}
+
+// jobMarks are what the rows of a list draw of their coders, read once for
+// the whole list.
+type jobMarks struct {
+	runs    map[string]coderRun
+	working map[string]int64
+	news    map[string]bool
+}
+
+func (s *Server) jobMarks() jobMarks {
+	return jobMarks{runs: s.coderRuns(), working: s.activity.Working(), news: s.notifier.UnreadTargets()}
 }
 
 // assistantJobViews are the coders an assistant steers, open jobs first, the
@@ -96,7 +123,7 @@ func (s *Server) assistantJobViews(owner string, all bool) ([]render.AssistantJo
 	if owner != "" {
 		jobs = s.watcher.ListOf(owner)
 	}
-	stopped := s.stoppedCoders()
+	marks := s.jobMarks()
 	out := make([]render.AssistantJobView, 0, len(jobs))
 	closed, older := 0, 0
 	for _, w := range jobs {
@@ -109,26 +136,7 @@ func (s *Server) assistantJobViews(owner string, all bool) ([]render.AssistantJo
 				continue
 			}
 		}
-		view := render.AssistantJobView{
-			Terminal: w.Terminal,
-			OwnerID:  w.Owner,
-			Name:     w.Name,
-			Project:  w.Project,
-			Task:     w.Task,
-			DoneWhen: w.DoneWhen,
-			State:    string(w.State),
-			Open:     w.State.Open(),
-			Checking: activity.Mark(w.CheckingSince),
-			Note:     w.Note,
-			Wakes:    w.Wakes,
-			MaxWakes: w.MaxWakes,
-			Expires:  machineTime(w.ExpiresAt),
-			URL:      "/coders/" + w.Terminal,
-			Stopped:  stopped[w.Terminal],
-		}
-		if w.Project != "" {
-			view.EditorURL = "/projects/" + url.PathEscape(w.Project) + "/editor"
-		}
+		view := s.assistantJobView(w, marks)
 		// Only a list that spans several assistants says whose job this is. On
 		// one assistant's own page the answer is always the same and the line
 		// would be noise on every row.
@@ -138,6 +146,40 @@ func (s *Server) assistantJobViews(owner string, all bool) ([]render.AssistantJo
 		out = append(out, view)
 	}
 	return out, older
+}
+
+// assistantJobView is one job as its row shows it.
+func (s *Server) assistantJobView(w assistant.Job, marks jobMarks) render.AssistantJobView {
+	launcher := ""
+	if co := s.coderByID(w.CoderID); co != nil {
+		launcher = coder.LauncherForSession(co.Coder(), w.Terminal)
+	}
+	view := render.AssistantJobView{
+		Terminal: w.Terminal,
+		OwnerID:  w.Owner,
+		Name:     w.Name,
+		Project:  w.Project,
+		Task:     w.Task,
+		DoneWhen: w.DoneWhen,
+		State:    string(w.State),
+		Open:     w.State.Open(),
+		Checking: activity.Mark(w.CheckingSince),
+		Note:     w.Note,
+		Wakes:    w.Wakes,
+		MaxWakes: w.MaxWakes,
+		Expires:  machineTime(w.ExpiresAt),
+		URL:      "/coders/" + w.Terminal,
+		Stopped:  marks.runs[w.Terminal] == coderStopped,
+		Coder:    w.CoderID,
+		Launcher: launcher,
+		Running:  marks.runs[w.Terminal] == coderRunning,
+		Working:  marks.working[w.Terminal],
+		News:     marks.news[w.Terminal],
+	}
+	if w.Project != "" {
+		view.EditorURL = "/projects/" + url.PathEscape(w.Project) + "/editor"
+	}
+	return view
 }
 
 // assistantSteer starts steering a terminal. Both callers come through here:

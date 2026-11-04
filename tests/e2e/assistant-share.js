@@ -21,8 +21,10 @@ const { guestPage } = require("./project-share-guest");
 // it go, and that assistant itself answer the plain 404. The guest's coders
 // wear the owner's steered mark and a working ring that comes and goes live,
 // in the list, the phone's sheet and the head, and the guest hears the
-// working state of nothing else. Beside the chat stand the assistant's jobs
-// and triggers, read only, one made later joining live, the spent ones past
+// working state of nothing else. Beside the chat stand the assistant's
+// projects, jobs and triggers, read only, a project's card leading into the
+// share only where the link grants the project, a coder's icon the owner's
+// without the owner's news, one made later joining live, the spent ones past
 // the newest five opening on a tap of "and N older" and staying through the
 // next pull, the other assistant's nowhere. The assistant at work wears the owner's ring for the
 // guest, live: a turn on its row, in the switcher, on the phone's head and as
@@ -412,6 +414,7 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       const aside = "#assistant-aside";
       const controls = `[data-assistant-job-stop], [data-assistant-job-again], [data-assistant-trigger-new], [data-assistant-trigger-edit], [data-assistant-trigger-remove], ${aside} form`;
       await gp.goto(`${BASE}${fx.base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+      await gp.click("#assistant-coders-tab");
       await gp.waitForSelector(`${aside} [data-assistant-job="${fx.steering}"]`, { state: "visible", timeout: 10000 });
       const jobs = await gp.$$eval(`${aside} [data-assistant-job]`, (els) => els.map((el) => el.dataset.assistantJob));
       for (const id of [fx.steering, fx.once, fx.stopped, fx.later]) assert(jobs.includes(id), `the jobs miss ${id}: ${jobs}`);
@@ -437,6 +440,69 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       await notFound(`${fx.link}/assistants/triggers?assistant=${fx.b}`, "the other assistant's triggers");
       const form = await fetchRaw(`${fx.link}/assistants/triggers?form=new&assistant=${fx.a}`);
       assert(form.status === 200 && !form.body.includes("<form") && form.body.includes(`data-assistant-trigger="${fx.trigA}"`), `the trigger form answered ${form.status}`);
+    });
+
+    // The Projects tab opens first for the guest too: every card of the
+    // assistant, read only, a project leading into the share only where the
+    // link grants it, a stopped coder's row resuming nothing, the rows
+    // following a job live, the count hidden while nothing needs the user,
+    // the coder's icon the owner's without the owner's news.
+    await run("the guest reads the Projects tab read only, a project leading into the share only where the link grants it", async () => {
+      const gp = guest.page;
+      const pane = "#assistant-projects";
+      const onLink = await newCoder(page, fx[PROJECT], `onlink-${TAG}`);
+      try {
+        await steer(page, fx.a, onLink);
+        await gp.goto(`${BASE}${fx.base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+        await gp.waitForSelector(`${pane} [data-assistant-project="${PROJECT}"]`, { state: "visible", timeout: 10000 });
+        assert(await gp.getAttribute("#assistant-projects-tab", "aria-selected") === "true", "Projects is not the guest's open tab");
+        const names = await gp.$$eval(`${pane} [data-assistant-project]`, (els) => els.map((el) => el.dataset.assistantProject));
+        assert(names.join(",") === `${PROJECT},${OFF}`, `the guest's cards read ${names}`);
+        assert(await gp.getAttribute(`${pane} [data-assistant-project="${PROJECT}"] [data-assistant-project-link]`, "href") === `${fx.base}/projects/${PROJECT}/editor`,
+          "the project on the link does not lead into the share");
+        assert(!(await gp.$(`${pane} [data-assistant-project="${OFF}"] [data-assistant-project-link]`)), "the project off the link leads somewhere");
+        const hrefs = await gp.$$eval(`${pane} a[href]`, (els) => els.map((el) => el.getAttribute("href")));
+        assert(hrefs.every((h) => h.startsWith(`${fx.base}/`)), `the guest's cards link ${hrefs}`);
+        assert(!(await gp.$(`${pane} form, ${pane} input, ${pane} button:not([data-assistant-project-older]):not([data-assistant-older]):not([data-assistant-project-open])`)), "the guest's Projects tab offers a change");
+        const stoppedRow = await gp.evaluate(([sel, id]) => {
+          const row = document.querySelector(`${sel} [data-assistant-project-job="${id}"]`);
+          return row && { tag: row.tagName, href: row.getAttribute("href") || "", resume: row.matches("form") || !!row.querySelector("[data-assistant-job-resume]") };
+        }, [pane, fx.stopped]);
+        assert(stoppedRow && stoppedRow.tag === "DIV" && !stoppedRow.href && !stoppedRow.resume, `the guest's stopped coder row resumes or leads somewhere: ${JSON.stringify(stoppedRow)}`);
+        const count = () => gp.evaluate(() => {
+          const el = document.querySelector("[data-assistant-projects-tab] dc-steer-badge");
+          return el && el.getClientRects().length ? Number(el.textContent) : 0;
+        });
+        assert(await count() === 0, `the guest's count reads ${await count()} while nothing needs the user`);
+        const marker = await gp.evaluate(() => { window.dcStay = Math.random(); return window.dcStay; });
+        await postJSON(page, "/assistants/jobs", { form: "release", terminal: onLink });
+        await gp.waitForFunction(([sel, id]) => document.querySelector(`${sel} [data-assistant-project-job="${id}"] [data-assistant-job-state]`)?.dataset.assistantJobState === "stopped",
+          [pane, onLink], { timeout: 15000 });
+        assert(await count() === 0, `the guest's count reads ${await count()} after the release`);
+        assert(await gp.evaluate(() => window.dcStay) === marker, "the guest's page reloaded");
+        const mark = (p, id) => p.evaluate(([sel, id]) => {
+          const el = document.querySelector(`${sel} [data-assistant-project-job="${id}"] [data-assistant-job-state]`);
+          const dot = el?.querySelector(".dc-news-dot");
+          return el && { news: el.classList.contains("news"), dot: !!dot && getComputedStyle(dot).display !== "none" && dot.getClientRects().length > 0,
+            running: el.classList.contains("running"), label: el.getAttribute("aria-label"), paint: getComputedStyle(el).backgroundColor };
+        }, [pane, id]);
+        hook(onLink, "Stop");
+        await page.goto(`${BASE}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+        await page.waitForFunction(([sel, id]) => document.querySelector(`${sel} [data-assistant-project-job="${id}"] [data-assistant-job-state].news`), [pane, onLink], { timeout: 15000 });
+        const owners = await mark(page, onLink);
+        assert(owners.dot && owners.running && owners.label === "Released, running", `the owner's row reads ${JSON.stringify(owners)}`);
+        await gp.goto(`${BASE}${fx.base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+        await gp.waitForSelector(`${pane} [data-assistant-project-job="${onLink}"]`, { state: "visible", timeout: 10000 });
+        await sleep(1500);
+        const guests = await mark(gp, onLink);
+        assert(!guests.news && !guests.dot && guests.running && guests.label === owners.label && guests.paint === owners.paint, `the guest's row reads ${JSON.stringify(guests)}`);
+        assert(!(await gp.$(`[data-assistant-job="${onLink}"] .news, [data-assistant-job="${onLink}"].news`)), "the guest's Coders tab wears the owner's news");
+        await notFound(`${fx.link}/assistants/projects?assistant=${fx.b}`, "the other assistant's projects");
+        const watch = await fetchRaw(`${fx.link}/assistants/projects/watch?assistant=${fx.a}`, { method: "POST" });
+        assert(watch.status === 403, `a watch without the link's token answered ${watch.status}`);
+      } finally {
+        await postAs(page, `/coders/${onLink}/delete`, {}).catch(() => {});
+      }
     });
 
     await run("the guest's and N older opens the spent triggers in place and keeps them through the next pull", async () => {
@@ -673,10 +739,11 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
         await postJSON(page, "/assistants/jobs", { form: "steer", assistant: fx.a, terminal, task: "Share check", done_when: doneWhen });
       }
       fx.trigSlow = (await postJSON(page, "/assistants/triggers", { form: "new", assistant: fx.a, event: "job-done", terminal: fx.done, task: "SLOW keep working on it", batch: "0", once: "on" })).id;
-      const check = `#assistant-aside [data-assistant-job="${fx.slow}"] [data-assistant-working="check"]`;
+      const check = `#assistant-aside [data-assistant-job="${fx.slow}"] [data-working-held]`;
       const react = `#assistant-aside [data-assistant-trigger="${fx.trigSlow}"] [data-assistant-working="react"]`;
       for (const [p, base] of [[page, ""], [gp, fx.base]]) {
         await p.goto(`${BASE}${base}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+        await p.click("#assistant-coders-tab");
         await p.waitForSelector(`#assistant-aside [data-assistant-job="${fx.slow}"]`, { state: "visible", timeout: 10000 });
       }
       const marker = await gp.evaluate(() => { window.dcStay = Math.random(); return window.dcStay; });
@@ -700,6 +767,8 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
         await mp.goto(`${fx.link}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
         assert(!(await mp.isVisible(`#assistant-aside [data-assistant-job="${fx.steering}"]`)), "the phone shows the aside before it is opened");
         await mp.tap("[data-assistant-watching-button]");
+        await mp.waitForSelector(`#assistant-aside.show [data-assistant-projects-tab][aria-selected="true"]`, { state: "visible", timeout: 10000 });
+        await mp.tap("#assistant-coders-tab");
         await mp.waitForSelector(`#assistant-aside.show [data-assistant-job="${fx.steering}"]`, { state: "visible", timeout: 10000 });
         await mp.tap("#assistant-aside [data-bs-dismiss=\"offcanvas\"]");
         await mp.waitForSelector("#assistant-aside", { state: "hidden", timeout: 10000 });

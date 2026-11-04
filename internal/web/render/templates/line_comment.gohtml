@@ -1,0 +1,22 @@
+{{define "visible_line.gohtml"}}{{range visible .}}{{if .Escape}}<code>{{.Text}}</code>{{else}}{{.Text}}{{end}}{{end}}{{end}}
+
+{{/* The notes of one line comment thread, the editor's thread dialog and the
+     assistant's project view alike: who wrote each, when, the buttons that
+     change it and the note as written. */}}
+{{define "line_comment_notes.gohtml"}}
+{{- range .}}
+<div class="border-start border-2 ps-2 mt-2" data-comment-note="{{.ID}}">
+  <div class="d-flex align-items-center gap-2 small text-secondary min-w-0">
+    <span class="fw-medium text-body text-truncate" data-comment-note-author>{{template "visible_line.gohtml" .Name}}</span>
+    {{- with .When}}<dc-time class="text-nowrap" datetime="{{.}}" relative></dc-time>{{end}}
+    {{- if or .Edit .Drop}}
+    <span class="ms-auto d-flex gap-1">
+      {{- if .Edit}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" title="{{.EditLabel}}" aria-label="{{.EditLabel}}" data-comment-note-edit><i class="ti ti-pencil" aria-hidden="true"></i></button>{{end}}
+      {{- if .Drop}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" title="Delete reply" aria-label="Delete reply" data-comment-note-drop><i class="ti ti-trash" aria-hidden="true"></i></button>{{end}}
+    </span>
+    {{- end}}
+  </div>
+  <div class="dc-prompt-text" data-comment-note-text>{{.Text}}</div>
+</div>
+{{- end}}
+{{end}}

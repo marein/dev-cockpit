@@ -85,6 +85,11 @@ func (w Writer) May(c Comment) bool {
 	return w.wrote(c.Link)
 }
 
+// MayReply reports whether w may change or delete the reply r.
+func (w Writer) MayReply(r Reply) bool {
+	return w.wrote(r.Link)
+}
+
 // MayAll reports whether w may delete c, which takes every note of it.
 func (w Writer) MayAll(c Comment) bool {
 	if !w.May(c) {

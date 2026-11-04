@@ -46,6 +46,9 @@ type EditorData struct {
 	File string
 	Line int
 	Col  int
+	// Suggested says the compare view opens on the pair the repository
+	// suggests, as a file of an assistant's Changes does.
+	Suggested bool
 }
 
 // EditorProjectsData feeds the switcher fragment, the very rows the editor

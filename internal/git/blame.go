@@ -217,7 +217,7 @@ func parseBlame(out []byte) ([]Commit, []int) {
 			if !ok {
 				at = len(commits)
 				index[sha] = at
-				commits = append(commits, Commit{SHA: sha, Short: shortSHA(sha), Pending: isZeroSHA(sha)})
+				commits = append(commits, Commit{SHA: sha, Short: ShortSHA(sha), Pending: isZeroSHA(sha)})
 			}
 			current = at
 			continue
@@ -246,9 +246,9 @@ func parseBlame(out []byte) ([]Commit, []int) {
 	return commits, lines
 }
 
-// shortSHA is the abbreviation git itself would print, kept at a fixed width so
+// ShortSHA is the abbreviation git itself would print, kept at a fixed width so
 // a gutter of them lines up.
-func shortSHA(sha string) string {
+func ShortSHA(sha string) string {
 	if len(sha) <= 7 {
 		return sha
 	}

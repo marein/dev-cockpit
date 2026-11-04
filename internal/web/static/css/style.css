@@ -381,6 +381,8 @@ dc-host-status.dc-cockpit-icon { display: flex; }
 .dc-term-icon.assistant.working { box-shadow: 0 0 0 2px rgba(var(--dc-steer-rgb), 0.3); }
 .dc-term-icon.assistant.working::before { background: var(--dc-steer); box-shadow: 0 0 3px var(--dc-steer); }
 .dc-term-icon.text-danger { background: rgba(var(--dc-bad-rgb), 0.14); color: var(--dc-bad) !important; }
+.dc-term-icon.text-danger.working { box-shadow: 0 0 0 2px rgba(var(--dc-bad-rgb), 0.3); }
+.dc-term-icon.text-danger.working::before { background: var(--dc-bad); box-shadow: 0 0 3px var(--dc-bad); }
 .btn-ghost-secondary:has(> .dc-term-icon):hover .dc-term-icon, .btn-ghost-secondary:has(> .dc-term-icon):focus-visible .dc-term-icon { background: transparent; color: inherit !important; }
 .btn-ghost-secondary:has(> .dc-term-icon.running):hover, .btn-ghost-secondary:has(> .dc-term-icon.running):focus-visible { background: var(--dc-ok); border-color: var(--dc-ok); }
 .btn-ghost-secondary:has(> .dc-term-icon.steered):hover, .btn-ghost-secondary:has(> .dc-term-icon.steered):focus-visible { background: var(--dc-steer); border-color: var(--dc-steer); }
@@ -1193,6 +1195,35 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
 .dc-assistant-aside, .dc-assistant-memory { --tblr-offcanvas-width: 420px; }
 .dc-assistant-aside .dc-assistant-aside-body { display: flex; flex-direction: column; }
 .dc-assistant-aside .card { box-shadow: none; }
+/* The Projects tab holds its text at 4.5:1 and its icons at 3:1 on every
+   surface it paints, a hovered, focused and pressed row included. Tabler's
+   grey and hues reach that on white alone, the dark red, blue and purple not
+   on the dark surface, and the dark primary carries no white text. So in here
+   each moves toward the far end of its theme until it holds, the hue kept;
+   the tints behind them, the colors of a drawn diff and a session icon, which
+   wears the cockpit's colors wherever it stands, stay as they are. */
+:root:not([data-bs-theme=dark]) .dc-assistant-projects {
+  --tblr-secondary: color-mix(in oklab, rgb(var(--tblr-secondary-rgb)) 90%, var(--tblr-black));
+  --tblr-green: color-mix(in oklab, rgb(var(--tblr-green-rgb)) 70%, var(--tblr-black));
+  --tblr-red: color-mix(in oklab, rgb(var(--tblr-red-rgb)) 90%, var(--tblr-black));
+  --tblr-yellow: color-mix(in oklab, rgb(var(--tblr-yellow-rgb)) 65%, var(--tblr-black));
+  --tblr-warning: color-mix(in oklab, rgb(var(--tblr-warning-rgb)) 65%, var(--tblr-black));
+  --tblr-orange: color-mix(in oklab, rgb(var(--tblr-orange-rgb)) 75%, var(--tblr-black));
+  --tblr-cyan: color-mix(in oklab, rgb(var(--tblr-cyan-rgb)) 75%, var(--tblr-black));
+  --tblr-azure: color-mix(in oklab, rgb(var(--tblr-azure-rgb)) 75%, var(--tblr-black));
+  --tblr-blue: color-mix(in oklab, rgb(var(--tblr-blue-rgb)) 90%, var(--tblr-black));
+  --tblr-purple: color-mix(in oklab, rgb(var(--tblr-purple-rgb)) 90%, var(--tblr-black));
+  --tblr-primary-darken: color-mix(in oklab, var(--tblr-primary) 85%, var(--tblr-black));
+}
+[data-bs-theme=dark] .dc-assistant-projects {
+  --tblr-red: color-mix(in oklab, rgb(var(--tblr-red-rgb)) 75%, var(--tblr-white));
+  --tblr-blue: color-mix(in oklab, rgb(var(--tblr-blue-rgb)) 75%, var(--tblr-white));
+  --tblr-purple: color-mix(in oklab, rgb(var(--tblr-purple-rgb)) 75%, var(--tblr-white));
+  --tblr-primary-fg: var(--tblr-body-bg);
+  --tblr-primary-darken: color-mix(in oklab, var(--tblr-primary) 85%, var(--tblr-white));
+}
+.dc-assistant-projects .dc-term-icon { --tblr-secondary: rgb(var(--tblr-secondary-rgb)); }
+[aria-expanded="true"] > [data-fold-shut], [aria-expanded="false"] > [data-fold-open] { display: none; }
 .dc-folded { display: none !important; }
 [data-assistant-job-fold] .ti, [data-assistant-trigger-fold] .ti { transition: transform 0.15s ease; }
 [data-assistant-job-fold][aria-expanded="true"] .ti, [data-assistant-trigger-fold][aria-expanded="true"] .ti { transform: rotate(180deg); }
@@ -1217,14 +1248,16 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
   [data-chat-end] { min-width: 2.75rem; min-height: 2.75rem; }
 }
 @media (min-width: 1200px) {
+  .dc-assistant-body > .dc-assistant-main { min-width: 20rem; }
   .dc-assistant-body > .dc-assistant-aside {
-    flex: 0 0 380px; min-width: 0; display: flex; flex-direction: column; overflow: auto;
+    position: relative; flex: 0 1 var(--dc-aside-w, 380px); min-width: 0; display: flex; flex-direction: column; overflow: hidden;
     background: var(--tblr-bg-surface) !important; box-shadow: inset 1px 0 0 var(--tblr-border-color);
   }
-  .dc-assistant-aside .dc-assistant-aside-body { padding: 12px; overflow: visible; }
+  .dc-assistant-aside .dc-assistant-aside-body { flex: 1 1 auto; min-height: 0; padding: 12px; overflow-y: auto; }
+  .dc-assistant-aside > .dc-ctx-resize { left: 0; right: auto; }
 }
 @media (min-width: 1600px) {
-  .dc-assistant-body > .dc-assistant-aside { flex-basis: 420px; }
+  .dc-assistant-body > .dc-assistant-aside { flex-basis: var(--dc-aside-w, 420px); }
 }
 /* The assistant link shares the segment's line: same bottom margin, so both
    sit on the same baseline, and the icon centers in the segment's height. */
@@ -1991,40 +2024,40 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
    (.cm-deletedChunk) and the lines as they are now (.cm-inlineChangedLine).
    The extra .cm-editor level outranks @codemirror/merge's own theme, which
    lands at (0,3,0). */
-.editor-surface .cm-editor.cm-merge-a .cm-changedLine, .editor-surface .cm-editor .cm-deletedChunk {
+:is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-a .cm-changedLine, :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-deletedChunk {
   background-color: rgba(var(--tblr-red-rgb), 0.1);
 }
-.editor-surface .cm-editor.cm-merge-b .cm-changedLine, .editor-surface .cm-editor .cm-inlineChangedLine {
+:is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedLine, :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-inlineChangedLine {
   background-color: rgba(var(--tblr-green-rgb), 0.1);
 }
 /* The word diff. `background` and not `background-color`, the shorthand is what
    carries the underline that has to go. */
-.editor-surface .cm-editor.cm-merge-a .cm-changedText, .editor-surface .cm-editor .cm-deletedChunk .cm-deletedText, .editor-surface .cm-editor.cm-merge-b .cm-deletedText {
+:is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-a .cm-changedText, :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-deletedChunk .cm-deletedText, :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-deletedText {
   background: rgba(var(--tblr-red-rgb), 0.32);
   border-radius: 2px;
 }
-.editor-surface .cm-editor.cm-merge-b .cm-changedText {
+:is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedText {
   background: rgba(var(--tblr-green-rgb), 0.32);
   border-radius: 2px;
 }
 /* The bar in the change gutter says the same thing in the same colors. */
-.editor-surface .cm-editor.cm-merge-a .cm-changedLineGutter, .editor-surface .cm-editor .cm-deletedLineGutter {
+:is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-a .cm-changedLineGutter, :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-deletedLineGutter {
   background: rgba(var(--tblr-red-rgb), 0.85);
 }
-.editor-surface .cm-editor.cm-merge-b .cm-changedLineGutter, .editor-surface .cm-editor .cm-inlineChangedLineGutter {
+:is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedLineGutter, :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-inlineChangedLineGutter {
   background: rgba(var(--tblr-green-rgb), 0.85);
 }
 /* A dark surface swallows a tint, so both levels carry more of it there. */
-[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-a .cm-changedLine, [data-bs-theme="dark"] .editor-surface .cm-editor .cm-deletedChunk {
+[data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-a .cm-changedLine, [data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-deletedChunk {
   background-color: rgba(var(--tblr-red-rgb), 0.16);
 }
-[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-b .cm-changedLine, [data-bs-theme="dark"] .editor-surface .cm-editor .cm-inlineChangedLine {
+[data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedLine, [data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-inlineChangedLine {
   background-color: rgba(var(--tblr-green-rgb), 0.16);
 }
-[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-a .cm-changedText, [data-bs-theme="dark"] .editor-surface .cm-editor .cm-deletedChunk .cm-deletedText, [data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-b .cm-deletedText {
+[data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-a .cm-changedText, [data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor .cm-deletedChunk .cm-deletedText, [data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-deletedText {
   background: rgba(var(--tblr-red-rgb), 0.42);
 }
-[data-bs-theme="dark"] .editor-surface .cm-editor.cm-merge-b .cm-changedText {
+[data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedText {
   background: rgba(var(--tblr-green-rgb), 0.42);
 }
 .editor-placeholder {

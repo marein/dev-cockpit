@@ -55,8 +55,13 @@ func TestFileAtTakesTheNamesGitTakes(t *testing.T) {
 	runGit(t, dir, "switch", "-q", "-c", "_wip")
 	runGit(t, dir, "check-ref-format", "--branch", "_wip")
 
-	content, exists, err := New(dir).FileAt(context.Background(), "_wip", "a.txt")
-	if err != nil || !exists || string(content) != "one\n" {
-		t.Fatalf("a legal branch name was refused: %q %v %v", content, exists, err)
+	runGit(t, dir, "branch", "fix+plus")
+	runGit(t, dir, "branch", "straße")
+	runGit(t, dir, "tag", "v1.2.3+build")
+	for _, rev := range []string{"_wip", "fix+plus", "straße", "v1.2.3+build"} {
+		content, exists, err := New(dir).FileAt(context.Background(), rev, "a.txt")
+		if err != nil || !exists || string(content) != "one\n" {
+			t.Fatalf("the legal name %q was refused: %q %v %v", rev, content, exists, err)
+		}
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/marein/dev-cockpit/internal/forge"
 	"github.com/marein/dev-cockpit/internal/linecomment"
 	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/share"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // checkCommentPath verifies that a comment's path stays inside the project.
@@ -156,6 +158,57 @@ func (s *Server) handleEditorComments(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"comments": list})
+}
+
+// handleEditorCommentThread answers the notes of the thread with the id as the
+// thread dialog shows them, the one rendering of a thread's notes. A thread
+// deleted meanwhile answers 404, the dialog keeps what it showed.
+func (s *Server) handleEditorCommentThread(c *gin.Context) {
+	p, ok := s.editorProject(c)
+	if !ok {
+		return
+	}
+	id := c.Query("id")
+	for _, comment := range s.lineComments.List(p.Name) {
+		if comment.ID == id {
+			c.HTML(http.StatusOK, "line_comment_notes.gohtml", s.lineNotes(c, comment))
+			return
+		}
+	}
+	c.String(http.StatusNotFound, "The thread is gone.")
+}
+
+// lineNotes are the notes of comment as the request's writer reads them: a
+// note of the forge by its author there or the forge's name, your own as You,
+// the owner's to a guest as Owner and a guest's by its link's name, with the
+// edit and the delete of what the writer may change. A thread of the forge
+// changes there and offers neither.
+func (s *Server) lineNotes(c *gin.Context, comment linecomment.Comment) []render.LineNote {
+	w := commentWriterOf(c)
+	writes := true
+	if g, ok := guestOf(c); ok {
+		writes = g.access.Can(share.Comments)
+	}
+	name := func(author, link string) string {
+		switch {
+		case comment.Forge != nil && author != "":
+			return author
+		case comment.Forge != nil:
+			return s.forgeKind(comment.Forge.Kind).Label
+		case w.Link != "" && link == w.Link, w.Link == "" && author == "":
+			return "You"
+		case author != "":
+			return author
+		}
+		return "Owner"
+	}
+	local := comment.Forge == nil && writes
+	notes := []render.LineNote{{Name: name(comment.Author, comment.Link), At: comment.UpdatedAt, Text: comment.Text, Edit: local && w.May(comment)}}
+	for _, r := range comment.Replies {
+		mine := local && w.MayReply(r)
+		notes = append(notes, render.LineNote{ID: r.ID, Name: name(r.Author, r.Link), At: r.UpdatedAt, Text: r.Text, Edit: mine, Drop: mine})
+	}
+	return notes
 }
 
 type editorCommentSaveRequest struct {

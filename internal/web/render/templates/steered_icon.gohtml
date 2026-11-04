@@ -1,13 +1,19 @@
 {{/*
   The coder icon as the status light it already is: purple while a job is open
-  and the assistant holds this terminal, green otherwise, news blue stays on
-  top. Rendered server side wherever the icon shows; the strip, quick nav and
-  chip fragments refresh on the terminals event, and the attach pages wrap
-  this one in dc-steered-mark, which pulls it from /coders/:id/steered on the
-  same event. No badge logic lives in the client.
+  and the assistant holds this terminal, green while its session runs, grey
+  once it stopped, news blue stays on top. Rendered server side wherever the
+  icon shows; the strip, quick nav and chip fragments refresh on the terminals
+  event, and the attach pages wrap this one in dc-steered-mark, which pulls it
+  from /coders/:id/steered on the same event. No badge logic lives in the
+  client.
 
-  Dict: ID (terminal), Coder (coder id), Steered (bool), Working (bool).
+  Dict: ID (terminal), Coder (coder id), Launcher, Steered (bool), Working
+  (stamp). A job's row adds what its job alone knows: Stopped (bool), News
+  (bool), Tone (a colour over the session's), Held (the stamp of a check, which
+  the activity event does not carry, so working.js keeps its stroke), Label
+  (in place of the coder's name) and Job (its state).
 */}}
 {{define "steered_icon.gohtml"}}
-<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .Steered}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}}{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-notify-target="{{.ID}}" title="{{coderLabel .Coder}}" aria-label="{{coderLabel .Coder}}">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
-{{end}}
+{{- $label := or .Label (coderLabel .Coder) -}}
+<span class="dc-term-icon{{if not .Stopped}} running{{end}}{{if or .Working .Held}} working{{end}}{{if .Steered}} steered{{end}}{{with .Tone}} {{.}}{{end}}{{if .News}} news{{end}}"{{with or .Working .Held}} data-working-since="{{.}}"{{end}}{{with .Held}} data-working-held="{{.}}"{{end}}{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-notify-target="{{.ID}}"{{with .Job}} data-assistant-job-state="{{.}}"{{end}} role="img" title="{{$label}}" aria-label="{{$label}}">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
+{{- end}}

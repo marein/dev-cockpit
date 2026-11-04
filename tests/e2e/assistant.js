@@ -138,7 +138,8 @@ async function closePanel(page) {
 
 // openView brings one of the page's lists on screen: the assistants stand in
 // the list column, the jobs and the memory in the aside, which is inline on a
-// wide window and a sheet the head's buttons open below xl.
+// wide window and a sheet the head's buttons open below xl. The aside opens on
+// Projects, the jobs are the tab beside it.
 async function openView(page, view, readySelector) {
   // The area's own address is the list and carries no surface, so only an
   // assistant's own page counts as being there already.
@@ -146,6 +147,9 @@ async function openView(page, view, readySelector) {
   if (view === "jobs" && !(await page.locator("#assistant-aside").isVisible())) {
     await page.click("[data-assistant-watching-button]");
     await page.waitForSelector("#assistant-aside.show", { timeout: 8000 });
+  }
+  if (view === "jobs" && !(await page.locator("#assistant-coders").isVisible())) {
+    await page.click("[data-assistant-coders-tab]");
   }
   if (view === "memory" && !(await page.locator("#assistant-memory.show").count())) {
     await page.click(".dc-app > .dc-ctx [data-assistant-memory-button]");
@@ -2815,7 +2819,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
         railActive: Boolean(document.querySelector('.dc-rail .dc-rail-btn.active[href="/assistants"]')),
         column: Boolean(column) && column.offsetParent !== null,
         activeRow: Boolean(column?.querySelector("[data-assistant-instance].active")),
-        aside: aside.offsetParent !== null && getComputedStyle(aside).position === "static",
+        aside: aside.offsetParent !== null && getComputedStyle(aside).position !== "fixed",
         composer: Boolean(work?.querySelector("[data-assistant-input]")),
         overflow: document.documentElement.scrollWidth > window.innerWidth,
       };
@@ -2842,7 +2846,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
       const a = aside.getBoundingClientRect();
       return {
         width: window.innerWidth,
-        inline: getComputedStyle(aside).position === "static",
+        inline: getComputedStyle(aside).position !== "fixed",
         headShown: head.getBoundingClientRect().height > 0 && getComputedStyle(head).display !== "none",
         title: head.querySelector(".dc-ctx-title")?.textContent.trim(),
         closeShown: head.querySelector(".btn-close")?.getClientRects().length > 0,
@@ -3503,7 +3507,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     const head = await page.locator("#assistant-aside .dc-ctx-title").textContent();
     assert(head.includes("Watching"), `the aside's sheet is not headed Watching: ${head}`);
     const section = await page.locator("[data-assistant-coders-tab]").textContent();
-    assert(section.includes("Steered coders"), `the first tab is not named Steered coders: ${section}`);
+    assert(section.trim().startsWith("Coders") && !section.includes("Steered"), `the coders tab is not named Coders: ${section}`);
     // The task and the criterion sit folded under the row, so the words are
     // read from the content, not from what is on screen.
     const text = await page.locator(`[data-assistant-job="${jobCoder}"]`).textContent();
@@ -3568,6 +3572,8 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     const mp = await mobilePage();
     await openConversation(mp, chatID);
     await mp.click("[data-assistant-watching-button]");
+    await mp.waitForSelector("#assistant-aside.show", { timeout: 8000 });
+    await mp.click("[data-assistant-coders-tab]");
     await mp.waitForSelector(`#assistant-aside.show [data-assistant-job="${jobCoder}"]`, { timeout: 15000 });
     await unfoldJob(mp, jobCoder);
     await sleep(400);
@@ -3590,12 +3596,12 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     }, jobCoder);
     assert(fit === "", `the view is not usable with a thumb: ${fit}`);
 
-    // The aside starts with the head of its first section, and that head stands
+    // The aside starts with the head of its first tab, and that head stands
     // as far from the top as the rows stand from the sides: one gap, the sheet
     // body's own padding. The rows below it keep it too.
     const gaps = await mp.evaluate(() => {
       const body = document.querySelector("#assistant-aside .offcanvas-body");
-      const head = document.querySelector("#assistant-aside [data-assistant-coders-tab]");
+      const head = document.querySelector("#assistant-aside [data-assistant-projects-tab]");
       const content = document.querySelector("#assistant-aside [data-assistant-job] .d-flex");
       const b = body.getBoundingClientRect();
       const h = head.getBoundingClientRect();

@@ -414,7 +414,7 @@ func TestAGuestsEventStreamCarriesOnlyItsProjectsSignals(t *testing.T) {
 		{eventbus.Event{Type: "something-new"}, false},
 	}
 	for _, tc := range cases {
-		if _, got := guestEvent([]string{"shop", "blog"}, false, noneShown, tc.ev); got != tc.want {
+		if _, got := guestEvent([]string{"shop", "blog"}, false, noneWorked, noneShown, tc.ev); got != tc.want {
 			t.Fatalf("%s %v = %v, want %v", tc.ev.Type, tc.ev.Data, got, tc.want)
 		}
 	}
@@ -422,34 +422,77 @@ func TestAGuestsEventStreamCarriesOnlyItsProjectsSignals(t *testing.T) {
 
 func noneShown() []string { return nil }
 
+func noneWorked(string) bool { return false }
+
 // A link with an assistant opens coders of any project, so its guest hears
 // every terminals signal, but never the name of a project off the link, and
 // the bare assistant signal its lists of jobs and triggers pull on.
 func TestALinkWithAnAssistantHearsTerminalsOfOtherProjectsWithoutTheirName(t *testing.T) {
-	ev, ok := guestEvent([]string{"shop"}, true, noneShown, eventbus.Event{Type: "terminals", Data: map[string]string{"project": "secret"}})
+	ev, ok := guestEvent([]string{"shop"}, true, noneWorked, noneShown, eventbus.Event{Type: "terminals", Data: map[string]string{"project": "secret"}})
 	if !ok || ev.Type != "terminals" || ev.Data != nil {
 		t.Fatalf("a foreign project's terminals signal reads %+v, %v", ev, ok)
 	}
-	if ev, ok := guestEvent([]string{"shop"}, true, noneShown, eventbus.Event{Type: "terminals", Data: map[string]string{"project": "shop"}}); !ok || ev.Data == nil {
+	if ev, ok := guestEvent([]string{"shop"}, true, noneWorked, noneShown, eventbus.Event{Type: "terminals", Data: map[string]string{"project": "shop"}}); !ok || ev.Data == nil {
 		t.Fatalf("the link's own project lost its name: %+v, %v", ev, ok)
 	}
-	if ev, ok := guestEvent([]string{"shop"}, true, noneShown, eventbus.Event{Type: "assistant", Data: map[string]string{"id": "secret"}}); !ok || len(ev.Data.(map[string]string)) != 0 {
+	if ev, ok := guestEvent([]string{"shop"}, true, noneWorked, noneShown, eventbus.Event{Type: "assistant", Data: map[string]string{"id": "secret"}}); !ok || len(ev.Data.(map[string]string)) != 0 {
 		t.Fatalf("the assistant signal reads %+v, %v", ev, ok)
 	}
 	for _, other := range []eventbus.Event{
 		{Type: "git", Data: map[string]any{"project": "secret"}},
 		{Type: "files", Data: map[string]any{"project": "secret"}},
 	} {
-		if _, ok := guestEvent([]string{"shop"}, true, noneShown, other); ok {
+		if _, ok := guestEvent([]string{"shop"}, true, noneWorked, noneShown, other); ok {
 			t.Fatalf("%s of a foreign project reached the guest", other.Type)
 		}
+	}
+}
+
+// The projects tab of a link's assistant shows projects off the link too, so
+// its guest hears the git, forge and linecomments signals of a project a job
+// of the assistant names, and of no other one, and nothing else of such a
+// project. A link without an assistant hears no forge signal at all.
+func TestALinkWithAnAssistantHearsGitOfTheProjectsItWorksIn(t *testing.T) {
+	worked := func(name string) bool { return name == "worked" }
+	ev, ok := guestEvent([]string{"shop"}, true, worked, noneShown, eventbus.Event{Type: "git", Data: map[string]any{"project": "worked", "base": true}})
+	if !ok || ev.Type != "git" || ev.Data.(map[string]any)["project"] != "worked" {
+		t.Fatalf("the git signal of a project the assistant works in reads %+v, %v", ev, ok)
+	}
+	for _, kind := range []string{"forge", "linecomments"} {
+		ev, ok := guestEvent([]string{"shop"}, true, worked, noneShown, eventbus.Event{Type: kind, Data: map[string]string{"project": "worked"}})
+		if !ok || ev.Type != kind || ev.Data.(map[string]string)["project"] != "worked" {
+			t.Fatalf("the %s signal of a project the assistant works in reads %+v, %v", kind, ev, ok)
+		}
+	}
+	if ev, ok := guestEvent([]string{"shop"}, true, worked, noneShown, eventbus.Event{Type: "forge", Data: map[string]string{"project": ""}}); !ok || ev.Data.(map[string]string)["project"] != "" {
+		t.Fatalf("the bare forge signal reads %+v, %v", ev, ok)
+	}
+	for _, other := range []eventbus.Event{
+		{Type: "git", Data: map[string]any{"project": "secret"}},
+		{Type: "forge", Data: map[string]string{"project": "secret"}},
+		{Type: "forge", Data: map[string]string{"project": "shop"}},
+		{Type: "linecomments", Data: map[string]string{"project": "secret"}},
+		{Type: "files", Data: map[string]any{"project": "worked"}},
+		{Type: "lsp", Data: map[string]string{"project": "worked"}},
+	} {
+		if _, ok := guestEvent([]string{"shop"}, true, worked, noneShown, other); ok {
+			t.Fatalf("%s of %v reached the guest", other.Type, other.Data)
+		}
+	}
+	for _, kind := range []string{"git", "forge"} {
+		if _, ok := guestEvent([]string{"shop"}, false, worked, noneShown, eventbus.Event{Type: kind, Data: map[string]string{"project": "worked"}}); ok {
+			t.Fatalf("a link without an assistant heard the %s signal of a project off it", kind)
+		}
+	}
+	if _, ok := guestEvent([]string{"shop"}, false, worked, noneShown, eventbus.Event{Type: "forge", Data: map[string]string{"project": ""}}); ok {
+		t.Fatal("a link without an assistant heard the bare forge signal")
 	}
 }
 
 // The working set a guest hears holds the terminals its link shows and
 // nothing of any other, on a live event and on the connect snapshot alike.
 func TestAGuestHearsTheWorkingSetOfItsTerminalsAlone(t *testing.T) {
-	ev, ok := guestEvent([]string{"shop"}, false, func() []string { return []string{"mine", "idle"} }, ActivityEvent(map[string]int64{"mine": 7, "secret": 9}))
+	ev, ok := guestEvent([]string{"shop"}, false, noneWorked, func() []string { return []string{"mine", "idle"} }, ActivityEvent(map[string]int64{"mine": 7, "secret": 9}))
 	if !ok || ev.Type != "activity" {
 		t.Fatalf("the activity event reads %+v, %v", ev, ok)
 	}
@@ -460,7 +503,7 @@ func TestAGuestHearsTheWorkingSetOfItsTerminalsAlone(t *testing.T) {
 	if targets := data["targets"].([]string); len(targets) != 1 || targets[0] != "mine" {
 		t.Fatalf("the guest's targets are %v", targets)
 	}
-	if ev, ok := guestEvent(nil, false, noneShown, eventbus.Event{Type: "activity", Data: "not the shape"}); !ok || len(ev.Data.(map[string]any)["since"].(map[string]int64)) != 0 {
+	if ev, ok := guestEvent(nil, false, noneWorked, noneShown, eventbus.Event{Type: "activity", Data: "not the shape"}); !ok || len(ev.Data.(map[string]any)["since"].(map[string]int64)) != 0 {
 		t.Fatalf("an activity event of another shape reads %+v, %v", ev, ok)
 	}
 }

@@ -323,7 +323,7 @@ func TestEveryAssistantMarkCarriesTheStartOfItsRun(t *testing.T) {
 			calm: `data-tabs-assistant-instance="calm"`,
 		},
 		{
-			name: "the steered coders",
+			name: "the coders tab",
 			html: render("assistant_jobs_list.gohtml", AssistantData{Jobs: []AssistantJobView{
 				{Terminal: "busy", State: "open", Open: true, Checking: since},
 				{Terminal: "calm", State: "open", Open: true},
@@ -365,4 +365,49 @@ func iconAfter(t *testing.T, html, anchor string) string {
 	}
 	start := strings.LastIndex(rest[:icon], "<span")
 	return rest[start : icon+strings.Index(rest[icon:], ">")+1]
+}
+
+// A job's icon is its coder's terminal icon, glyph, news and turn included,
+// with what the job alone knows on top: purple while it is open, a check's
+// stroke, red where it closed blocked or expired also while the coder runs,
+// else green while the session runs and grey once it stopped. The word names
+// the job and, where the colour is the session's, the session. A card's row
+// draws the very same icon.
+func TestAJobsIconIsItsCodersOwn(t *testing.T) {
+	const since = 1760443200123
+	for _, c := range []struct {
+		name, class, label string
+		job                AssistantJobView
+	}{
+		{"open", "running steered", "Steering", AssistantJobView{State: "steering", Open: true, Running: true}},
+		{"open, stopped", "steered", "Steering", AssistantJobView{State: "steering", Open: true}},
+		{"open, turn", "running working steered", "Steering", AssistantJobView{State: "steering", Open: true, Running: true, Working: since}},
+		{"checked", "running working steered", "Checking", AssistantJobView{State: "steering", Open: true, Running: true, Checking: since}},
+		{"blocked, running", "running working text-danger", "Blocked", AssistantJobView{State: "blocked", Running: true, Working: since}},
+		{"expired, stopped", "text-danger", "Expired", AssistantJobView{State: "expired", Stopped: true}},
+		{"done, running", "running working", "Done, running", AssistantJobView{State: "done", Running: true, Working: since}},
+		{"done, stopped", "", "Done, stopped", AssistantJobView{State: "done", Stopped: true}},
+		{"released, running", "running", "Released, running", AssistantJobView{State: "stopped", Running: true}},
+		{"news", "running news", "Done, running", AssistantJobView{State: "done", Running: true, News: true}},
+	} {
+		c.job.Terminal, c.job.Name, c.job.Coder, c.job.URL = "t1", "one", "claude", "/coders/t1"
+		tab := renderPart(t, "assistant_jobs_list.gohtml", AssistantData{Jobs: []AssistantJobView{c.job}})
+		icon := iconAfter(t, tab, `data-assistant-job="t1"`)
+		class := strings.TrimSpace("dc-term-icon " + c.class)
+		if !strings.HasPrefix(icon, `<span class="`+class+`" `) || !strings.Contains(icon, `data-notify-target="t1"`) ||
+			!strings.Contains(icon, `data-assistant-job-state="`+c.job.State+`"`) || !strings.Contains(icon, `aria-label="`+c.label+`"`) {
+			t.Errorf("%s: the icon reads %s, want class %q and label %q", c.name, icon, class, c.label)
+		}
+		glyph := tab[strings.Index(tab, icon)+len(icon):]
+		if glyph = glyph[:strings.Index(glyph, "</span>")]; !strings.Contains(glyph, `class="coder-icon"`) || strings.Contains(glyph, "ti-steering-wheel") {
+			t.Errorf("%s: the icon does not draw the coder: %s", c.name, glyph)
+		}
+		if held := strings.Contains(icon, `data-working-held="1760443200123"`); held != (c.job.Checking != 0) {
+			t.Errorf("%s: the check's stroke is held %v: %s", c.name, held, icon)
+		}
+		card := renderPart(t, "assistant_projects_list.gohtml", AssistantProjectsData{Projects: []AssistantProjectCard{{Name: "app", Jobs: []AssistantJobView{c.job}}}})
+		if got := iconAfter(t, card, `data-assistant-project-job="t1"`); got != icon {
+			t.Errorf("%s: the card's icon %s is not the Coders tab's %s", c.name, got, icon)
+		}
+	}
 }

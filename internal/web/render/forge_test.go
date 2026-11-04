@@ -390,8 +390,8 @@ func TestAChangeRequestIsOfferedToAnswerItsThreads(t *testing.T) {
 		offer *ForgeThreadsOffer
 		html  string
 	}{
-		{offer, `<span hidden data-forge-threads data-forge-threads-forge="GitLab" data-forge-threads-noun="merge request" data-forge-threads-ref="!3" data-forge-threads-reply data-forge-threads-resolve></span>`},
-		{NewForgeThreadsOffer(onGitLab, merged, true, false), `<span hidden data-forge-threads data-forge-threads-forge="GitLab" data-forge-threads-noun="merge request" data-forge-threads-ref="!3" data-forge-threads-reply></span>`},
+		{offer, `<span hidden data-forge-threads data-forge-threads-hint="It is posted on merge request !3 on GitLab, for everybody who can read it there." data-forge-threads-reply data-forge-threads-resolve></span>`},
+		{NewForgeThreadsOffer(onGitLab, merged, true, false), `<span hidden data-forge-threads data-forge-threads-hint="It is posted on merge request !3 on GitLab, for everybody who can read it there." data-forge-threads-reply></span>`},
 	} {
 		var out strings.Builder
 		if err := tmpl.ExecuteTemplate(&out, "forge_branch.gohtml", ForgeBranchData{Threads: c.offer}); err != nil {

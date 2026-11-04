@@ -1,5 +1,7 @@
 import { labelNodes } from "@dc/contextmenu";
 import { el } from "@dc/dom";
+import { ensureOk, postForm, postJSON } from "@dc/http";
+import { notifyError, notifySuccess } from "@dc/toast";
 
 export function sortComments(list) {
   return [...list].sort((a, b) => {
@@ -109,19 +111,73 @@ export function authorHead(row, comment) {
   return row;
 }
 
-// noteEntry is one note of a thread in its dialog: who wrote it, when, the
-// buttons that change it, and the note as written.
-export function noteEntry({ name, when, text, buttons }) {
-  return el(
-    "div",
-    { class: "border-start border-2 ps-2 mt-2", "data-comment-note": "" },
-    el(
-      "div",
-      { class: "d-flex align-items-center gap-2 small text-secondary min-w-0" },
-      el("span", { class: "fw-medium text-body text-truncate", "data-comment-note-author": "" }, ...visibleLine(name)),
-      when,
-      buttons.length ? el("span", { class: "ms-auto d-flex gap-1" }, ...buttons) : null,
-    ),
-    el("div", { class: "dc-prompt-text", "data-comment-note-text": "" }, text),
-  );
+// writeLineComment posts one write of a line comment thread to its route of
+// the editor's line comments and answers what came back, null after it
+// toasted the refusal. An answer with gone is a thread another device deleted
+// meanwhile.
+export async function writeLineComment(url, payload, failed) {
+  try {
+    const response = await postJSON(url, payload);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || failed);
+    return data;
+  } catch (err) {
+    notifyError(err.message || failed);
+    return null;
+  }
+}
+
+// postForgeThread answers or resolves a review thread over the forge's thread
+// route of a project and toasts what came of it, branch empty for the one HEAD
+// is on. The line comments follow with the linecomments event once the forge
+// is read again. It answers whether what sent it is done: a resolve refused
+// after the reply went answers true too, a second Reply would post it twice.
+export async function postForgeThread(url, { thread, branch = "", body = "", resolve = false }) {
+  const fields = [["thread", thread]];
+  if (branch) fields.push(["branch", branch]);
+  if (body) fields.push(["body", body]);
+  if (resolve) fields.push(["resolve", "1"]);
+  let replied = false;
+  try {
+    const response = await postForm(url, fields);
+    if (!response.ok) replied = (await response.clone().json().catch(() => ({}))).replied === true;
+    await ensureOk(response, body ? "The reply could not be posted." : "The thread could not be resolved.");
+    notifySuccess((await response.json()).message);
+    return true;
+  } catch (err) {
+    notifyError(err.message);
+    return replied;
+  }
+}
+
+// publishWords names what a publish of count comments makes on the forge,
+// general of them project comments, which become general comments.
+export function publishWords(count, general) {
+  if (general && general === count) return { each: "a general comment", aside: "" };
+  return { each: "a review thread", aside: general ? ", a project comment a general one" : "" };
+}
+
+// publishQuestion is the confirm before count comments, general of them
+// project comments, are published on the change request an offer names.
+export function publishQuestion(count, general, offer) {
+  const words = publishWords(count, general);
+  const becomes = count === 1 ? `It becomes ${words.each}` : `Each becomes ${words.each} of its own`;
+  return {
+    title: count === 1 ? "Publish the comment?" : `Publish all ${count} comments?`,
+    text: `${becomes} on ${offer.noun} ${offer.ref} on ${offer.forge}${words.aside}, for everybody who can read it there.`,
+    confirmText: "Publish",
+  };
+}
+
+// publishComments publishes the line comments with the ids over the publish
+// route of a project. A published comment comes back as a note of the forge
+// with the linecomments event, the toast only says it went.
+export async function publishComments(url, ids) {
+  try {
+    const response = await postForm(url, ids.map((id) => ["id", id]));
+    await ensureOk(response, "The comments could not be published.");
+    notifySuccess((await response.json()).message);
+  } catch (err) {
+    notifyError(err.message);
+  }
 }

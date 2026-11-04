@@ -53,6 +53,10 @@ export function markWorking(icon, since) {
   syncAnimations(icon);
 }
 
+export function isModEnter(event) {
+  return (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key === "Enter";
+}
+
 export function jumpTextEdge(event, input) {
   if (event.key !== "Home" && event.key !== "End") return false;
   if (!input || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return false;

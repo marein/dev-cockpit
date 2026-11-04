@@ -10,13 +10,13 @@
   <div class="list-group list-group-flush" data-assistant-triggers>
     {{range .Triggers}}
     <div class="list-group-item px-0" data-assistant-trigger="{{.ID}}">
-      {{/* The icon carries the state alone, the same colours a steered coder's
-           row reads by: purple while it stands, purple with the dot running
-           along its edge while its reaction is on, red where it ended without
-           arriving, which is an expiry that never fired and a reaction that
-           broke off, grey where it is done. Never green: green says "running"
-           on every terminal icon in the cockpit, and the same colour for
-           "finished" in the same aside would give it two meanings. The word is
+      {{/* The icon carries the state alone: purple while it stands, purple
+           with the dot running along its edge while its reaction is on, red
+           where it ended without arriving, which is an expiry that never
+           fired and a reaction that broke off, grey where it is done. Never
+           green: green says "running" on every terminal icon in the cockpit,
+           and the same colour for "finished" in the same aside would give it
+           two meanings. The word is
            the icon's own label, the way a note's badge in the thread names
            itself, and the events waiting in the batch window ride the corner
            of the icon as the count the tabs above already wear. */}}

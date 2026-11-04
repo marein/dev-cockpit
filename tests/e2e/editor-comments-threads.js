@@ -8,7 +8,8 @@ const { assert, sleep } = L;
 // line's menu shows the first note and every reply in the dialog
 // (data-editor-comment-thread, one data-comment-note each with its author,
 // You for the owner's own, the time it was written and the note as written,
-// line breaks and indents kept), a pencil on each note to edit it in the
+// line breaks and indents kept, the server's rendering of the thread pulled
+// from .../comments/thread), a pencil on each note to edit it in the
 // field (Save, the resolve switch gone meanwhile) and a bin on each reply,
 // which closes the dialog for the swal confirm. The field below takes a
 // reply (an empty one marks it invalid with "A reply is required."), and the
@@ -38,7 +39,7 @@ module.exports.threadChecks = async function threadChecks({ page, run, scratch, 
   const thread = async () => (await getComments(page)).comments.find((c) => c.text === "a thread");
   const notes = () => page.locator("[data-editor-comment-thread] [data-comment-note]").evaluateAll((els) => els.map((el) => ({
     author: el.querySelector("[data-comment-note-author]").textContent,
-    when: el.querySelector("time")?.textContent || "",
+    when: el.querySelector("dc-time")?.textContent || "",
     text: el.querySelector("[data-comment-note-text]").textContent,
     buttons: [...el.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")).join(","),
   })));

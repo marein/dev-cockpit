@@ -181,17 +181,22 @@ type ShareEditData struct {
 // read only.
 type GuestAssistantData struct {
 	Page
-	Name            string
-	StreamURL       string
-	PageURL         string
-	Messages        []AssistantMessageView
-	Ctx             *AssistantCtxData
-	Running         int64
-	Jobs            []AssistantJobView
-	JobsOpen        int
-	JobsOlder       int
-	JobsListURL     string
-	Triggers        AssistantTriggersData
-	TriggersListURL string
-	WatchingOpen    int
+	Name             string
+	StreamURL        string
+	PageURL          string
+	Messages         []AssistantMessageView
+	Ctx              *AssistantCtxData
+	Running          int64
+	Jobs             []AssistantJobView
+	JobsOpen         int
+	JobsOlder        int
+	JobsListURL      string
+	Triggers         AssistantTriggersData
+	TriggersListURL  string
+	Projects         AssistantProjectsData
+	ProjectsListURL  string
+	ProjectsWatchURL string
+	ProjectViewURL   string
+	ProjectDiffURL   string
+	WatchingOpen     int
 }

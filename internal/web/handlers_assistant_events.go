@@ -584,10 +584,10 @@ func (s *Server) assistantTriggersData(page render.Page, owner string, all bool)
 		Owners: owner == "",
 		Older:  older,
 	}
-	stopped := s.stoppedCoders()
+	runs := s.coderRuns()
 	for _, trigger := range triggers {
 		view := s.assistantTriggerView(trigger, owner == "")
-		view.Stopped = view.TargetURL != "" && stopped[trigger.Targets[0].Terminal]
+		view.Stopped = view.TargetURL != "" && runs[trigger.Targets[0].Terminal] == coderStopped
 		if view.Open {
 			data.Open++
 		}

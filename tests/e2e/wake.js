@@ -54,9 +54,9 @@ const { assert, BASE, sleep } = L;
 //   check consumed stays out of that assistant's context ring, which is why
 //   both fakes report a different number on a check than on a chat turn,
 // - a check counts when it came back, so the counter says how many checks
-//   answered; while one runs the job carries the working assistant, marked
-//   data-assistant-working="check", which is what a wait for "a check is
-//   running" keys on,
+//   answered; while one runs the job's icon holds its start, marked
+//   data-working-held, which is what a wait for "a check is running" keys
+//   on,
 // - the fake refuses the model no-such-model with the records claude writes
 //   for one it does not know, so a check model set to it at the ring is a
 //   check the coder refuses to run: the job closes as blocked at once.
@@ -512,7 +512,7 @@ L.runFeature("wake", async ({ page, run }) => {
       checking = await page.evaluate(async (id) => {
         const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
         const html = await res.text();
-        return new RegExp(`data-assistant-job="${id}"[\\s\\S]*?data-assistant-working="check" data-working-since="\\d{13}"`).test(html);
+        return new RegExp(`data-assistant-job="${id}"[\\s\\S]*?data-working-held="\\d{13}"`).test(html);
       }, slowCoder);
     }
     assert(checking, "the slow check never started");
@@ -620,7 +620,7 @@ L.runFeature("wake", async ({ page, run }) => {
     // sitting in the queue instead of surviving a restart.
     const free = async () => page.evaluate(async () => {
       const res = await fetch("/assistants/jobs", { headers: { Accept: "text/html" } });
-      return !(await res.text()).includes('data-assistant-working="check"');
+      return !(await res.text()).includes("data-working-held");
     });
     const idleBy = Date.now() + 180000;
     while (Date.now() < idleBy && !(await free())) await sleep(1000);

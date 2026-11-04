@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/tmux"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
@@ -46,7 +48,7 @@ func TestJobViewsCapTheClosedTail(t *testing.T) {
 		Terminal: "open-1", CoderID: "claude", DoneWhen: "x",
 		State: assistant.JobSteering, CreatedAt: now.Add(-time.Hour),
 	})
-	s := &Server{assistants: conversations, watcher: assistant.NewWatcher(conversations, jobs, nil, nil)}
+	s := &Server{assistants: conversations, watcher: assistant.NewWatcher(conversations, jobs, nil, nil), activity: activity.NewTracker(), notifier: notify.NewService(filepath.Join(stateDir, "notifications.json"), nil)}
 
 	views, older := s.assistantJobViews(owner, false)
 	if len(views) != 1+closedJobsShown {
@@ -138,8 +140,8 @@ func TestStoppingACoderKeepsAClosedJobsState(t *testing.T) {
 
 // A steered coder's row leads to it the way that works for it: a running one
 // opens its page, a stopped one resumes it, which lands on the running coder.
-// Both jobs are over, so the button follows the coder, not the job. A guest
-// only looks, its row keeps the link either way.
+// Both jobs are over, so the button and the icon follow the coder, not the
+// job. A guest only looks, its row keeps the link either way.
 func TestAStoppedCodersJobRowResumesIt(t *testing.T) {
 	const running, stopped = "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"
 	dir := t.TempDir()
@@ -171,9 +173,16 @@ func TestAStoppedCodersJobRowResumesIt(t *testing.T) {
 		coders:     []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), storedCoder{sessions: sessions}, nil)},
 		assistants: conversations,
 		watcher:    assistant.NewWatcher(conversations, jobs, nil, nil),
+		activity:   activity.NewTracker(),
+		notifier:   notify.NewService(filepath.Join(stateDir, "notifications.json"), nil),
 	}
 
 	views, _ := s.assistantJobViews(owner, false)
+	for _, v := range views {
+		if v.Running != (v.Terminal == running) || v.Stopped != (v.Terminal == stopped) || v.Coder != "claude" {
+			t.Fatalf("the row of %s reads running %v, stopped %v, coder %q", v.Terminal, v.Running, v.Stopped, v.Coder)
+		}
+	}
 	tmpl := render.HTMLTemplate(func(p string) string { return p }, "test", "test", nil, nil)
 	row := func(access render.Access, id string) string {
 		t.Helper()

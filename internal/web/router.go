@@ -173,6 +173,10 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// `dev-cockpit assistant trigger-new` posts to.
 	auth.GET("/assistants/triggers", s.handleAssistantTriggers)
 	auth.POST("/assistants/triggers", s.handleAssistantTriggersAction)
+	auth.GET(assistantProjectsPath, s.handleAssistantProjects)
+	auth.POST(assistantProjectsWatchPath, s.handleAssistantProjectsWatch)
+	auth.GET(assistantProjectViewPath, s.handleAssistantProjectView)
+	auth.GET(assistantProjectDiffPath, s.handleAssistantProjectDiff)
 	// The two reads answer the `assistant-list` and `assistant-show` commands
 	// as JSON: this is how assistants see each other. The page renders its own
 	// list from fragments, not from these.
@@ -437,6 +441,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	editor.POST("/headings", editorPoll, s.handleEditorHeadings)
 	editor.GET("/comments", s.handleEditorComments)
 	editor.GET("/comments/text", s.handleEditorCommentsText)
+	editor.GET("/comments/thread", s.handleEditorCommentThread)
 	editor.POST("/comments", s.handleEditorCommentSave)
 	editor.POST("/comments/delete", s.handleEditorCommentsDelete)
 	editor.POST("/comments/move", s.handleEditorCommentsMove)

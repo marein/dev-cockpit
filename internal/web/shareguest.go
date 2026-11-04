@@ -293,17 +293,25 @@ var neverTrees = []string{
 
 // guestAssistantReads are the reads of the assistants' tree a link reaches,
 // each a GET: the area's entry, the conversation, its stream, the files the
-// messages link and the lists of its jobs and triggers. Everything else of
-// it, the memory, the trigger forms, the drafts, the uploads, the model picks
-// and the speech, stays the owner's like the rest of the trees above.
-var guestAssistantReads = []string{
-	"/assistants", "/assistants/:id", "/assistants/:id/stream", "/assistants/:id/media/*path",
-	assistantJobsPath, assistantTriggersPath,
-}
+// messages link, the lists of its projects, jobs and triggers, a project
+// opened in that list and the diff of a file it lists. Everything
+// else of it, the memory, the trigger forms, the drafts, the uploads, the
+// model picks and the speech, stays the owner's like the rest of the trees
+// above. guestAssistantPolls are its POSTs that write nothing, the watch that
+// keeps the git of the projects tab polled.
+var (
+	guestAssistantReads = []string{
+		"/assistants", "/assistants/:id", "/assistants/:id/stream", "/assistants/:id/media/*path",
+		assistantProjectsPath, assistantProjectViewPath, assistantProjectDiffPath, assistantJobsPath, assistantTriggersPath,
+	}
+	guestAssistantPolls = []string{assistantProjectsWatchPath}
+)
 
 // guestMayRead answers whether a guest route may mirror an owner's route.
 func guestMayRead(method, path string) bool {
-	return !neverForGuest(path) || (method == http.MethodGet && slices.Contains(guestAssistantReads, path))
+	return !neverForGuest(path) ||
+		(method == http.MethodGet && slices.Contains(guestAssistantReads, path)) ||
+		(method == http.MethodPost && slices.Contains(guestAssistantPolls, path))
 }
 
 // neverForGuest answers whether an owner's route is one no link may ever
@@ -368,6 +376,7 @@ func (s *Server) registerShareRoutes(r *gin.Engine) {
 	editor.read(http.MethodPost, "/headings", editorPoll, s.handleEditorHeadings)
 	editor.read(http.MethodGet, "/comments", s.handleEditorComments)
 	editor.read(http.MethodGet, "/comments/text", s.handleEditorCommentsText)
+	editor.read(http.MethodGet, "/comments/thread", s.handleEditorCommentThread)
 	editor.write(share.Comments, http.MethodPost, "/comments", s.handleEditorCommentSave)
 	editor.write(share.Comments, http.MethodPost, "/comments/delete", s.handleEditorCommentsDelete)
 	editor.write(share.Comments, http.MethodPost, "/comments/move", s.handleEditorCommentsMove)
@@ -393,6 +402,10 @@ func (s *Server) registerShareRoutes(r *gin.Engine) {
 	g.read(http.MethodGet, "/coders/:id/conversation", coder, s.handleCoderConversation)
 	g.read(http.MethodPost, "/coders/:id/file-links", coder, s.handleFileLinks)
 	g.read(http.MethodGet, "/assistants", s.handleShareAssistantsEntry)
+	g.read(http.MethodGet, assistantProjectsPath, s.guestAssistant, s.handleShareAssistantProjects)
+	g.read(http.MethodPost, assistantProjectsWatchPath, s.guestAssistant, s.handleShareAssistantProjectsWatch)
+	g.read(http.MethodGet, assistantProjectViewPath, s.guestAssistant, s.handleShareAssistantProjectView)
+	g.read(http.MethodGet, assistantProjectDiffPath, s.guestAssistant, s.handleShareAssistantProjectDiff)
 	g.read(http.MethodGet, assistantJobsPath, s.guestAssistant, s.handleShareAssistantJobs)
 	g.read(http.MethodGet, assistantTriggersPath, s.guestAssistant, s.handleShareAssistantTriggers)
 	g.read(http.MethodGet, "/assistants/:id", s.guestAssistant, s.handleShareAssistant)

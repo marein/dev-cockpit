@@ -130,6 +130,10 @@ func (s *Server) handleShareAssistant(c *gin.Context) {
 		Triggers:        s.guestTriggersData(g, inst.ID, false),
 		TriggersListURL: g.base + assistantTriggersPath + "?assistant=" + url.QueryEscape(inst.ID),
 	}
+	data.ProjectsListURL, data.ProjectsWatchURL, data.ProjectViewURL, data.ProjectDiffURL = assistantProjectsURLs(g.base, inst.ID)
+	if c.GetHeader(pullHeader) == "" {
+		data.Projects = s.guestProjectsData(c.Request.Context(), g, inst.ID, false)
+	}
 	data.WatchingOpen = data.JobsOpen + data.Triggers.Open
 	s.guestFiles.put(inst.ID, threadPrint(inst), linked)
 	c.HTML(http.StatusOK, "guest_assistant.gohtml", data)
@@ -157,13 +161,14 @@ func (s *Server) handleShareAssistantTriggers(c *gin.Context) {
 }
 
 // guestJobViews are an assistant's jobs as its guest reads them: the owner's
-// rows, the coder and its editor leading inside the share where the link
-// opens them and nowhere where it does not.
+// rows without the owner's news, the coder and its editor leading inside the
+// share where the link opens them and nowhere where it does not.
 func (s *Server) guestJobViews(g *guest, id string, all bool) ([]render.AssistantJobView, int) {
 	jobs, older := s.assistantJobViews(id, all)
 	lead := s.guestLead(g)
 	for i := range jobs {
 		jobs[i].URL, jobs[i].EditorURL = lead(jobs[i].URL), lead(jobs[i].EditorURL)
+		jobs[i].News = false
 	}
 	return jobs, older
 }

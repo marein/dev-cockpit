@@ -9,6 +9,7 @@ import (
 	ginsessions "github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/notify"
 )
@@ -48,6 +49,7 @@ func TestThePageReadsLeaveTheNotificationUnread(t *testing.T) {
 		workspace:  workspace,
 		watcher:    assistant.NewWatcher(conversations, assistant.NewJobs(assistant.NewStore(stateDir)), nil, nil),
 		notifier:   notifier,
+		activity:   activity.NewTracker(),
 	}
 
 	// The three reads the page is made of, behind the session middleware the

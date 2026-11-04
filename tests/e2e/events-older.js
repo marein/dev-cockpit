@@ -94,6 +94,7 @@ async function olderChecks({ page, run, mobilePage, helpers }) {
     assert(spent === `and ${OLDER} older`, `the triggers did not run out: ${spent}`);
 
     await openAssistant(page, helper);
+    await page.click("[data-assistant-coders-tab]");
     const jobs = await readTab(page, "coders");
     assert(jobs.ids.length === SHOWN && jobs.older === `and ${OLDER} older`, `the coders tab is not capped: ${JSON.stringify(jobs)}`);
     assert(jobs.olderSpan < 0.5, `the older line spans ${jobs.olderSpan} of the list, not its words`);
@@ -166,6 +167,7 @@ async function olderChecks({ page, run, mobilePage, helpers }) {
     await openAssistant(mp, helper);
     await mp.tap("[data-assistant-watching-button]");
     await mp.waitForSelector("#assistant-aside.show", { timeout: 8000 });
+    await mp.tap("[data-assistant-coders-tab]");
     await sleep(400);
     const jobs = await readTab(mp, "coders");
     assert(jobs.ids.length === SHOWN && jobs.older === `and ${OLDER} older`, `the phone's coders tab is not capped: ${JSON.stringify(jobs)}`);

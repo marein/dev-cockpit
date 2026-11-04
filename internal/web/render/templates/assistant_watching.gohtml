@@ -1,47 +1,49 @@
-{{/* The aside is one thing with two halves, and this file holds what says so:
-     the button that opens it and the strip that picks the half. Both halves
-     are the assistant carrying on by itself, without anybody asking again,
-     which is why they stand together and why the aside is called Watching: a
-     steered coder is watched while it works, a trigger is waited for until it
-     fires.
+{{/* The aside is one thing with three tabs, and this file holds what says so:
+     the button that opens it and the strip that picks the tab. The coders and
+     the triggers are the assistant carrying on by itself, without anybody
+     asking again, which is why the aside is called Watching: a steered coder
+     is watched while it works, a trigger is waited for until it fires. The
+     projects are where those coders work, so they stand first.
 
-     They are two tabs and not two sections under each other, because under
-     each other the second one is below the fold on every screen small enough
-     to matter, and a half nobody scrolls to is a half nobody uses. Side by
-     side both are one click away and each starts at the top.
+     They are tabs and not sections under each other, because under each other
+     the second one is below the fold on every screen small enough to matter,
+     and a section nobody scrolls to is a section nobody uses. Side by side
+     each is one click away and each starts at the top.
 
-     A count is the one number that still moves: open jobs on the first tab,
-     triggers that still fire on the second, the two together on the button,
-     because a phone sees nothing of the aside but that button. All three are
-     the one badge the cockpit paints a count with, `.dc-steer-badge`, out of
-     the flow, so a number that comes and goes moves nothing and the row stands
-     still while jobs open and close. Only where it hangs differs: the corner
-     of the button's glyph, and on a tab the end of the label, which is the
-     anchor because it is the one thing that ends where the word ends. There it
-     stands raised, its bottom edge on the word's middle line, so it covers the
-     upper half of the ink the way a corner badge covers the top of its glyph,
-     and reads as a note at the word instead of a second word beside it. Raised
-     it still ends inside the tab's own padding, so it leaves the row's height
-     and the scroller's edge alone. The tab itself is none: it is half the
+     A count is the one number that still moves: projects that need the user on
+     the first tab, open jobs on the second, triggers that still fire on the
+     third, and open jobs and triggers together on the button, because a phone
+     sees nothing of the aside but that button. All of them are the one badge
+     the cockpit paints a count with, `.dc-steer-badge`, out of the flow, so a
+     number that comes and goes moves nothing and the row stands still while
+     jobs open and close. Only where it hangs differs: the corner of the
+     button's glyph, and on a tab the end of the label, which is the anchor
+     because it is the one thing that ends where the word ends. There it stands
+     raised, its bottom edge on the word's middle line, so it covers the upper
+     half of the ink the way a corner badge covers the top of its glyph, and
+     reads as a note at the word instead of a second word beside it. Raised it
+     still ends inside the tab's own padding, so it leaves the row's height and
+     the scroller's edge alone. The tab itself is none: it is a third of the
      aside wide with its label centered, so every corner of it stands a
-     different distance from each of the two words and the first one lands on
-     the seam between the halves. A count still hides at zero, which now spares
-     an empty circle and moves nothing either way.
+     different distance from each word and would land on a seam between the
+     tabs. A count still hides at zero, which spares an empty circle and moves
+     nothing either way.
 
      Nothing else stands in this row. What makes a trigger belongs to the
      triggers, so it stands at the head of that tab and is gone with it, which
-     is what a control beside two tabs could never say.
+     is what a control beside the tabs could never say.
 
-     The two halves are Bootstrap's own `nav-justified`, `flex-basis: 0` plus
+     The tabs are Bootstrap's own `nav-justified`, `flex-basis: 0` plus
      `flex-grow: 1` on every link, so they are equal by the row's width and
      never by their text; `nav-fill` divides what the text leaves and would
-     hand the longer name the larger half, which is the crooked strip this
-     replaces. They carry `justify-content-center` because Tabler makes a
+     hand the longest name the largest share, which is the crooked strip this
+     replaces. Equal thirds hold while the longest name fits into one; on a
+     phone that is the word alone, so the icons step aside below `sm`. They carry `justify-content-center` because Tabler makes a
      `.nav-link` a flex box, so `nav-justified`'s own `text-align` reaches
      nothing, and it is the class Tabler itself puts on a filled nav. There is
      no gap between them: `nav-bordered` takes the horizontal padding off a
-     link, so the active half's 2px border runs to the middle of the row and
-     says where the half ends, and a gap would only notch that line. */}}
+     link, so the active tab's 2px border runs to its edges and says where the
+     tab ends, and a gap would only notch that line. */}}
 {{define "assistant_watching_button.gohtml"}}
 <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0 position-relative d-xl-none" data-bs-toggle="offcanvas" data-bs-target="#assistant-aside"
         aria-label="Watching" title="Watching" data-assistant-watching-button>
@@ -52,26 +54,29 @@
 
 {{define "assistant_watching_tabs.gohtml"}}
 <div class="nav nav-bordered nav-justified mb-2" role="tablist">
-  <button type="button" class="nav-link justify-content-center active" id="assistant-coders-tab" data-bs-toggle="tab" data-bs-target="#assistant-coders"
-          role="tab" aria-controls="assistant-coders" aria-selected="true" data-assistant-coders-tab>
-    <i class="ti ti-steering-wheel me-1" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Steered coders<dc-steer-badge class="dc-steer-badge{{if not .JobsOpen}} d-none{{end}}" count="jobs" aria-hidden="true">{{.JobsOpen}}</dc-steer-badge></span>
+  <button type="button" class="nav-link justify-content-center active" id="assistant-projects-tab" data-bs-toggle="tab" data-bs-target="#assistant-projects"
+          role="tab" aria-controls="assistant-projects" aria-selected="true" data-assistant-projects-tab>
+    <i class="ti ti-folders me-1 d-none d-sm-inline-block" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Projects<dc-steer-badge class="dc-steer-badge{{if not .Projects.Needs}} d-none{{end}}" count="projects" aria-hidden="true">{{.Projects.Needs}}</dc-steer-badge></span>
+  </button>
+  <button type="button" class="nav-link justify-content-center" id="assistant-coders-tab" data-bs-toggle="tab" data-bs-target="#assistant-coders"
+          role="tab" aria-controls="assistant-coders" aria-selected="false" data-assistant-coders-tab>
+    <i class="ti ti-steering-wheel me-1 d-none d-sm-inline-block" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Coders<dc-steer-badge class="dc-steer-badge{{if not .JobsOpen}} d-none{{end}}" count="jobs" aria-hidden="true">{{.JobsOpen}}</dc-steer-badge></span>
   </button>
   <button type="button" class="nav-link justify-content-center" id="assistant-triggers-tab" data-bs-toggle="tab" data-bs-target="#assistant-triggers"
           role="tab" aria-controls="assistant-triggers" aria-selected="false" data-assistant-triggers-tab>
-    <i class="ti ti-bolt me-1" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Triggers<dc-steer-badge class="dc-steer-badge{{if not .Triggers.Open}} d-none{{end}}" count="triggers" aria-hidden="true">{{.Triggers.Open}}</dc-steer-badge></span>
+    <i class="ti ti-bolt me-1 d-none d-sm-inline-block" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Triggers<dc-steer-badge class="dc-steer-badge{{if not .Triggers.Open}} d-none{{end}}" count="triggers" aria-hidden="true">{{.Triggers.Open}}</dc-steer-badge></span>
   </button>
 </div>
 {{end}}
 
 {{/* The aside of an assistant's page, the owner's and a guest's of a link.
-     A guest reads both halves and makes nothing in them. */}}
+     A guest reads every tab and makes nothing in them. */}}
 {{define "assistant_aside.gohtml"}}
-{{/* The aside holds what the assistant carries on by itself: the coders
-     it steers and the triggers it waits for. Two tabs of equal
-     standing, built alike, because they are one thing to the reader,
-     work that goes on without being asked again. Beside the conversation
-     from xl up, below xl the sheet the head's eye opens. The memory sheet
-     is the layout's, opened from the list column's head. */}}
+{{/* The aside holds the projects the assistant works in and what it
+     carries on by itself: the coders it steers and the triggers it waits
+     for. Tabs of equal standing, built alike. Beside the conversation from
+     xl up, below xl the sheet the head's eye opens. The memory sheet is the
+     layout's, opened from the list column's head. */}}
 <aside class="offcanvas-xl offcanvas-end dc-assistant-aside" tabindex="-1" id="assistant-aside" aria-label="Watching" data-assistant-aside>
   {{/* The same head the list column and the thread wear, so all three end
        on one line; see the memory sheet in ctx_fragments.gohtml. It is
@@ -84,13 +89,20 @@
     <h2 class="dc-ctx-title">Watching</h2>
     <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#assistant-aside" aria-label="Close"></button>
   </div>
-  {{/* Two tabs, one list each, and the strip stands outside the body a
-       list swaps, so a refresh leaves the chosen half and every unfolded
-       row exactly as they were. */}}
+  {{/* One list per tab, and the strip stands outside the body a list
+       swaps, so a refresh leaves the chosen tab and every unfolded row
+       exactly as they were. */}}
   <div class="offcanvas-body dc-assistant-aside-body">
     {{template "assistant_watching_tabs.gohtml" .}}
     <div class="tab-content">
-      <dc-assistant-list class="tab-pane active" id="assistant-coders" role="tabpanel" aria-labelledby="assistant-coders-tab" list-url="{{.JobsListURL}}" data-assistant-jobs-list>
+      {{/* A card opens in place of the cards, in the view under them, so
+           the cards keep their place while it stands and Back finds them
+           as they were. */}}
+      <dc-assistant-list class="tab-pane active dc-assistant-projects" id="assistant-projects" role="tabpanel" aria-labelledby="assistant-projects-tab" list-url="{{.ProjectsListURL}}" watch-url="{{.ProjectsWatchURL}}" view-url="{{.ProjectViewURL}}" diff-url="{{.ProjectDiffURL}}" data-assistant-projects-list>
+        {{template "assistant_projects_list.gohtml" .Projects}}
+        <div hidden data-assistant-project-view></div>
+      </dc-assistant-list>
+      <dc-assistant-list class="tab-pane" id="assistant-coders" role="tabpanel" aria-labelledby="assistant-coders-tab" list-url="{{.JobsListURL}}" follow="terminals" data-assistant-jobs-list>
         {{template "assistant_jobs_list.gohtml" .}}
       </dc-assistant-list>
       <dc-assistant-list class="tab-pane" id="assistant-triggers" role="tabpanel" aria-labelledby="assistant-triggers-tab" list-url="{{.TriggersListURL}}" data-assistant-triggers-list>
@@ -115,5 +127,6 @@
       </dc-assistant-list>
     </div>
   </div>
+  <div class="dc-ctx-resize d-none d-xl-block" data-ctx-resize="aside" aria-hidden="true"></div>
 </aside>
 {{end}}

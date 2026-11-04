@@ -503,6 +503,11 @@ func NewForgeThreadsOffer(b forge.Binding, p forge.Polled, reply, resolve bool) 
 	return &ForgeThreadsOffer{Forge: k.Label, Noun: k.ChangeNoun, Ref: k.ChangeRef(p.Status.Change.Number), Reply: reply, Resolve: resolve}
 }
 
+// Hint says where a reply to a review thread is posted and who reads it.
+func (o ForgeThreadsOffer) Hint() string {
+	return fmt.Sprintf("It is posted on %s %s on %s, for everybody who can read it there.", o.Noun, o.Ref, o.Forge)
+}
+
 // ForgeChangeOffer is the change request the forge sheet offers to open for a
 // pushed branch without an open one: its label in the forge's words, the
 // line under it, and the form it opens.

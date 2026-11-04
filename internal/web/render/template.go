@@ -37,6 +37,7 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plu
 			return rename(coder)
 		},
 		"join":           strings.Join,
+		"visible":        VisibleLine,
 		"worktreeChoice": WorktreeChoice,
 		"projectName": func(path string) string {
 			p := strings.TrimSpace(path)

@@ -140,10 +140,12 @@ func (t *watchedTerminal) Resnapshot(string) (terminal.Attachment, bool) { retur
 // shown answers, the ones the link shows. A link with an assistant opens
 // coders of any project, so it hears every terminals signal, one named with a
 // project off the link bare, without the name, and the assistant signal its
-// lists of jobs and triggers pull on, which is bare already. Everything else,
-// the notifications, the other projects, the drafts, the questions git asks
-// and the costs, stays with the owner, and so does any type added later.
-func guestEvent(projects []string, assistants bool, shown func() []string, ev eventbus.Event) (eventbus.Event, bool) {
+// lists of jobs and triggers pull on, which is bare already, and the git,
+// forge and linecomments signals of a project a job of one of them names,
+// worked answers that, which its projects tab pulls on. Everything else, the
+// notifications, the other projects, the drafts, the questions git asks and
+// the costs, stays with the owner, and so does any type added later.
+func guestEvent(projects []string, assistants bool, worked func(string) bool, shown func() []string, ev eventbus.Event) (eventbus.Event, bool) {
 	switch ev.Type {
 	case "docker", "ping":
 		return ev, true
@@ -163,7 +165,7 @@ func guestEvent(projects []string, assistants bool, shown func() []string, ev ev
 		if assistants {
 			return eventbus.Event{Type: "assistant", Data: map[string]string{}}, true
 		}
-	case "terminals", "git", "files", "linecomments", "lsp":
+	case "terminals", "git", "files", "linecomments", "lsp", "forge":
 		named := ""
 		switch data := ev.Data.(type) {
 		case map[string]string:
@@ -171,11 +173,22 @@ func guestEvent(projects []string, assistants bool, shown func() []string, ev ev
 		case map[string]any:
 			named, _ = data["project"].(string)
 		}
+		if ev.Type == "forge" {
+			if assistants && (named == "" || worked(named)) {
+				return eventbus.Event{Type: "forge", Data: map[string]string{"project": named}}, true
+			}
+			return eventbus.Event{}, false
+		}
 		if named == "" || slices.Contains(projects, named) {
 			return ev, true
 		}
-		if ev.Type == "terminals" && assistants {
+		switch {
+		case ev.Type == "terminals" && assistants:
 			return eventbus.Event{Type: "terminals"}, true
+		case ev.Type == "git" && assistants && worked(named):
+			return eventbus.Event{Type: "git", Data: map[string]any{"project": named}}, true
+		case ev.Type == "linecomments" && assistants && worked(named):
+			return eventbus.Event{Type: "linecomments", Data: map[string]string{"project": named}}, true
 		}
 	}
 	return eventbus.Event{}, false
@@ -242,6 +255,7 @@ func (s *Server) handleShareEvents(c *gin.Context) {
 	busEvents, cancelBus := s.bus.Subscribe()
 	defer cancelBus()
 	shown := func() []string { return s.linkShown(on) }
+	worked := func(name string) bool { return s.assistantsWorkIn(on.assistants, name) }
 	if err := writeEnvelope(w, eventbus.Event{Type: "projects"}); err != nil {
 		return
 	}
@@ -252,10 +266,11 @@ func (s *Server) handleShareEvents(c *gin.Context) {
 		{Type: "git", Data: map[string]any{"project": "", "base": true}},
 		{Type: "files", Data: map[string]any{"project": ""}},
 		{Type: "lsp", Data: map[string]string{"project": ""}},
+		{Type: "forge", Data: map[string]string{"project": ""}},
 		{Type: "assistant", Data: map[string]string{}},
 		ActivityEvent(s.activity.Working()),
 	} {
-		ev, ok := guestEvent(on.projects, len(on.assistants) > 0, shown, ev)
+		ev, ok := guestEvent(on.projects, len(on.assistants) > 0, worked, shown, ev)
 		if !ok {
 			continue
 		}
@@ -293,7 +308,7 @@ func (s *Server) handleShareEvents(c *gin.Context) {
 				}
 			}
 		case ev := <-busEvents:
-			ev, ok := guestEvent(on.projects, len(on.assistants) > 0, shown, ev)
+			ev, ok := guestEvent(on.projects, len(on.assistants) > 0, worked, shown, ev)
 			if !ok {
 				continue
 			}

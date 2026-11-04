@@ -101,10 +101,28 @@ func docsAssistantsTopic() DocsTopic {
 				Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, and steers it from the start. It also resumes, stops and deletes coders, and creates and deletes projects. A job is one coder, one task and one criterion that decides the task is done, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check; only done and blocked reach you, at ten checks and eight hours per job. Exactly one assistant steers a coder. A check the coder refuses to start, not logged in or an unknown model, closes the job as blocked and says why; any other failed check gets one more try.`,
 			},
 			{
-				Title:    "Watching: the coders and the triggers",
+				Title:    "Watching: projects, coders and triggers",
 				Tag:      "Aside",
 				TagClass: "bg-blue-lt",
-				Desc:     `What an assistant carries on by itself stands beside its thread on a wide window, below that behind the eye <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i>, in two tabs: the coders it steers and the triggers it waits for, the badge counting both. A row says who it is, and its icon says where it stands: purple while it is alive, purple with a dot running along its edge while the assistant works on it, red where it ended without arriving, grey where it is over. Its actions stand under it open or shut, a row whose coder is stopped resumes it instead of opening it, a steered coder's and a trigger's alike, and its fold holds the text: what the coder was sent, what it is measured against, the last report and until when it runs. Of the rows that are over, a tab shows the newest five, a tap on <em>and N older</em> under them shows the rest until the page is opened again.`,
+				Desc:     `Beside the thread on a wide window, below that behind the eye <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i>, stand three tabs: <em>Projects</em> its jobs work in, <em>Coders</em> it steers and <em>Triggers</em> it waits for. Beside the thread its left edge drags its width, a double click resets it, and the width is kept on this device. The <em>Projects</em> badge counts the projects that need you, the other two what is open, the eye's badge open jobs and triggers together. A coder's icon is the one its terminal tab wears: purple while the job is open, red where it closed blocked or expired, else green while the coder runs and grey once it stopped, with a dot running along its edge while the coder or a check works and the blue dot on news. A trigger's icon is purple while it stands, with the dot while it reacts, red where it ended without arriving, grey where it is over. Its fold holds what the coder was sent, what it is measured against, the last report and until when it runs, and a stopped coder's row resumes it instead of opening it. Of the rows that are over a tab shows the newest five, <em>and N older</em> the rest.`,
+			},
+			{
+				Title:    "Projects: where its jobs work",
+				Tag:      "Aside",
+				TagClass: "bg-blue-lt",
+				Desc:     `<em>Projects</em> opens first, with a card per project a job of the assistant names, open or closed. A card stands first with a red edge, <em>Needs you</em> and the reason when the pipeline of its branch failed or the assistant's newest job there is blocked or expired, then come the cards with an open job. A card shows the branch with the commits ahead and behind, what <em>Changes</em> counts and the uncommitted files, the forge's change request and pipeline with a retry where the forge allows one, the open review threads and the assistant's coders there; a stopped coder's row resumes it. Jobs, the forge and line comments update the cards and an open project at once, git at the interval of <em>Look for changes every</em> in the editor's Git settings.`,
+			},
+			{
+				Title:    "A project's reviews",
+				Tag:      "Aside",
+				TagClass: "bg-blue-lt",
+				Desc:     `A card's review line opens the project on <em>Reviews</em>, its changes line on <em>Changes</em>, where both stand a switch picks between them, and <em>Projects</em> <i class="ti ti-chevron-left align-text-bottom" aria-hidden="true"></i> leads back. <em>Reviews</em> lists the project comments, then the line comment threads, the forge's and the <em>local</em> ones, with their notes. On a thread of the forge <em>Reply</em> and <em>Resolve</em> write on the forge, on a local one <em>Reply</em>, <em>Resolve</em> and <em>Reopen</em> write as the editor's thread does; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <kbd>Cmd</kbd>+<kbd>Enter</kbd> sends a reply. <em>Hand off</em> puts a line naming the thread into the message box and sends nothing, <em>Publish as review</em> posts your unpublished comments, see Forges.`,
+			},
+			{
+				Title:    "A project's changes",
+				Tag:      "Aside",
+				TagClass: "bg-blue-lt",
+				Desc:     `<em>Changes</em> lists the uncommitted files against <code>HEAD</code> on top, then the pair the editor's compare starts on: its counts since the split, its files with the largest change first and its commits. A file unfolds its diff, drawn like the editor's inline diff; a binary or deleted file, one that is no regular file and one over the diff limit of Settings &rsaquo; Editor &rsaquo; Git show a line instead. <em>Open in the editor</em> opens the file in the editor's compare, an uncommitted one in the commit view. A project without its own repository has no <em>Changes</em>.`,
 			},
 			{
 				Title:    "A note: the cockpit speaks",

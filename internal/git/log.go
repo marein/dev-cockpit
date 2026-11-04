@@ -29,7 +29,7 @@ func parseCommits(out []byte) []Commit {
 		if len(parts) < 6 {
 			continue
 		}
-		commit := Commit{SHA: parts[0], Short: shortSHA(parts[0]), Author: parts[2], Summary: parts[5], Tags: parseTags(parts[4])}
+		commit := Commit{SHA: parts[0], Short: ShortSHA(parts[0]), Author: parts[2], Summary: parts[5], Tags: parseTags(parts[4])}
 		if parents := strings.Fields(parts[1]); len(parents) > 0 {
 			commit.Parent = parents[0]
 		}

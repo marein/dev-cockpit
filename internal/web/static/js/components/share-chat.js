@@ -99,7 +99,7 @@ class ShareChat extends HTMLElement {
     }
     this.pulling = true;
     try {
-      const response = await fetch(this.getAttribute("page-url"), { cache: "no-store", headers: { Accept: "text/html" }, signal: this.ac?.signal });
+      const response = await fetch(this.getAttribute("page-url"), { cache: "no-store", headers: { Accept: "text/html", "X-DC-Pull": "1" }, signal: this.ac?.signal });
       if (!response.ok) {
         this.end();
         return;

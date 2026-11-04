@@ -7,8 +7,9 @@ const { execFileSync } = require("child_process");
 
 // The fake forge forge.js, forge-status.js, forge-poll.js, forge-editor.js,
 // forge-events.js, forge-news.js, forge-comments.js, forge-retry.js,
-// forge-change.js, forge-publish.js, forge-thread.js and forge-repo-search.js point their host at, so no check ever reaches a real
-// forge. One handler answers over http and, with a certificate openssl makes
+// forge-change.js, forge-publish.js, forge-thread.js, forge-repo-search.js and
+// the assistant-projects runners point their host at, so no check ever reaches a
+// real forge. One handler answers over http and, with a certificate openssl makes
 // for 127.0.0.1 and nobody else trusts, over https:
 // like GitLab 17.5 below /gl and GitLab 14.10 below /old, like a GitHub
 // Enterprise Server 3.14 at the root, where a GitLab finds no API of its own,

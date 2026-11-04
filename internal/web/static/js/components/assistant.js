@@ -197,6 +197,7 @@ class Assistant extends HTMLElement {
       void this.catchUp();
     }, { signal });
     onServerEvent("draft", (event) => this.onDraftEvent(event.detail), { signal });
+    this.addEventListener("dc-assistant-handoff", (event) => this.takeHandoff(event), { signal });
     // A speech engine's very first start builds its container and downloads
     // its model, minutes rather than seconds. The server announces such a
     // start the moment it begins, and the toast is what keeps that one wait
@@ -618,6 +619,21 @@ class Assistant extends HTMLElement {
     this.attached = files;
     this.renderAttachments();
     this.autoGrow();
+  }
+
+  // A hand off from the aside puts its draft under what the box holds and
+  // saves it at once through the draft's own path, so a reload right after
+  // finds it. Nothing is sent.
+  takeHandoff(event) {
+    if (!this.input || this.input.disabled || this.hasAttribute("blocked")) return;
+    event.preventDefault();
+    const held = this.input.value.replace(/\s+$/, "");
+    const text = String(event.detail?.text || "");
+    this.input.value = held ? `${held}\n\n${text}` : text;
+    this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+    this.onInput();
+    void this.saveDraft();
+    if (matchMedia("(pointer: fine)").matches) this.input.focus();
   }
 
   attachmentNames(files) {

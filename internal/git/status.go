@@ -81,7 +81,7 @@ func parseBranch(out []byte) BranchInfo {
 	}
 	if info.Name == "(detached)" {
 		info.Detached = true
-		info.Name = shortSHA(oid)
+		info.Name = ShortSHA(oid)
 	}
 	return info
 }

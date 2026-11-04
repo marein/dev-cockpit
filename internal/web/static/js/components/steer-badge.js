@@ -1,13 +1,15 @@
-// A count on the aside's furniture: how many coders this assistant steers, how
-// many triggers still fire, or both together on the button that opens the
-// aside. Which one it counts is the count attribute, one word or both.
+// A count on the aside's furniture: how many projects need the user, how
+// many coders this assistant steers, how many triggers still fire, or jobs and
+// triggers together on the button that opens the aside. Which one it counts
+// is the count attribute, one word or several.
 //
-// It reads the two lists that stand on the page instead of asking the server
-// for them again: both are dc-assistant-list elements that refresh themselves
+// It reads the lists that stand on the page instead of asking the server for
+// them again: all are dc-assistant-list elements that refresh themselves
 // on the assistant event and write the number onto the body they swap in, so
 // the answer is already here and a fetch of its own would be the same request
 // a third time. The lists say when they swapped, and every badge recounts.
 const COUNTS = {
+  projects: ["[data-assistant-projects-needs]", "assistantProjectsNeeds"],
   jobs: ["[data-assistant-jobs-open]", "assistantJobsOpen"],
   triggers: ["[data-assistant-triggers-open]", "assistantTriggersOpen"],
 };

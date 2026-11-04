@@ -36,7 +36,7 @@
 <span hidden data-forge-publish data-forge-publish-forge="{{.Forge}}" data-forge-publish-noun="{{.Noun}}" data-forge-publish-ref="{{.Ref}}"></span>
 {{- end}}
 {{- with .Threads}}
-<span hidden data-forge-threads data-forge-threads-forge="{{.Forge}}" data-forge-threads-noun="{{.Noun}}" data-forge-threads-ref="{{.Ref}}"{{if .Reply}} data-forge-threads-reply{{end}}{{if .Resolve}} data-forge-threads-resolve{{end}}></span>
+<span hidden data-forge-threads data-forge-threads-hint="{{.Hint}}"{{if .Reply}} data-forge-threads-reply{{end}}{{if .Resolve}} data-forge-threads-resolve{{end}}></span>
 {{- end}}
 {{- with $badge}}{{with .Pipeline}}
 <div data-forge-jobs-level data-forge-level-title="{{$badge.PipelineTitle}}">

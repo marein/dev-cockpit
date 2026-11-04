@@ -4,7 +4,9 @@ import { markWorking } from "@dc/dom";
 // The working ring of every coder and shell icon on the page, out of the
 // activity event. It stands in the rail, the owner's and a guest's, so one
 // element serves every app page, and on connect it applies the last working
-// set the stream brought, which a swapped page may not show yet.
+// set the stream brought, which a swapped page may not show yet. An icon may
+// hold work the event does not carry, a job's check, and keeps its stroke
+// while that stands.
 class Working extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -22,7 +24,7 @@ class Working extends HTMLElement {
 
 function decorate(since) {
   document.querySelectorAll("[data-notify-target]:not(.assistant)").forEach((icon) => {
-    markWorking(icon, since[icon.getAttribute("data-notify-target")] || 0);
+    markWorking(icon, since[icon.getAttribute("data-notify-target")] || Number(icon.dataset.workingHeld) || 0);
   });
   document.querySelectorAll("[data-notify-targets]").forEach((icon) => {
     const marks = (icon.getAttribute("data-notify-targets") || "").split(" ").map((id) => since[id]).filter(Boolean);

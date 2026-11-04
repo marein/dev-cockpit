@@ -90,6 +90,13 @@ type AssistantJobView struct {
 	// Stopped is a coder with no session running that can be resumed. Its
 	// page would only say that it is not running, so the row resumes it.
 	Stopped bool
+	// Coder, Launcher, Running, Working and News are the coder's own icon as
+	// the terminal tabs draw it, News false for a guest.
+	Coder    string
+	Launcher string
+	Running  bool
+	Working  int64
+	News     bool
 }
 
 // AssistantData is the model for one assistant's surface. An empty ID is the
@@ -131,6 +138,16 @@ type AssistantData struct {
 	Triggers        AssistantTriggersData
 	TriggersListURL string
 	TriggersNewURL  string
+	// Projects is the aside's Projects tab, ProjectsListURL what the tab pulls
+	// when something on it moved, ProjectsWatchURL what keeps the git of its
+	// projects polled while it is on screen, ProjectViewURL what a card
+	// opens in the aside, the project added, and ProjectDiffURL what a
+	// changed file there unfolds, the project, list and path added.
+	Projects         AssistantProjectsData
+	ProjectsListURL  string
+	ProjectsWatchURL string
+	ProjectViewURL   string
+	ProjectDiffURL   string
 	// JobsOpen is how many of them still wake the assistant, TriggersOpen how
 	// many triggers still fire, and WatchingOpen the two together. The button
 	// that opens the aside shows the sum, because the aside holds both kinds

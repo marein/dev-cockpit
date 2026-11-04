@@ -16,22 +16,8 @@
   <div class="list-group list-group-flush" data-assistant-jobs>
     {{range .Jobs}}
     <div class="list-group-item px-0" data-assistant-job="{{.Terminal}}">
-      {{/* The icon carries the state alone: purple while the assistant holds
-           this coder, purple with the dot running along its edge while a check
-           is on it, red where the job ended without arriving, grey where it is
-           simply over and there is nothing to do. The word is off the screen
-           and stands as the icon's own label, the way a note's badge in the
-           thread names itself, because a colour and a word beside it are two
-           renderings of one fact that can disagree, and once did: an open
-           trigger's icon read green while the badge next to it read blue. */}}
-      {{$tone := ""}}{{$word := "Stopped"}}
-      {{- if .Open}}{{$tone = "steered"}}{{$word = "Steering"}}
-      {{- else if eq .State "done"}}{{$word = "Done"}}
-      {{- else if eq .State "blocked"}}{{$tone = "text-danger"}}{{$word = "Blocked"}}
-      {{- else if eq .State "expired"}}{{$tone = "text-danger"}}{{$word = "Expired"}}{{end}}
-      {{- if .Checking}}{{$word = "Checking"}}{{end}}
       <div class="d-flex align-items-center gap-2">
-        <span class="dc-term-icon{{if $tone}} {{$tone}}{{end}}{{if .Checking}} working{{end}}" role="img" title="{{$word}}" aria-label="{{$word}}" data-assistant-job-state="{{.State}}"{{with .Checking}} data-assistant-working="check" data-working-since="{{.}}"{{end}}><i class="ti ti-steering-wheel" aria-hidden="true"></i></span>
+        {{template "assistant_job_state.gohtml" .}}
         {{/* The two names are the two things behind the row, so they are the
              way there: the coder's name opens the coder, the project's name
              opens the project. */}}
@@ -73,12 +59,7 @@
       {{if or .URL .EditorURL (not $.Access.Guest)}}
       <div class="d-flex flex-wrap gap-2 mt-2">
         {{if and .Stopped (not $.Access.Guest)}}
-        <form method="post" action="/coders/{{.Terminal}}/resume" class="flex-fill d-flex">
-          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-          <button type="submit" class="btn btn-sm flex-fill" data-assistant-job-resume>
-            <i class="ti ti-terminal-2 me-1"></i>Resume coder
-          </button>
-        </form>
+        {{template "assistant_job_resume.gohtml" (dict "Job" . "CSRF" $.CSRFToken)}}
         {{else if .URL}}
         <a href="{{.URL}}" class="btn btn-sm flex-fill" data-assistant-job-open>
           <i class="ti ti-terminal-2 me-1"></i>Open coder
@@ -128,3 +109,35 @@
   {{end}}
 </div>
 {{end}}
+
+{{/* The resume of a stopped coder, which lands on the coder once it runs:
+     the Coders tab's button, a card's row with Row. */}}
+{{define "assistant_job_resume.gohtml"}}
+<form method="post" action="/coders/{{.Job.Terminal}}/resume" class="d-flex{{if not .Row}} flex-fill{{end}}"{{if .Row}} data-assistant-project-job="{{.Job.Terminal}}"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  {{- if .Row}}
+  <button type="submit" class="list-group-item list-group-item-action border-0 d-flex align-items-center gap-2 px-3 py-1 small" title="Resume coder" data-assistant-job-resume>
+    {{template "assistant_job_state.gohtml" .Job}}<span class="text-truncate min-w-0">{{.Job.Name}}</span>
+  </button>
+  {{- else}}
+  <button type="submit" class="btn btn-sm flex-fill" data-assistant-job-resume>
+    <i class="ti ti-terminal-2 me-1"></i>Resume coder
+  </button>
+  {{- end}}
+</form>
+{{end}}
+
+{{/* The coder's own icon, the one its terminal tab wears, and what the job
+     alone knows on top of it: purple while the job is open, the dot running
+     along its edge while a check is on it too, red where the job closed
+     blocked or expired, also while the coder runs. The word names the job and,
+     where the colour is the session's, the session. A job's row and a project
+     card's row wear the same. */}}
+{{define "assistant_job_state.gohtml"}}
+{{- $tone := ""}}{{$word := "Released"}}
+{{- if .Open}}{{$word = "Steering"}}{{if .Checking}}{{$word = "Checking"}}{{end}}
+{{- else if eq .State "blocked"}}{{$tone = "text-danger"}}{{$word = "Blocked"}}
+{{- else if eq .State "expired"}}{{$tone = "text-danger"}}{{$word = "Expired"}}
+{{- else}}{{if eq .State "done"}}{{$word = "Done"}}{{end}}{{$word = printf "%s, %s" $word (or (and .Running "running") "stopped")}}{{end -}}
+{{template "steered_icon.gohtml" (dict "ID" .Terminal "Coder" .Coder "Launcher" .Launcher "Steered" .Open "Working" .Working "Stopped" (not .Running) "News" .News "Tone" $tone "Held" .Checking "Label" $word "Job" .State)}}
+{{- end}}
