@@ -21,10 +21,10 @@ func TestRenderingAroundAFenceLeavesItOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if before != "<p>See <a href=\"https://example.com\">the docs</a>.</p>\n" {
+	if before != "<p>See <a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">the docs</a>.</p>\n" {
 		t.Fatalf("unexpected before: %q", before)
 	}
-	if after != "<p><strong>after</strong> <a href=\"https://example.com\">again</a></p>\n" {
+	if after != "<p><strong>after</strong> <a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">again</a></p>\n" {
 		t.Fatalf("unexpected after: %q", after)
 	}
 	whole, rest, err := RenderGFMWithMediaAround(src, none, 1)

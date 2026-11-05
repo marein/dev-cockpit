@@ -73,7 +73,7 @@ func mediaMarkdown(resolve MediaResolver) goldmark.Markdown {
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithParserOptions(parser.WithASTTransformers(
 			util.Prioritized(&mediaTransformer{resolve: resolve}, 100),
-		)),
+		), externalLinks()),
 		goldmark.WithRendererOptions(renderer.WithNodeRenderers(
 			util.Prioritized(&mediaRenderer{}, 100),
 		)),

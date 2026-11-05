@@ -15,7 +15,7 @@ import (
 // default), so goldmark strips embedded HTML and drops dangerous link schemes,
 // which keeps the output safe to inject into a page without a separate
 // sanitizer. The chat answers render through it.
-var gfm = goldmark.New(goldmark.WithExtensions(extension.GFM))
+var gfm = goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithParserOptions(externalLinks()))
 
 // RenderGFM converts Markdown to HTML.
 func RenderGFM(src string) (string, error) {

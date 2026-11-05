@@ -654,7 +654,7 @@ func TestAStartNamesTheAddressesOfTheReadingAfterItsEnd(t *testing.T) {
 	}
 	// The route is a real link, the port one the page completes with its host.
 	html := string(f.s.assistantMessageView(f.owner, message, false, true, current.CoderID).HTML)
-	if !strings.Contains(html, `<a href="//shop.example.com">shop.example.com</a>`) || !strings.Contains(html, `<a href="http://:8080">:8080</a>`) {
+	if !strings.Contains(html, `<a href="//shop.example.com" target="_blank" rel="noopener noreferrer">shop.example.com</a>`) || !strings.Contains(html, `<a href="http://:8080" target="_blank" rel="noopener noreferrer">:8080</a>`) {
 		t.Fatalf("the note renders:\n%s", html)
 	}
 	if waited := time.Since(started); waited >= composeLinksWait {
