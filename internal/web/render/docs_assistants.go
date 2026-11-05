@@ -9,7 +9,7 @@ func docsAssistantsTopic() DocsTopic {
 		Items: []DocsItem{
 			{
 				Title: "One place, always open",
-				Desc:  `The sparkle <i class="ti ti-sparkles align-text-bottom" aria-hidden="true"></i> in the rail, the tab bar and the terminal switcher opens the assistant you looked at last, the list beside the thread, its watching aside behind the eye <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i>, the memory behind the brain in the list's head. A message's left stripe says who spoke: blue you, purple an answer, grey what the cockpit brings unasked.`,
+				Desc:  `The sparkle <i class="ti ti-sparkles align-text-bottom" aria-hidden="true"></i> in the rail, the tab bar and the terminal switcher opens the assistant you looked at last, the list beside the thread, its watching aside behind the eye <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i>, the memory behind the brain in the list's head. A message's left stripe says who spoke: blue you, purple an answer, grey what the cockpit brings unasked. A link in a message to a full <code>http</code> or <code>https</code> address opens in a new window, also in the installed app; a link within the cockpit stays in the page.`,
 			},
 			{
 				Title:    "It sees the cockpit",
