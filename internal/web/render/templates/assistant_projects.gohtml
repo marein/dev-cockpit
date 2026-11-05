@@ -184,9 +184,10 @@
 {{end}}
 
 {{/* A card opened inside the aside: its head and change request, then the
-     review threads of its branch and its changes, a switch between the two
-     where both stand. Back stands first, so the way out is where the eye
-     starts. */}}
+     review threads of its branch and, where git reads the project, its
+     changes, with a switch between the two. Back stands first, so the way
+     out is where the eye starts. The owner's field of a new project comment
+     heads the reviews. */}}
 {{define "assistant_project_view.gohtml"}}
 {{- $r := .Reviews}}{{$shows := .Shows}}{{$seg := .Segmented}}
 <div data-assistant-project-view-body="{{.Card.Name}}" data-section="{{$shows}}">
@@ -202,10 +203,12 @@
   </div>
   {{- end}}
   <div class="tab-content">
-  {{- if .HasReviews}}
   <section class="tab-pane{{if eq $shows "reviews"}} active{{end}}" id="assistant-project-reviews"{{if $seg}} role="tabpanel" aria-labelledby="assistant-project-reviews-tab"{{end}} data-assistant-project-reviews="{{$r.Count}}"{{with $r.ThreadURL}} data-thread-url="{{.}}" data-branch="{{$r.Branch}}"{{end}}{{with $r.CommentsURL}} data-comments-url="{{.}}"{{end}}>
     {{- if not $seg}}
     <h3 class="d-flex align-items-center gap-2 small text-uppercase text-secondary fw-medium mb-2">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>{{$r.Count}}</span></h3>
+    {{- end}}
+    {{- if $r.CommentsURL}}
+    <div class="mb-3" data-assistant-project-comment>{{template "project_comment_field.gohtml" (dict "Small" true)}}</div>
     {{- end}}
     {{- with $r.Unpublished}}
     <div class="d-flex align-items-center gap-2 border border-warning rounded px-3 py-2 mb-2 small" data-assistant-project-unpublished-box="{{len .}}">
@@ -220,8 +223,10 @@
     <div class="d-flex flex-column gap-2" data-assistant-project-threads-open>
       {{- range $r.Open}}{{template "assistant_project_thread.gohtml" (dict "Thread" . "Reviews" $r)}}{{end}}
     </div>
-    {{- else}}
+    {{- else if $r.Resolved}}
     <div class="text-secondary small py-1" data-assistant-project-threads-none>No open thread.</div>
+    {{- else}}
+    <div class="text-secondary small py-1" data-assistant-project-threads-none>No comment.</div>
     {{- end}}
     {{- with $r.Resolved}}
     <button type="button" class="btn btn-link btn-sm text-secondary px-0 mt-2" data-bs-toggle="collapse" data-bs-target="#{{$r.ResolvedFold}}" aria-expanded="false" aria-controls="{{$r.ResolvedFold}}" data-assistant-project-resolved-toggle>{{template "assistant_fold_label.gohtml" $r.ResolvedLabel}}</button>
@@ -232,13 +237,26 @@
     </div>
     {{- end}}
   </section>
-  {{- end}}
   {{- with .Changes}}
   <section class="tab-pane{{if eq $shows "changes"}} active{{end}}" id="assistant-project-changes"{{if $seg}} role="tabpanel" aria-labelledby="assistant-project-changes-tab"{{end}} data-assistant-project-changes-section>
     {{- if not $seg}}
     <h3 class="small text-uppercase text-secondary fw-medium mb-2">Changes</h3>
     {{- end}}
     {{template "assistant_project_changes.gohtml" .}}
+    {{- with $.Reviews.CommentsURL}}
+    {{/* The field a press on a line of an inline diff opens, the owner's
+         alone. */}}
+    <template data-assistant-diff-comment="{{.}}">
+      <form class="card card-body p-2" novalidate data-assistant-diff-comment-form>
+        <textarea class="form-control form-control-sm" name="text" rows="3" maxlength="16384" placeholder="What about this line?" aria-label="Line comment" data-assistant-diff-comment-text></textarea>
+        <div class="invalid-feedback">A comment is required.</div>
+        <div class="d-flex align-items-center gap-2 mt-2">
+          <button type="button" class="btn btn-sm ms-auto" data-assistant-diff-comment-cancel>Cancel</button>
+          <button type="submit" class="btn btn-sm btn-primary" data-assistant-diff-comment-add>Add</button>
+        </div>
+      </form>
+    </template>
+    {{- end}}
   </section>
   {{- end}}
   </div>
@@ -403,18 +421,20 @@
      opening the editor there, or that it stands on the project, where it lives, the code line it quotes, its
      notes as every thread shows them, and for the owner what the thread
      takes, with the hand off to the assistant beside: a thread of the forge
-     on the forge, a local one through the editor's line comments. The reply
-     form waits under it. */}}
+     on the forge, a local one through the editor's line comments, which
+     delete it too. The reply form waits under it. A thread on a line names
+     its place and mark, the inline diff of its file shows a copy of it under
+     that line. */}}
 {{define "assistant_project_thread.gohtml"}}
 {{- $t := .Thread}}{{$r := .Reviews}}{{$offer := $r.Threads}}
 {{- $reply := or $t.Writes (and $t.Thread $offer $offer.Reply)}}
 {{- $resolve := and (not .Resolved) (or $t.Writes (and $t.Thread $offer $offer.Resolve (not $t.Unresolvable)))}}
 {{- $reopen := and .Resolved $t.Writes}}
-<div class="card" data-assistant-thread="{{$t.ID}}"{{with $t.Thread}} data-thread="{{.}}"{{end}}{{if $t.Local}} data-assistant-thread-local{{end}}>
-  <div class="d-flex align-items-center gap-2 px-3 py-2 small text-secondary bg-surface-secondary border-bottom rounded-top">
+<div class="card" data-assistant-thread="{{$t.ID}}"{{with $t.Thread}} data-thread="{{.}}"{{end}}{{if $t.Local}} data-assistant-thread-local{{end}}{{if not $t.Project}} data-assistant-thread-path="{{$t.Path}}" data-assistant-thread-line="{{$t.Line}}" data-assistant-thread-mark="{{if .Resolved}}resolved{{else if $t.Outdated}}outdated{{else}}open{{end}}"{{end}}>
+  <div class="d-flex align-items-center gap-2 px-3 py-2 small text-secondary bg-surface-secondary border-bottom rounded-top" data-assistant-thread-head>
     {{- if $t.Project}}
     <i class="ti ti-folder flex-shrink-0" aria-hidden="true"></i>
-    <span class="text-truncate min-w-0" title="On the project, not on a line" data-assistant-thread-project>Project comment</span>
+    <span class="text-truncate min-w-0" data-assistant-thread-project>Project comment</span>
     {{- else if $t.FileURL}}
     <i class="ti ti-file flex-shrink-0" aria-hidden="true"></i>
     <a class="text-reset text-truncate min-w-0 font-monospace" href="{{$t.FileURL}}" title="{{$t.Place}}" data-file-link data-assistant-thread-file>{{template "visible_line.gohtml" $t.Path}}:{{$t.Line}}</a>
@@ -429,11 +449,12 @@
     <span class="badge bg-secondary-lt ms-auto flex-shrink-0" title="{{$t.Origin}}" data-assistant-thread-origin="forge"><i class="ti {{$t.ForgeIcon}} me-1" aria-hidden="true"></i>{{$t.ForgeLabel}}</span>
     {{- end}}
     {{- with $t.ForgeURL}}<a class="text-reset flex-shrink-0" href="{{.}}" target="_blank" rel="noopener" title="Open the thread on {{$t.ForgeLabel}}" aria-label="Open the thread on {{$t.ForgeLabel}}" data-assistant-thread-forge><i class="ti ti-external-link" aria-hidden="true"></i></a>{{end}}
+    {{- if $t.Deletes}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon tone-danger flex-shrink-0 my-n1 me-n2" title="Delete comment" aria-label="Delete comment" data-assistant-thread-delete><i class="ti ti-trash" aria-hidden="true"></i></button>{{end}}
   </div>
   {{- with $t.Quote}}
   <div class="px-3 py-1 small font-monospace text-truncate border-bottom" data-assistant-thread-quote>{{template "visible_line.gohtml" .}}</div>
   {{- end}}
-  <div class="px-3 pb-2" data-assistant-thread-notes>{{template "line_comment_notes.gohtml" $t.Notes}}</div>
+  <div class="px-3 pb-2" data-assistant-thread-notes>{{template "line_comment_notes.gohtml" (dict "Notes" $t.Notes "Flush" true)}}</div>
   {{- if or $reply $resolve $reopen $t.Handoff}}
   <div class="d-flex flex-wrap align-items-center gap-2 px-3 pb-2" data-assistant-thread-actions>
     {{- if $reply}}<button type="button" class="btn btn-sm" aria-expanded="false" data-assistant-thread-reply-open><i class="ti ti-message-reply me-1" aria-hidden="true"></i>Reply</button>{{end}}

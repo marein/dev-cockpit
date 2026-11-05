@@ -10,18 +10,25 @@ const { startFakeForge, addHost, gitlabNote, gitlabDiscussion } = require("./for
 // assistant (GET /assistants/projects/view), chromium, against the fake
 // GitLab and then the fake GitHub: the card's review line counts them with
 // the threads on lines, the view lists them first, titled Project comment
-// without a file, a quote or outdated, the local ones marked local and the
-// forge's general threads marked with its name, each with its notes from
-// line_comment_notes.gohtml. A general thread of GitLab takes Reply with its
-// resolve and Resolve through the forge thread route, an individual note
+// without a tooltip, a file, a quote or outdated, the local ones marked local
+// and the forge's general threads marked with its name, each with its notes
+// from line_comment_notes.gohtml. A general thread of GitLab takes Reply with
+// its resolve and Resolve through the forge thread route, an individual note
 // GitLab does not resolve takes Reply alone, a comment of GitHub's
 // conversation, which is no thread, takes neither. A local project comment
 // resolves, reopens and takes replies through the editor's line comment
 // routes, Publish asks in the words of a general comment and posts it as one.
-// Hand off names a project comment by the forge's thread id or the comment's
-// id, the project and the branch, no place. On a phone the sheet holds them
-// within its width. A guest of a link to the assistant reads them without a
-// control.
+// The field on top of Reviews, with Add alone under it on its right edge,
+// makes a local project comment through the editor's route with Add,
+// Ctrl+Enter and Cmd+Enter, an empty one marked invalid, the comment showing
+// live and the words being typed kept with the focus over a pull, on a phone
+// with a tap too. The field grows with its text up to 35% of the window, then
+// scrolls, a refusal stands at it with the server's sentence and the words
+// kept, no toast, and a new comment lands in view, marked briefly, on the
+// desktop and on a phone in the dark scheme. Hand off names a project comment
+// by the forge's thread id or the comment's id, the project and the branch,
+// no place. On a phone the sheet holds them within its width. A guest of a
+// link to the assistant reads them without a control and without the field.
 //
 // Instance like assistant-projects-reviews.js's. SHOTS_DIR with a mount takes
 // a desktop and a phone screenshot. About a minute.
@@ -72,18 +79,26 @@ const view = (p) => p.evaluate((pane) => {
   const shown = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
   const text = (el) => (shown(el) ? el.textContent.replace(/\s+/g, " ").trim() : "");
   const root = document.querySelector(`${pane} [data-assistant-project-view-body]`);
+  const field = root?.querySelector("[data-assistant-project-comment]");
+  const input = field?.querySelector("[data-project-comment-text]");
+  const list = root?.querySelector("[data-assistant-project-threads-open]");
   const thread = (el) => ({
     id: el.dataset.thread || "",
     cid: el.dataset.assistantThread || "",
     local: el.hasAttribute("data-assistant-thread-local"),
     head: text(el.querySelector("[data-assistant-thread-project]")),
+    headTitle: el.querySelector("[data-assistant-thread-project]")?.getAttribute("title") || "",
     origin: text(el.querySelector("[data-assistant-thread-origin]")),
     file: !!el.querySelector("[data-assistant-thread-file], [data-assistant-thread-quote], [data-assistant-thread-outdated]"),
     shown: shown(el),
     notes: [...el.querySelectorAll("[data-comment-note]")].filter(shown).map((n) => `${text(n.querySelector("[data-comment-note-author]"))}: ${text(n.querySelector("[data-comment-note-text]"))}`),
     when: text(el.querySelector("[data-comment-note] dc-time")),
-    actions: [...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map(text),
+    actions: [...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => text(b) || b.getAttribute("aria-label")),
+    bin: (() => { const b = el.querySelector("[data-assistant-thread-head] [data-assistant-thread-delete]"); const o = el.querySelector("[data-assistant-thread-head] [data-assistant-thread-origin]"); return shown(b) && !!o && b.getBoundingClientRect().left >= o.getBoundingClientRect().right; })(),
+    oneLine: new Set([...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => Math.round(b.getBoundingClientRect().top))).size <= 1,
     right: el.getBoundingClientRect().right,
+    flash: el.classList.contains("dc-flash"),
+    inView: (() => { const s = el.closest(".dc-assistant-aside-body")?.getBoundingClientRect(); const b = el.getBoundingClientRect(); return !!s && b.top >= s.top - 1 && b.bottom <= s.bottom + 1; })(),
   });
   return {
     open: shown(root),
@@ -94,9 +109,30 @@ const view = (p) => p.evaluate((pane) => {
     threads: [...(root?.querySelectorAll("[data-assistant-project-threads-open] [data-assistant-thread]") || [])].map(thread),
     resolved: [...(root?.querySelectorAll("[data-assistant-project-threads-resolved] [data-assistant-thread]") || [])].map(thread),
     controls: root ? [...root.querySelectorAll("button, form, textarea, input")].filter((el) => !el.matches("[data-assistant-project-back], [data-assistant-project-switch], [data-assistant-project-resolved-toggle], [data-assistant-changed-toggle], [data-assistant-changed-more], [data-assistant-changes-older]")).length : 0,
+    field: shown(input),
+    fieldValue: input ? input.value : null,
+    fieldInvalid: !!input?.classList.contains("is-invalid") && shown(field.querySelector(".invalid-feedback")),
+    fieldFocused: !!input && document.activeElement === input,
+    fieldFeedback: input?.classList.contains("is-invalid") ? text(field.querySelector(".invalid-feedback")) : "",
+    fieldAbove: shown(input) && shown(list) && field.getBoundingClientRect().bottom <= list.getBoundingClientRect().top,
+    fieldRight: shown(field) ? field.getBoundingClientRect().right : 0,
+    fieldFoot: (() => { const add = field?.querySelector("[data-project-comment-add]"); return shown(add) && shown(input) ? { text: text(add.parentElement), flush: Math.abs(add.getBoundingClientRect().right - input.getBoundingClientRect().right) <= 1 } : null; })(),
     width: window.innerWidth,
   };
 }, PANE);
+const FIELD = `${PANE} [data-assistant-project-comment]`;
+const FIELD_TEXT = `${FIELD} [data-project-comment-text]`;
+const FIELD_ADD = `${FIELD} [data-project-comment-add]`;
+// grown reads a field's box against the cap a growing field stops at.
+const grown = (p, sel) => p.evaluate((sel) => {
+  const el = document.querySelector(sel);
+  const cs = getComputedStyle(el);
+  return { height: Math.round(el.getBoundingClientRect().height), cap: Math.round(window.innerHeight * 0.35), overflow: cs.overflowY, resize: cs.resize, scroll: el.scrollHeight, client: el.clientHeight };
+}, sel);
+const toasted = (p, words) => p.evaluate((w) => [...document.querySelectorAll(".dc-toast")].some((el) => el.textContent.includes(w)), words);
+const rows = (n) => Array.from({ length: n }, (_, i) => `Row ${i + 1}`).join("\n");
+const TOO_LONG = "\u00e4".repeat(9000);
+const deleteComments = (p, ids) => postJSON(p, `/projects/${REPO}/editor/comments/delete`, { ids }, { json: true });
 
 async function until(p, want, what, timeout = 30000) {
   const end = Date.now() + timeout;
@@ -170,14 +206,78 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
         return [...doc.querySelectorAll("[data-forge-host]")].find((r) => r.textContent.includes(mark))?.querySelector("[data-forge-edit]")?.getAttribute("href") || "";
       }, alias);
       assert(hostEdit, "the added host has no Edit on the list");
-      pubId = (await postJSON(page, `/projects/${REPO}/editor/comments`, { project: true, text: "Publish me" }, { json: true })).comment?.id;
       keepId = (await postJSON(page, `/projects/${REPO}/editor/comments`, { project: true, text: "Keep in mind" }, { json: true })).comment?.id;
-      assert(pubId && keepId, "the project comments were not made");
+      assert(keepId, "the project comment was not made");
       const made = await postJSON(page, "/coders/new", { name: `apcm-work-${TAG}`, project: repoDir, coder: "claude", automatic_approval: "on", prompt: "job" });
       coder = made.id;
       assert(coder, `no coder made: ${JSON.stringify(made)}`);
       await postJSON(page, "/assistants/jobs", { form: "steer", assistant: owner, terminal: coder, task: "Review check", done_when: "" });
       await postJSON(page, "/assistants/jobs", { form: "release", terminal: coder });
+    });
+
+    await run("the field on top of Reviews makes a project comment with Add, Ctrl+Enter and Cmd+Enter, live, and keeps its words over a pull", async () => {
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await openPage(page, `${BASE}/assistants/${owner}`);
+      await reviewLine(page, "4 open threads · 1 unpublished comment");
+      let v = await openReviews(page);
+      await page.evaluate(() => { window.__noReload = 1; });
+      assert(v.field && v.fieldAbove && v.fieldValue === "" && !v.fieldInvalid && v.fieldFoot?.text === "Add" && v.fieldFoot.flush, `the field reads ${JSON.stringify(v)}`);
+      await page.click(FIELD_ADD);
+      v = await until(page, (w) => w.fieldInvalid, "an empty Add does not mark the field");
+      assert(v.count === "4", `an empty Add made a comment: ${v.count}`);
+      await page.fill(FIELD_TEXT, "Publish me");
+      v = await until(page, (w) => !w.fieldInvalid, "typing does not clear the mark");
+      await page.press(FIELD_TEXT, "Control+Enter");
+      v = await until(page, (w) => w.count === "5" && w.fieldValue === "" && byNote(w, "Publish me"), "Ctrl+Enter did not make the project comment");
+      const made = byNote(v, "Publish me");
+      pubId = made.cid;
+      assert(made.local && made.head === "Project comment" && !made.headTitle && !made.file && notesOf(made) === JSON.stringify(["You: Publish me"]) && all(v).filter((t) => notesOf(t).includes("Publish me")).length === 1, `the new project comment reads ${JSON.stringify(v.threads)}`);
+      assert(v.unpublished === "2 project comments not published Publish", `the unpublished line reads ${v.unpublished}`);
+      const stored = await page.evaluate(async ({ project, id }) => (await (await fetch(`/projects/${project}/editor/comments`)).json()).comments.find((c) => c.id === id), { project: REPO, id: pubId });
+      assert(stored && stored.project && !stored.path && !stored.line && stored.text === "Publish me", `the editor's comments hold ${JSON.stringify(stored)}`);
+      await page.focus(FIELD_TEXT);
+      await page.keyboard.type("Still typing");
+      const elsewhere = (await postJSON(page, `/projects/${REPO}/editor/comments`, { project: true, text: "From elsewhere" }, { json: true })).comment?.id;
+      v = await until(page, (w) => w.count === "6" && byNote(w, "From elsewhere"), "a comment made elsewhere did not reach the view");
+      assert(v.fieldValue === "Still typing" && v.fieldFocused, `the pull took the field's words or focus: ${JSON.stringify({ value: v.fieldValue, focused: v.fieldFocused })}`);
+      await page.keyboard.type(" on");
+      await page.keyboard.press("Meta+Enter");
+      v = await until(page, (w) => w.count === "7" && w.fieldValue === "" && byNote(w, "Still typing on"), "Cmd+Enter did not make the project comment");
+      await deleteComments(page, [elsewhere, byNote(v, "Still typing on").cid]);
+      await until(page, (w) => w.count === "5" && !byNote(w, "From elsewhere") && !byNote(w, "Still typing on") && w.unpublished === "2 project comments not published Publish", "the extra comments did not leave the view");
+      await page.click(FIELD_ADD);
+      await until(page, (w) => w.fieldInvalid, "an empty Add after a send does not mark the field");
+      assert(await page.evaluate(() => window.__noReload === 1), "the page reloaded");
+    });
+
+    await run("the field grows with its text, a refusal stands at it with its words, a new comment lands in view marked briefly", async () => {
+      await page.setViewportSize({ width: 1360, height: 520 });
+      let v = await until(page, (w) => w.open && w.field && w.count === "5", "the view is not open");
+      const rest = await grown(page, FIELD_TEXT);
+      assert(rest.resize === "none" && rest.overflow === "hidden", `the empty field reads ${JSON.stringify(rest)}`);
+      await page.fill(FIELD_TEXT, rows(6));
+      let g = await grown(page, FIELD_TEXT);
+      assert(g.height > rest.height + 40 && g.height < g.cap && g.overflow === "hidden" && g.scroll <= g.client + 2, `six rows read ${JSON.stringify(g)} from ${JSON.stringify(rest)}`);
+      await page.fill(FIELD_TEXT, rows(60));
+      g = await grown(page, FIELD_TEXT);
+      assert(Math.abs(g.height - g.cap) <= 1 && g.overflow === "auto" && g.scroll > g.client, `sixty rows read ${JSON.stringify(g)}`);
+      await page.fill(FIELD_TEXT, TOO_LONG);
+      await page.click(FIELD_ADD);
+      v = await until(page, (w) => w.fieldFeedback === "That comment is too long.", "the refusal does not stand at the field");
+      assert(v.fieldValue === TOO_LONG && v.count === "5" && !(await toasted(page, "too long")), `the refused field reads ${JSON.stringify({ count: v.count, kept: v.fieldValue === TOO_LONG })} or a toast came`);
+      await page.fill(FIELD_TEXT, "Landed here");
+      v = await until(page, (w) => !w.fieldInvalid, "typing does not clear the refusal");
+      g = await grown(page, FIELD_TEXT);
+      assert(Math.abs(g.height - rest.height) <= 1, `one line reads ${JSON.stringify(g)} against ${JSON.stringify(rest)}`);
+      await page.evaluate(() => { document.querySelector("#assistant-aside .dc-assistant-aside-body").scrollTop = 0; });
+      await page.click(FIELD_ADD);
+      v = await until(page, (w) => byNote(w, "Landed here")?.flash, "the new comment was not marked", 15000);
+      const landed = byNote(v, "Landed here");
+      assert(landed.inView && v.fieldValue === "" && !v.fieldInvalid, `the new comment landed as ${JSON.stringify(landed)} with the field ${JSON.stringify(v.fieldValue)}`);
+      if (SHOTS_DIR) await page.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-comments-landed.png") });
+      await until(page, (w) => byNote(w, "Landed here") && !byNote(w, "Landed here").flash, "the mark did not go", 5000);
+      await deleteComments(page, [landed.cid]);
+      await until(page, (w) => w.count === "5" && !byNote(w, "Landed here"), "the landed comment did not leave the view");
     });
 
     await run("the card counts the project comments, the view lists them first, titled without a place", async () => {
@@ -195,7 +295,7 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       assert(JSON.stringify(g1.actions) === JSON.stringify(["Reply", "Hand off", "Resolve"]), `the general thread offers ${JSON.stringify(g1.actions)}`);
       assert(g2 && g2.origin === "GitLab" && JSON.stringify(g2.actions) === JSON.stringify(["Reply", "Hand off"]), `the note GitLab does not resolve reads ${JSON.stringify(g2)}`);
       assert(pub && pub.local && pub.origin === "local" && notesOf(pub) === JSON.stringify(["You: Publish me"]), `the local project comment reads ${JSON.stringify(pub)}`);
-      assert(keep && JSON.stringify(keep.actions) === JSON.stringify(["Reply", "Hand off", "Resolve"]), `the local project comment offers ${JSON.stringify(keep)}`);
+      assert(keep && JSON.stringify(keep.actions) === JSON.stringify(["Reply", "Hand off", "Resolve"]) && keep.bin, `the local project comment offers ${JSON.stringify(keep)}`);
       assert(v.unpublished === "2 project comments not published Publish", `the unpublished line reads ${v.unpublished}`);
       if (SHOTS_DIR) await page.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-comments-desktop.png") });
     });
@@ -229,7 +329,7 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       await page.click(`${sel} [data-assistant-thread-resolve]`);
       let v = await until(page, (w) => w.count === "3" && w.resolved.some((t) => t.cid === keepId) && !w.threads.some((t) => t.cid === keepId), "the resolved project comment did not fold away");
       await page.click(`${PANE} [data-assistant-project-resolved-toggle]`);
-      v = await until(page, (w) => byCid(w, keepId)?.shown && JSON.stringify(byCid(w, keepId).actions) === JSON.stringify(["Reply", "Hand off", "Reopen"]), "the resolved project comment offers no reopen");
+      v = await until(page, (w) => byCid(w, keepId)?.shown && JSON.stringify(byCid(w, keepId).actions) === JSON.stringify(["Reply", "Hand off", "Reopen"]) && byCid(w, keepId).bin, "the resolved project comment offers no reopen");
       assert(byCid(v, keepId).head === "Project comment" && !byCid(v, keepId).file, `the resolved project comment reads ${JSON.stringify(byCid(v, keepId))}`);
       await page.click(`${sel} [data-assistant-thread-reopen]`);
       await until(page, (w) => w.count === "4" && w.threads.some((t) => t.cid === keepId), "the reopened project comment did not come back");
@@ -285,7 +385,28 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       const v = await until(mp, (w) => w.open && w.name === REPO && w.threads.length === 4, "the phone's sheet did not open the project");
       const project = v.threads.filter((t) => t.head === "Project comment");
       assert(project.length === 3 && project.every((t) => t.shown && t.right <= v.width), `a project comment sticks out of the phone: ${JSON.stringify(project)} at ${v.width}`);
+      assert(v.field && v.fieldRight <= v.width && !v.fieldFocused && v.fieldFoot?.text === "Add" && v.fieldFoot.flush, `the phone's field reads ${JSON.stringify(v)}`);
       if (SHOTS_DIR) await mp.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-comments-phone.png") });
+      await mp.emulateMedia({ colorScheme: "dark" });
+      await mp.waitForFunction(() => document.documentElement.getAttribute("data-bs-theme") === "dark", null, { timeout: 10000 });
+      await mp.tap(FIELD_TEXT);
+      const rest = await grown(mp, FIELD_TEXT);
+      await mp.fill(FIELD_TEXT, rows(40));
+      const g = await grown(mp, FIELD_TEXT);
+      assert(Math.abs(g.height - g.cap) <= 1 && g.overflow === "auto" && g.height > rest.height, `the phone's field reads ${JSON.stringify(g)} from ${JSON.stringify(rest)}`);
+      await mp.fill(FIELD_TEXT, TOO_LONG);
+      await mp.tap(FIELD_ADD);
+      await until(mp, (w) => w.fieldFeedback === "That comment is too long." && w.fieldValue === TOO_LONG && w.fieldRight <= w.width, "the phone's refusal does not stand at the field");
+      await mp.fill(FIELD_TEXT, "From the phone");
+      await mp.tap(FIELD_ADD);
+      const sent = await until(mp, (w) => w.threads.length === 5 && w.fieldValue === "" && byNote(w, "From the phone")?.local && byNote(w, "From the phone").flash, "a tap on Add did not make the project comment marked");
+      assert(byNote(sent, "From the phone").inView, `the phone's comment landed as ${JSON.stringify(byNote(sent, "From the phone"))}`);
+      const mark = await mp.evaluate((sel) => getComputedStyle(document.querySelector(sel)).boxShadow, `${PANE} [data-assistant-thread="${byNote(sent, "From the phone").cid}"]`);
+      assert(/inset/.test(mark), `the dark mark reads ${mark}`);
+      if (SHOTS_DIR) await mp.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-comments-phone-landed.png") });
+      await mp.emulateMedia({ colorScheme: "light" });
+      await deleteComments(mp, [byNote(sent, "From the phone").cid]);
+      await until(mp, (w) => w.threads.length === 4 && !byNote(w, "From the phone"), "the phone's comment did not leave the view");
     });
 
     await run("on GitHub a comment of the conversation stands as a project comment taking no reply and no resolve", async () => {
@@ -321,6 +442,7 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       const v = await openReviews(gp);
       const project = v.threads.filter((t) => t.head === "Project comment");
       assert(v.controls === 0 && project.length >= 2 && project.every((t) => !t.id && !t.file && t.actions.length === 0), `the guest's view offers ${JSON.stringify(v)}`);
+      assert(!(await gp.locator(`${PANE} [data-assistant-project-comment], ${PANE} [data-project-comment-text]`).count()), "the guest's Reviews offer the field of a project comment");
       assert(project.some((t) => t.local && notesOf(t) === JSON.stringify(["Owner: Keep in mind", "Owner: Noted."])) && project.some((t) => t.origin === "GitHub" && t.notes[0]?.startsWith("hubot: Looks good")), `the guest's project comments read ${JSON.stringify(project)}`);
     });
   } finally {

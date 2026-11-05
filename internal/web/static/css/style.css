@@ -184,7 +184,7 @@ dc-theme-cycle { display: contents; }
 .dc-ctx-tools { margin-left: auto; display: flex; gap: 2px; }
 .dc-work-head .btn-icon, .dc-ctx-head .btn-icon { --tblr-btn-icon-size: 1.25rem; width: 1.75rem; min-width: 1.75rem; height: 1.75rem; min-height: 1.75rem; padding: 0; flex: none; }
 .dc-work-head > form { flex: none; display: flex; }
-.dc-work-head .btn-ghost-secondary.tone-danger:hover, .tone-danger.btn-ghost-secondary:hover { color: var(--dc-bad); background: rgba(var(--dc-bad-rgb), 0.12); }
+.dc-work-head .btn-ghost-secondary.tone-danger:hover, .tone-danger.btn-ghost-secondary:hover, .tone-danger.btn-ghost-secondary:focus-visible { color: var(--dc-bad); background: rgba(var(--dc-bad-rgb), 0.12); }
 .dc-work-head .btn-ghost-secondary.tone-warning:hover, .tone-warning.btn-ghost-secondary:hover { color: var(--tblr-orange); background: rgba(var(--tblr-orange-rgb), 0.12); }
 .dc-work-tabs {
   margin: -6px 0; align-self: stretch; gap: 1.25rem; flex-wrap: nowrap; min-width: 0;
@@ -1187,11 +1187,12 @@ body .swal2-styled.swal2-deny {
   overscroll-behavior: contain;
   padding: 1rem;
 }
-/* A box that grows with what is typed carries no handle. Both of these
-   follow their content through growTextarea, and a dragged corner works
-   against that: the composer would tear apart under one, and the trigger's
-   task would pull itself wider than the dialog it stands in. */
-textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
+/* A box that grows with what is typed carries no handle. These follow
+   their content through growTextarea, and a dragged corner works against
+   that: the composer would tear apart under one, and the trigger's task
+   would pull itself wider than the dialog it stands in. */
+textarea[data-assistant-input], textarea[data-trigger-task],
+textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment-text], [data-assistant-project-comment] textarea { resize: none; }
 .dc-assistant-aside, .dc-assistant-memory { --tblr-offcanvas-width: 420px; }
 .dc-assistant-aside .dc-assistant-aside-body { display: flex; flex-direction: column; }
 .dc-assistant-aside .card { box-shadow: none; }
@@ -2060,6 +2061,23 @@ textarea[data-assistant-input], textarea[data-trigger-task] { resize: none; }
 [data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedText {
   background: rgba(var(--tblr-green-rgb), 0.42);
 }
+/* What stands under a line of the aside's inline diff, its threads and the
+   field of a new comment, reads as the page does, not as code. */
+.dc-inline-diff .dc-inline-diff-block {
+  font-family: var(--tblr-body-font-family);
+  font-size: var(--tblr-body-font-size);
+  line-height: var(--tblr-body-line-height);
+  cursor: auto;
+}
+/* The wrapped content is a flex item, the widest text in a block that does
+   not wrap would set its width and scroll the diff sideways. A quote cut in
+   Reviews wraps here. */
+.dc-inline-diff .cm-content {
+  min-width: 0;
+}
+.dc-inline-diff .dc-inline-diff-block [data-assistant-thread-quote] {
+  white-space: normal;
+}
 .editor-placeholder {
   display: flex;
   flex-direction: column;
@@ -2855,18 +2873,18 @@ terminal-input { display: none; }
 @media (prefers-reduced-motion: no-preference) {
   .project-worktrees-toggle .ti-chevron-right { transition: transform 0.15s ease; }
 }
-.project-row-flash {
-  --dc-project-flash: rgba(var(--tblr-yellow-rgb), 0.16);
-  box-shadow: inset 0 0 0 100vmax var(--dc-project-flash);
+.dc-flash {
+  --dc-flash: rgba(var(--tblr-yellow-rgb), 0.16);
+  box-shadow: inset 0 0 0 100vmax var(--dc-flash);
 }
-[data-bs-theme="dark"] .project-row-flash {
-  --dc-project-flash: rgba(var(--tblr-yellow-rgb), 0.2);
+[data-bs-theme="dark"] .dc-flash {
+  --dc-flash: rgba(var(--tblr-yellow-rgb), 0.2);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .project-row-flash { animation: dc-project-row-flash 1.6s ease-out forwards; }
+  .dc-flash { animation: dc-flash 1.6s ease-out forwards; }
 }
-@keyframes dc-project-row-flash {
-  0% { box-shadow: inset 0 0 0 100vmax var(--dc-project-flash); }
+@keyframes dc-flash {
+  0% { box-shadow: inset 0 0 0 100vmax var(--dc-flash); }
   100% { box-shadow: inset 0 0 0 100vmax rgba(var(--tblr-yellow-rgb), 0); }
 }
 .project-chips {

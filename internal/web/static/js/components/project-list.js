@@ -2,7 +2,7 @@ import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import * as projectActions from "@dc/project-actions";
 import { confirm } from "@dc/dialog";
-import { syncAnimations } from "@dc/dom";
+import { flash, syncAnimations } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
@@ -17,7 +17,6 @@ const FILTER_KEY = "dc-project-filter";
 const TAGS_KEY = "dc-project-tag-filter";
 const GROUPS_KEY = "dc-project-worktrees-open";
 const CHIP_LIMIT = 8;
-const FLASH_MS = 1600;
 // tagLineShape is what a row's tag line shows, apart from what the page did to
 // it since, the fold and the pressed tags.
 function tagLineShape(line) {
@@ -139,7 +138,6 @@ class ProjectList extends HTMLElement {
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
-    clearTimeout(this.flashTimer);
   }
 
   setupReveal() {
@@ -238,11 +236,7 @@ class ProjectList extends HTMLElement {
 
   reveal(row) {
     row.scrollIntoView({ block: "center" });
-    clearTimeout(this.flashTimer);
-    this.querySelectorAll(".project-row-flash").forEach((node) => node.classList.remove("project-row-flash"));
-    void row.offsetWidth;
-    row.classList.add("project-row-flash");
-    this.flashTimer = setTimeout(() => row.classList.remove("project-row-flash"), FLASH_MS);
+    flash(row, this.ac?.signal);
   }
 
   // Stop/Delete chip forms and project deletion act in place.

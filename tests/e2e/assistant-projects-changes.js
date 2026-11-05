@@ -41,7 +41,8 @@ const { startFakeForge, addHost, gitlabNote, gitlabDiscussion } = require("./for
 // editor's commit view on the file's diff against HEAD (?view=commit&file=),
 // a deleted one read only as HEAD has it, a staged rename against its old
 // path, and is gone once everything is committed. A project without a forge shows Changes
-// alone, compared on the main branch with the commit before, and a branch
+// beside Reviews, which says No comment. under the field of a new project
+// comment, compared on the main branch with the commit before, and a branch
 // made there without a commit of its own names main as its base. On a
 // phone's sheet the rows of both lists and a diff stand inside the width. A
 // guest of a link reads Changes and its diffs with no control, Open in the
@@ -133,6 +134,8 @@ const view = (p) => p.evaluate((pane) => {
     name: root?.dataset.assistantProjectViewBody || "",
     switch: [...(root?.querySelectorAll("[data-assistant-project-switch]") || [])].filter(shown).map((b) => `${b.dataset.assistantProjectSwitch}${b.classList.contains("active") ? "*" : ""}`).join(","),
     reviews: shown(root?.querySelector("[data-assistant-project-reviews]")),
+    reviewsNone: text(root?.querySelector("[data-assistant-project-threads-none]")),
+    field: shown(root?.querySelector("[data-assistant-project-comment] [data-project-comment-text]")),
     changes: shown(changes),
     counts: [...(changes?.querySelector("[data-assistant-changes-counts]")?.children || [])].filter(shown).map((stat) => [...stat.children].map((part) => part.textContent.trim()).join(" ")).join(", "),
     filesCount: changes?.querySelector("[data-assistant-changes-files]")?.textContent.trim() || "",
@@ -602,12 +605,15 @@ L.runFeature("assistant-projects-changes", async ({ browser, page, run, mobilePa
       await page.click(`${PANE} [data-assistant-project-back]`);
     });
 
-    await run("a project without a forge shows Changes alone, measured against the commit before", async () => {
+    await run("a project without a forge shows Changes beside an empty Reviews, measured against the commit before", async () => {
       await openPage(page, `${BASE}/assistants/${owner}`);
       const v = await openChanges(page, PLAIN);
-      assert(v.switch === "" && !v.reviews, `the plain project offers ${v.switch}, Reviews shown ${v.reviews}`);
+      assert(v.switch === "reviews,changes*" && !v.reviews, `the plain project offers ${v.switch}, Reviews shown ${v.reviews}`);
       assert(v.base === "from main~1 to Working copy" && v.counts === "1 commit, 1 file, +1 added, −0 removed", `the plain project reads ${v.base} ${v.counts}`);
       assert(v.files.length === 1 && v.files[0].path === "a.txt" && v.files[0].dir === "" && !v.more && v.commits.length === 1 && !v.older, `the plain lists read ${JSON.stringify(v)}`);
+      await page.click(`${PANE} [data-assistant-project-switch="reviews"]`);
+      const r = await until(page, (w) => w.reviews && !w.changes && w.switch === "reviews*,changes", "the switch did not show the plain project's Reviews");
+      assert(r.reviewsNone === "No comment." && r.field, `the plain project's Reviews read ${r.reviewsNone}, field shown ${r.field}`);
       await page.click(`${PANE} [data-assistant-project-back]`);
       git(plainDir, "switch", "-q", "-c", "start");
       try {

@@ -1,5 +1,5 @@
 import { labelNodes } from "@dc/contextmenu";
-import { el } from "@dc/dom";
+import { el, escapeHtml } from "@dc/dom";
 import { ensureOk, postForm, postJSON } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
 
@@ -112,18 +112,55 @@ export function authorHead(row, comment) {
 }
 
 // writeLineComment posts one write of a line comment thread to its route of
-// the editor's line comments and answers what came back, null after it
-// toasted the refusal. An answer with gone is a thread another device deleted
-// meanwhile.
-export async function writeLineComment(url, payload, failed) {
+// the editor's line comments and answers what came back, null after it handed
+// the refusal to refused, a toast unless the caller shows it at its field. An
+// answer with gone is a thread another device deleted meanwhile.
+export async function writeLineComment(url, payload, failed, refused = notifyError) {
   try {
     const response = await postJSON(url, payload);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || failed);
     return data;
   } catch (err) {
-    notifyError(err.message || failed);
+    refused(err.message || failed);
     return null;
+  }
+}
+
+// mayDelete is whether the reader may delete a thread, as the server judged
+// it by the rule its delete takes.
+export const mayDelete = (comment) => !!comment.deletes;
+
+const noteConfirm = (comment, note) => `${el("div", {}, ...visibleLine(placeOf(comment))).outerHTML}${note.author ? `<div>By ${escapeHtml(note.author)}</div>` : ""}<div class="text-secondary">${escapeHtml(note.text)}</div>`;
+
+// deleteCommentQuestion is the confirm before a thread is deleted, which
+// takes its replies along.
+export function deleteCommentQuestion(comment) {
+  const replies = repliesOf(comment).length;
+  return {
+    title: "Delete this comment?",
+    html: `${noteConfirm(comment, comment)}${replies ? `<div>It takes ${replies === 1 ? "its reply" : `its ${replyCount(replies)}`} along.</div>` : ""}`,
+    confirmText: "Delete",
+  };
+}
+
+// deleteReplyQuestion is the confirm before one reply of a thread is deleted.
+export const deleteReplyQuestion = (comment, reply) => ({ title: "Delete this reply?", html: noteConfirm(comment, reply), confirmText: "Delete" });
+
+// deleteLineComments posts a delete of line comment threads to the delete
+// route of a project's line comments and answers whether it went, false
+// after it toasted the refusal.
+export async function deleteLineComments(url, body) {
+  try {
+    const response = await postJSON(url, body);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "The comment could not be deleted.");
+    }
+    return true;
+  } catch (err) {
+    notifyError(err.message || "The comment could not be deleted.");
+    return false;
   }
 }
 

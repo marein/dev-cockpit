@@ -358,12 +358,7 @@
   <div data-editor-term-modals-host></div>
   {{if .Access.Can "comments"}}<div hidden>
     <div style="padding: 0.25rem 0.75rem 0.5rem" data-editor-sheet-unfiltered data-editor-project-comment-form>
-      <textarea class="form-control" rows="2" data-editor-project-comment-text placeholder="What about the whole project?" aria-label="Project comment"></textarea>
-      <div class="invalid-feedback">A comment is required.</div>
-      <div class="d-flex align-items-center gap-2 mt-2">
-        <small class="form-hint m-0 me-auto text-truncate">On the project, not on a line.</small>
-        <button type="button" class="btn btn-sm btn-primary" data-editor-project-comment-add>Add</button>
-      </div>
+      {{template "project_comment_field.gohtml" (dict "Small" false)}}
     </div>
   </div>{{end}}
   <div data-editor-comment-modal-host>

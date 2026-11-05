@@ -134,11 +134,12 @@ func TestAProjectViewListsTheReviewThreadsOfItsBranch(t *testing.T) {
 		`data-assistant-project-change="open" data-assistant-project-draft>`,
 		`data-assistant-project-reviews="8" data-thread-url="/projects/app/forge/thread" data-branch="feature" data-comments-url="/projects/app/editor/comments">`,
 		`<div class="card" data-assistant-thread="`,
-		`data-thread="d1">`,
+		`data-thread="d1" data-assistant-thread-path="a.txt" data-assistant-thread-line="1" data-assistant-thread-mark="open">`,
 		`href="/projects/app/editor?file=a.txt&amp;line=1" title="a.txt:1" data-file-link data-assistant-thread-file>a.txt:1</a>`,
 		`title="A review thread on GitLab" data-assistant-thread-origin="forge"><i class="ti ti-brand-gitlab me-1" aria-hidden="true"></i>GitLab</span>`,
-		`<div class="card" data-assistant-thread="` + mine.ID + `" data-assistant-thread-local>`,
+		`<div class="card" data-assistant-thread="` + mine.ID + `" data-assistant-thread-local data-assistant-thread-path="a.txt" data-assistant-thread-line="1" data-assistant-thread-mark="open">`,
 		`data-assistant-thread-origin="local">local</span>`,
+		`<template data-assistant-diff-comment="/projects/app/editor/comments">`,
 		"data-assistant-thread-handoff=\"Line comment " + mine.ID + " in project app on branch feature at a.txt:1.\n\"",
 		`data-assistant-thread-quote>a</div>`,
 		`data-comment-note-author>root</span>`,
@@ -172,17 +173,22 @@ func TestAProjectViewListsTheReviewThreadsOfItsBranch(t *testing.T) {
 	}
 	for id, want := range map[string][]string{
 		mine.ID:     {`data-comment-note-author>You</span>`, `data-comment-note-text>mine</div>`, `data-assistant-thread-reply-open>`, `data-assistant-thread-resolve>`, `<form class="px-3 pb-2" hidden novalidate data-assistant-thread-reply>`, `value="1" data-assistant-thread-reply-resolve><span class="form-check-label">Resolve the thread</span>`},
-		answered.ID: {`data-comment-note-text>yes</div>`, `data-assistant-thread-resolve>`},
+		answered.ID: {`data-comment-note-text>yes</div>`, `data-assistant-thread-resolve>`, `<span class="ms-auto d-flex gap-1 me-n2">`, `title="Delete reply" aria-label="Delete reply" data-comment-note-drop>`},
 		done.ID:     {`data-assistant-thread-reopen>`, `value="0" data-assistant-thread-reply-resolve><span class="form-check-label">Reopen the thread</span>`},
 	} {
 		chunk := local(id)
-		for _, w := range want {
+		for _, w := range append(want, `title="Delete comment" aria-label="Delete comment" data-assistant-thread-delete>`) {
 			if !strings.Contains(chunk, w) {
 				t.Fatalf("the local thread lacks %s:\n%s", w, chunk)
 			}
 		}
 		if strings.Contains(chunk, "form-hint") || strings.Contains(chunk, "data-thread=") || strings.Contains(chunk, "data-assistant-thread-forge") {
 			t.Fatalf("a local thread speaks of the forge:\n%s", chunk)
+		}
+		head, rest, _ := strings.Cut(chunk, "data-assistant-thread-notes")
+		_, bin, _ := strings.Cut(head, `data-assistant-thread-origin="local">local</span>`)
+		if !strings.Contains(bin, "data-assistant-thread-delete>") || strings.Contains(rest, "data-assistant-thread-delete") {
+			t.Fatalf("the bin of a local thread does not stand in its head after the badge:\n%s", chunk)
 		}
 	}
 	card := func(id string) string { return `data-assistant-thread="` + id + `"` }
@@ -228,8 +234,17 @@ func TestAProjectViewListsTheReviewThreadsOfItsBranch(t *testing.T) {
 	if !strings.Contains(d3[:strings.Index(d3, "data-comment-note")], "data-assistant-thread-outdated>outdated</span>") {
 		t.Fatalf("the thread whose line is gone is not outdated:\n%s", html)
 	}
-	if strings.Count(open, "data-assistant-thread-outdated") != 1 || strings.Contains(html, "data-comment-note-edit") || strings.Contains(html, "data-comment-note-drop") {
+	if strings.Count(open, "data-assistant-thread-outdated") != 1 || strings.Contains(html, "data-comment-note-edit") {
 		t.Fatalf("a thread that stands is outdated or a note offers an edit:\n%s", html)
+	}
+	if strings.Count(html, "data-assistant-thread-delete>") != 4 || strings.Count(html, "data-comment-note-drop>") != 1 {
+		t.Fatalf("a thread of the forge or its note offers a delete:\n%s", html)
+	}
+	for at, mark := range map[string]string{card(mine.ID): "open", `data-thread="d2"`: "resolved", `data-thread="d3"`: "outdated", card(done.ID): "resolved"} {
+		rest := html[strings.Index(html, at):]
+		if head := rest[:strings.Index(rest, ">")]; !strings.Contains(head, `data-assistant-thread-mark="`+mark+`"`) {
+			t.Fatalf("the thread %s is not marked %s for the diff:\n%s", at, mark, head)
+		}
 	}
 	if rec := view("elsewhere"); rec.Code != http.StatusNotFound {
 		t.Fatalf("a project no job names answered %d", rec.Code)
@@ -246,8 +261,9 @@ func TestAProjectViewListsTheReviewThreadsOfItsBranch(t *testing.T) {
 // and opens the project on its Changes: the counts, the base it compares
 // with, the working copy's files, the branch's files with the largest change
 // first, each opening the editor's compare on it, and the commits newest
-// first. A project without a forge has no Reviews and no switch until it has
-// a local thread, which its card's review line opens.
+// first. A project without a forge offers Reviews beside Changes with its
+// field of a new project comment and says it has no comment until a local
+// thread comes, which its card's review line opens.
 func TestAProjectViewShowsTheChangesOfItsBranch(t *testing.T) {
 	root := t.TempDir()
 	dir := worktreeSourceRepo(t, root, "app")
@@ -295,7 +311,7 @@ func TestAProjectViewShowsTheChangesOfItsBranch(t *testing.T) {
 	}
 	for _, want := range []string{
 		`data-assistant-project-view-body="app" data-section="changes">`,
-		`<section class="tab-pane active" id="assistant-project-changes" data-assistant-project-changes-section>`,
+		`<section class="tab-pane active" id="assistant-project-changes" role="tabpanel" aria-labelledby="assistant-project-changes-tab" data-assistant-project-changes-section>`,
 		`data-assistant-changes-commits>2</div>`,
 		`data-assistant-changes-files>3</div>`,
 		`data-assistant-changes-added>+7</div>`,
@@ -321,8 +337,15 @@ func TestAProjectViewShowsTheChangesOfItsBranch(t *testing.T) {
 	if !(strings.Index(pair, `data-assistant-changed-file="big.txt"`) < strings.Index(pair, `data-assistant-changed-file="a.txt"`) && strings.Index(pair, `data-assistant-changed-file="a.txt"`) < strings.Index(pair, `data-assistant-changed-file="new.txt"`)) || strings.Index(html, "Grow a") > strings.Index(html, "Add big") {
 		t.Fatalf("the largest file or the newest commit does not come first:\n%s", html)
 	}
-	if strings.Contains(html, "data-assistant-project-switch") || strings.Contains(html, "data-assistant-project-reviews") {
-		t.Fatalf("a project without a forge shows Reviews:\n%s", html)
+	for _, want := range []string{
+		`data-assistant-project-switch="reviews">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>0</span>`,
+		`<section class="tab-pane" id="assistant-project-reviews" role="tabpanel" aria-labelledby="assistant-project-reviews-tab" data-assistant-project-reviews="0" data-comments-url="/projects/app/editor/comments">`,
+		`<div class="mb-3" data-assistant-project-comment>`,
+		`data-assistant-project-threads-none>No comment.</div>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("Reviews of a project without a comment lacks %s:\n%s", want, html)
+		}
 	}
 	here, _, err := s.lineComments.Save("app", linecomment.Comment{Path: "a.txt", Line: 1, LineText: "a", Text: "here"}, linecomment.Writer{})
 	if err != nil {
@@ -336,7 +359,7 @@ func TestAProjectViewShowsTheChangesOfItsBranch(t *testing.T) {
 	for _, want := range []string{
 		`data-assistant-project-switch="reviews"`,
 		`data-assistant-project-reviews="1" data-comments-url="/projects/app/editor/comments">`,
-		`<div class="card" data-assistant-thread="` + here.ID + `" data-assistant-thread-local>`,
+		`<div class="card" data-assistant-thread="` + here.ID + `" data-assistant-thread-local data-assistant-thread-path="a.txt" data-assistant-thread-line="1" data-assistant-thread-mark="open">`,
 		"data-assistant-thread-handoff=\"Line comment " + here.ID + " in project app on branch feature at a.txt:1.\n\"",
 	} {
 		if !strings.Contains(html, want) {
@@ -714,7 +737,7 @@ func TestAGuestReadsAProjectViewReadOnly(t *testing.T) {
 		return rec.Body.String()
 	}
 	shop, blog := read("shop"), read("blog")
-	for _, want := range []string{`href="` + base + `/projects/shop/editor?file=README.md&amp;line=1" title="README.md:1" data-file-link`, `data-comment-note-author>root</span>`, `data-comment-note-text>Why d1?</div>`, `<div class="card" data-assistant-thread="` + mine.ID + `" data-assistant-thread-local>`, `data-comment-note-author>Owner</span>`, `data-comment-note-text>local note</div>`} {
+	for _, want := range []string{`href="` + base + `/projects/shop/editor?file=README.md&amp;line=1" title="README.md:1" data-file-link`, `data-comment-note-author>root</span>`, `data-comment-note-text>Why d1?</div>`, `<div class="card" data-assistant-thread="` + mine.ID + `" data-assistant-thread-local data-assistant-thread-path="README.md" data-assistant-thread-line="1" data-assistant-thread-mark="`, `data-comment-note-author>Owner</span>`, `data-comment-note-text>local note</div>`} {
 		if !strings.Contains(shop, want) {
 			t.Fatalf("the guest's view lacks %s:\n%s", want, shop)
 		}
@@ -722,7 +745,7 @@ func TestAGuestReadsAProjectViewReadOnly(t *testing.T) {
 	if !strings.Contains(blog, `<span class="text-truncate min-w-0 font-monospace" title="notes.md:1" data-assistant-thread-file>notes.md:1</span>`) || !strings.Contains(blog, `data-assistant-thread-origin="local"`) || strings.Contains(blog, "/projects/blog/editor") {
 		t.Fatalf("a project the link does not grant leads somewhere:\n%s", blog)
 	}
-	for _, never := range []string{"data-thread=", "data-assistant-thread-handoff", "data-assistant-thread-reply", "data-assistant-thread-resolve", "data-assistant-thread-reopen", "data-comments-url", "data-comment-note-edit", "data-comment-note-drop", "data-assistant-project-publish", `href="/projects`, "<form", "csrf_token"} {
+	for _, never := range []string{"data-thread=", "data-assistant-thread-handoff", "data-assistant-thread-reply", "data-assistant-thread-resolve", "data-assistant-thread-reopen", "data-comments-url", "data-comment-note-edit", "data-comment-note-drop", "data-assistant-thread-delete", "data-assistant-project-publish", "data-assistant-diff-comment", "data-assistant-project-comment", "data-project-comment", `href="/projects`, "<form", "csrf_token"} {
 		if strings.Contains(shop+blog, never) {
 			t.Fatalf("the guest's view carries %s:\n%s", never, shop+blog)
 		}
@@ -821,8 +844,8 @@ func TestTheThreadNotesNameTheirWritersForEachReader(t *testing.T) {
 			t.Fatalf("%s reads %d %q, want %q:\n%s", c.who, code, shape(html), c.want, html)
 		}
 	}
-	if code, html := notes("", f.owner.ID); !strings.Contains(html, `title="Edit comment" aria-label="Edit comment"`) || !strings.Contains(html, `title="Delete reply" aria-label="Delete reply"`) || !strings.Contains(html, `<dc-time class="text-nowrap" datetime="`) || code != http.StatusOK {
-		t.Fatalf("the owner's notes lack their labels or times:\n%s", html)
+	if code, html := notes("", f.owner.ID); !strings.Contains(html, `title="Edit comment" aria-label="Edit comment"`) || !strings.Contains(html, `title="Delete reply" aria-label="Delete reply"`) || !strings.Contains(html, `<dc-time class="text-nowrap" datetime="`) || strings.Contains(html, "me-n2") || code != http.StatusOK {
+		t.Fatalf("the owner's notes lack their labels or times, or their buttons leave the dialog's inset:\n%s", html)
 	}
 	thread := forgeThreadAt("d1", "one", false, time.Now())
 	f.s.lineComments.SyncForge("shop", f.s.projects.Root+"/shop", []linecomment.ForgeThread{thread}, true)

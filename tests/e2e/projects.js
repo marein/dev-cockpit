@@ -1421,7 +1421,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       const name = `zzdlg-${tag.slice(-6)}`;
       await page.fill('[data-form-modal] input[name="project_name"]', name);
       await page.click('[data-form-modal] button[type="submit"]');
-      await page.waitForFunction((n) => document.getElementById(`project-${n}`)?.classList.contains("project-row-flash"), name, { timeout: 20000, polling: "raf" });
+      await page.waitForFunction((n) => document.getElementById(`project-${n}`)?.classList.contains("dc-flash"), name, { timeout: 20000, polling: "raf" });
       await page.waitForFunction(() => !document.querySelector("[data-form-modal] form"), null, { timeout: 8000 });
       const landed = await page.evaluate((n) => ({
         url: window.location.href,

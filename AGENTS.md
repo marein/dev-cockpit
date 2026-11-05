@@ -296,7 +296,7 @@ templates plus ES modules.
   (`@dc/rowdrag`), one swipe (`@dc/swipe`), one token match with its row ranking (`@dc/filter`, `rankRows`),
   one project palette (`@dc/project-palette` over the `project_palette_*`
   templates), one follow of a conversation's end with its jump to end button
-  (`@dc/chat-follow` over `chat_end.gohtml`), one inline diff of two texts the way the editor draws it (`@dc/inline-diff`), one tag filter over a project list (`@dc/tags`), one terminal
+  (`@dc/chat-follow` over `chat_end.gohtml`), one inline diff of two texts the way the editor draws it (`@dc/inline-diff`), one gutter mark of the lines that carry line comment threads (`@dc/comment-gutter`), one growth of a text box with its text (`growTextarea` with `keepGrown`, `@dc/dom`), one brief mark where something just landed (`flash`, `@dc/dom`), one tag filter over a project list (`@dc/tags`), one terminal
   theme table (`@dc/terminal`), one popup door
   (`@dc/dialog`, SweetAlert for dialogs only) and toasts via `@dc/toast`
   (Bootstrap toasts). New surfaces reuse these, never copy them. A tag is

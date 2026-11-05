@@ -205,7 +205,7 @@ async function worktreeChecks({ page, run, mobilePage }) {
       page.waitForURL(new RegExp(`/projects#project-${name}$`), { timeout: 30000 }),
       page.click('form[action^="/projects"] button[type="submit"]'),
     ]);
-    await page.waitForFunction((n) => document.getElementById(`project-${n}`)?.classList.contains("project-row-flash"), name, { timeout: 15000, polling: "raf" });
+    await page.waitForFunction((n) => document.getElementById(`project-${n}`)?.classList.contains("dc-flash"), name, { timeout: 15000, polling: "raf" });
     const alerts = await page.evaluate(() => [...document.querySelectorAll(".alert")].filter((a) => a.getClientRects().length > 0).map((a) => a.innerText));
     assert(alerts.length === 0, `a flash came with the create: ${JSON.stringify(alerts)}`);
   };

@@ -90,7 +90,8 @@ func (w Writer) MayReply(r Reply) bool {
 	return w.wrote(r.Link)
 }
 
-// MayAll reports whether w may delete c, which takes every note of it.
+// MayAll reports whether w may change every note of c, which a delete of c
+// takes along.
 func (w Writer) MayAll(c Comment) bool {
 	if !w.May(c) {
 		return false
@@ -101,6 +102,12 @@ func (w Writer) MayAll(c Comment) bool {
 		}
 	}
 	return true
+}
+
+// MayDelete reports whether w may delete the thread c here, which a thread of
+// the forge never is.
+func (w Writer) MayDelete(c Comment) bool {
+	return c.Forge == nil && w.MayAll(c)
 }
 
 func (w Writer) wrote(link string) bool {

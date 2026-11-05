@@ -16,10 +16,11 @@ const { threadChecks } = require("./editor-comments-threads");
 // <state-dir>/line-comments/<project>.json, published as the bare
 // "linecomments" event (project named; the connect snapshot carries it bare),
 // every open editor pulls the list itself. Client: no gutter column of its
-// own; a commented line highlights its whole gutter row (.cm-comment-line via
-// gutterLineClass, so the mark spans the line numbers AND the gutters beside
-// them). The line's menu opens on a plain click anywhere in the gutter, on a
-// right click and on a touch long press (wireRowMenus), and holds in this
+// own; a commented line tints its whole gutter row (.cm-comment-line via
+// gutterLineClass, so the tint spans the line numbers AND the gutters beside
+// them, the fold gutter included). The line's menu opens on a plain click
+// anywhere in the gutter, on a right click and on a touch long press
+// (wireRowMenus), and holds in this
 // order: add the comment or open its thread, Delete comment on a commented
 // line, Copy path:line, and the blame toggle (only in a git repository,
 // blameMenuItem answers null without one, so this runner's scratch project
@@ -206,13 +207,26 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     assert(!(await badgeHidden(page)) && await badge(page) === "1", "the menu badge does not count the note");
   });
 
-  await run("the highlight spans the whole gutter, not just the number cell", async () => {
-    const counts = await page.evaluate(() => ({
-      all: document.querySelectorAll(".cm-gutters .cm-comment-line").length,
-      numbers: document.querySelectorAll(".cm-lineNumbers .cm-comment-line").length,
-    }));
-    assert(counts.numbers === 1, `${counts.numbers} number cells carry the mark`);
-    assert(counts.all > counts.numbers, `the mark stops at the number cell (${counts.all} cells in all gutters)`);
+  await run("the highlight tints every gutter of the line, the fold gutter too", async () => {
+    const row = (n) => page.evaluate((n) => {
+      const number = [...document.querySelectorAll(".cm-lineNumbers .cm-gutterElement")].find((el) => el.textContent.trim() === String(n) && el.getClientRects().length);
+      if (!number) return null;
+      const box = number.getBoundingClientRect();
+      const y = box.top + box.height / 2;
+      return [...number.closest(".cm-gutters").querySelectorAll(".cm-gutter")].map((g) => {
+        const cell = [...g.querySelectorAll(".cm-gutterElement")].find((el) => {
+          const b = el.getBoundingClientRect();
+          return b.height > 0 && b.top <= y && b.bottom >= y;
+        });
+        return { gutter: g.className, paint: getComputedStyle(cell || g).backgroundColor };
+      });
+    }, n);
+    const marked = await row(2);
+    const plain = await row(1);
+    const number = marked?.find((c) => c.gutter.includes("cm-lineNumbers"));
+    assert(number && number.paint !== plain.find((c) => c.gutter.includes("cm-lineNumbers")).paint, `the number of line 2 reads ${JSON.stringify(marked)} against ${JSON.stringify(plain)}`);
+    assert(marked.some((c) => c.gutter.includes("cm-foldGutter")), `no fold gutter stands beside the number: ${JSON.stringify(marked)}`);
+    assert(marked.every((c) => c.paint === number.paint), `a gutter of line 2 stays plain: ${JSON.stringify(marked)}`);
   });
 
   await run("the note is stored per project with the quoted code line", async () => {

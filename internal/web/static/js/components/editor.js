@@ -26,8 +26,9 @@ import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPrevie
 import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
 import { showPreview, wirePreviewLinks } from "@dc/editor-preview";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
-import { PROJECT_PLACE, authorHead, commentRow, findUniqueQuoteLine, noteStart, placeNodes, placeOf, postForgeThread, publishComments, publishQuestion, publishWords, replyCount, resolved, sortComments, visibleLine, writeLineComment } from "@dc/editor-comments";
+import { PROJECT_PLACE, authorHead, commentRow, deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, mayDelete, noteStart, placeNodes, postForgeThread, publishComments, publishQuestion, publishWords, resolved, sortComments, visibleLine, writeLineComment } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
+import { commentGutter } from "@dc/comment-gutter";
 import { changeList } from "@dc/editor-changes";
 import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-marks";
 import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl, setupSettingsUI } from "@dc/editor-settings";
@@ -131,8 +132,8 @@ async function init(root) {
   const commentHint = commentModalHintEl ? commentModalHintEl.textContent : "";
   const commentPlaceholder = commentModalTextEl ? commentModalTextEl.placeholder : "";
   const projectCommentFormEl = root.querySelector("[data-editor-project-comment-form]");
-  const projectCommentTextEl = root.querySelector("[data-editor-project-comment-text]");
-  const projectCommentAddBtn = root.querySelector("[data-editor-project-comment-add]");
+  const projectCommentTextEl = projectCommentFormEl?.querySelector("[data-project-comment-text]");
+  const projectCommentAddBtn = projectCommentFormEl?.querySelector("[data-project-comment-add]");
   const lspIndexEl = root.querySelector("[data-editor-lsp-index]");
   const lspIndexLabel = root.querySelector("[data-editor-lsp-index-label]");
   const lspIndexBar = root.querySelector("[data-editor-lsp-index-bar]");
@@ -5887,8 +5888,6 @@ async function init(root) {
   const commentAt = (path, line) => commentsFor(path).find((c) => c.line === line && !c.forge) || null;
   const threadsAt = (path, line) => commentsFor(path).filter((c) => c.line === line);
   const mayChange = (c) => !c.forge && can("comments") && (!guest || !!c.mine);
-  const mayChangeReply = (r) => can("comments") && (!guest || !!r.mine);
-  const mayDelete = (c) => mayChange(c) && (c.replies || []).every(mayChangeReply);
   const ownComments = () => comments.filter((c) => !c.forge);
   // An author marks a guest's note, only the owner's own ones without a
   // reply publish, a project comment as a general one.
@@ -6064,17 +6063,9 @@ async function init(root) {
   const removeReply = (thread, reply) => writeComment("/comments/reply/delete", { thread: thread.id, id: reply.id }, "The reply could not be deleted.");
 
   async function deleteComments(ids, { all = false } = {}) {
-    try {
-      const res = await postJSON(`${base}/comments/delete`, all ? { all: true } : { ids });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "The comment could not be deleted.");
-      }
-      comments = all ? comments.filter((c) => c.forge) : comments.filter((c) => c.forge || !ids.includes(c.id));
-      paintComments();
-    } catch (err) {
-      notifyError(err.message || "The comment could not be deleted.");
-    }
+    if (!(await deleteLineComments(`${base}/comments/delete`, all ? { all: true } : { ids }))) return;
+    comments = all ? comments.filter((c) => c.forge) : comments.filter((c) => c.forge || !ids.includes(c.id));
+    paintComments();
   }
 
   // submit answers nothing to keep the dialog open, so a refused write keeps
@@ -6475,20 +6466,13 @@ async function init(root) {
     ];
   }
 
-  const noteConfirm = (comment, note) => `${el("div", {}, ...visibleLine(placeOf(comment))).outerHTML}${note.author ? `<div>By ${escapeHtml(note.author)}</div>` : ""}<div class="text-secondary">${escapeHtml(note.text)}</div>`;
-
   async function deleteCommentDialog(comment) {
-    const replies = (comment.replies || []).length;
-    if (!(await confirmDialog({
-      title: "Delete this comment?",
-      html: `${noteConfirm(comment, comment)}${replies ? `<div>It takes ${replies === 1 ? "its reply" : `its ${replyCount(replies)}`} along.</div>` : ""}`,
-      confirmText: "Delete",
-    }))) return;
+    if (!(await confirmDialog(deleteCommentQuestion(comment)))) return;
     await deleteComments([comment.id]);
   }
 
   async function deleteReplyDialog(comment, reply) {
-    if (!(await confirmDialog({ title: "Delete this reply?", html: noteConfirm(comment, reply), confirmText: "Delete" }))) return;
+    if (!(await confirmDialog(deleteReplyQuestion(comment, reply)))) return;
     await removeReply(comment, reply);
   }
 
@@ -11895,70 +11879,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   const commentsConf = new Compartment();
   let commentData = null;
 
-  class CommentLineMarker extends view.GutterMarker {
-    constructor(kind) {
-      super();
-      this.kind = kind;
-      this.elementClass = kind ? `cm-comment-line cm-comment-line-${kind}` : "cm-comment-line";
-    }
-
-    eq(other) {
-      return other.kind === this.kind;
-    }
-  }
-
-  const commentLineMarkers = {
-    open: new CommentLineMarker(""),
-    outdated: new CommentLineMarker("outdated"),
-    resolved: new CommentLineMarker("resolved"),
-  };
-
-  const commentsTheme = EditorView.theme({
-    ".cm-gutters": { cursor: "pointer" },
-    ".cm-gutters .cm-comment-line": {
-      color: "var(--tblr-yellow, #f59f00)",
-      fontWeight: "700",
-      backgroundColor: "rgba(245, 159, 0, 0.18)",
-    },
-    ".cm-gutters .cm-comment-line.cm-comment-line-outdated": {
-      color: "var(--tblr-orange, #f76707)",
-      backgroundColor: "rgba(247, 103, 7, 0.18)",
-      textDecoration: "line-through",
-    },
-    ".cm-gutters .cm-comment-line.cm-comment-line-resolved": {
-      color: "var(--tblr-green, #2fb344)",
-      fontWeight: "400",
-      backgroundColor: "rgba(47, 179, 68, 0.14)",
-    },
-  });
-
-  function commentsExtension(data) {
-    if (!data) return [];
-    if (data.length === 0) return [commentsTheme];
-    // A note of a resolved thread asks for nothing more, so it marks its
-    // line only while no other note there still asks for something.
-    const rank = { resolved: 0, open: 1, outdated: 2 };
-    const build = (doc) => {
-      const byLine = new Map();
-      for (const c of data) {
-        if (c.line < 1 || c.line > doc.lines) continue;
-        const kind = c.resolved ? "resolved" : c.outdated ? "outdated" : "open";
-        const held = byLine.get(c.line);
-        if (!held || rank[kind] > rank[held]) byLine.set(c.line, kind);
-      }
-      const ranges = [];
-      for (const [line, kind] of byLine) {
-        ranges.push(commentLineMarkers[kind].range(doc.line(line).from));
-      }
-      return state.RangeSet.of(ranges, true);
-    };
-    const field = state.StateField.define({
-      create: (st) => build(st.doc),
-      update: (set, tr) => (tr.docChanged ? set.map(tr.changes) : set),
-      provide: (f) => view.gutterLineClass.from(f),
-    });
-    return [commentsTheme, field];
-  }
+  const commentsExtension = commentGutter(state, view);
 
   // ---- change bars -----------------------------------------------------------
 

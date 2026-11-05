@@ -594,7 +594,98 @@ async function runFeature(title, body) {
   process.exit(anyFail ? 1 : 0);
 }
 
+// caretShown reads whether the caret's line of a textarea stands inside the
+// part of its text the box shows. The line is measured on a hidden twin
+// textarea in the box's computed style that holds the text before the caret,
+// so the engine wraps it the way it wraps the box, and the app's own reading
+// of the caret plays no part in it.
+function caretShown(target, selector) {
+  return target.evaluate((sel) => {
+    const box = document.querySelector(sel);
+    if (!box) return { missing: true };
+    const style = getComputedStyle(box);
+    const twin = document.createElement("textarea");
+    for (const name of style) twin.style.setProperty(name, style.getPropertyValue(name));
+    Object.assign(twin.style, { position: "absolute", top: "0", left: "0", visibility: "hidden", height: "0", minHeight: "0", maxHeight: "none", width: `${box.offsetWidth}px` });
+    document.body.append(twin);
+    twin.value = box.value.slice(0, box.selectionDirection === "backward" ? box.selectionStart : box.selectionEnd);
+    const end = twin.scrollHeight;
+    twin.value += "\n";
+    const line = twin.scrollHeight - end;
+    twin.remove();
+    const bottom = end - parseFloat(style.paddingBottom);
+    const top = bottom - line;
+    return {
+      shown: top >= box.scrollTop - 1 && bottom <= box.scrollTop + box.clientHeight + 1,
+      scrolls: style.overflowY === "auto" && box.scrollHeight > box.clientHeight,
+      caret: [Math.round(top), Math.round(bottom)],
+      view: [Math.round(box.scrollTop), Math.round(box.scrollTop + box.clientHeight)],
+    };
+  }, selector);
+}
+
+// caretWalk writes into a growing textarea past its cap the ways a hand does:
+// line by line with newline (Shift+Enter where Enter sends), new lines in the
+// middle, a paste of many lines and Backspace, then lines set by code with an
+// input event, which no engine follows with a reveal of its own. After every
+// step it reads caretShown and returns the steps that hid the caret. A page
+// that may not write the clipboard pastes through the engine's text insertion.
+async function caretWalk(target, selector, newline = "Enter") {
+  const hidden = [];
+  let steps = 0;
+  const check = async (what) => {
+    steps += 1;
+    const got = await caretShown(target, selector);
+    if (!got.shown) hidden.push(`${what}: caret ${got.caret} outside ${got.view}`);
+    return got;
+  };
+  await target.fill(selector, "");
+  await target.click(selector);
+  let lines = 0;
+  for (let past = 0; past < 5 && lines < 80;) {
+    lines += 1;
+    if (lines > 1) {
+      await target.keyboard.press(newline);
+      await check(`${newline} after line ${lines - 1}`);
+    }
+    await target.keyboard.type(`line ${lines}`);
+    if ((await check(`line ${lines}`)).scrolls) past += 1;
+  }
+  for (let i = 0; i < 3; i += 1) await target.keyboard.press("ArrowUp");
+  for (let i = 1; i <= 8; i += 1) {
+    await target.keyboard.press(newline);
+    await check(`${newline} ${i} in the middle`);
+  }
+  await target.keyboard.press("ControlOrMeta+End");
+  const paste = Array.from({ length: 30 }, (_, i) => `pasted ${i + 1}`).join("\n");
+  const before = await target.inputValue(selector);
+  const written = await target.evaluate((text) => navigator.clipboard.writeText(text).then(() => true, () => false), paste);
+  if (written) await target.keyboard.press("ControlOrMeta+V");
+  else await target.keyboard.insertText(paste);
+  const after = await target.inputValue(selector);
+  if (after !== before + paste) throw new Error(`the paste did not land at the end: ${JSON.stringify(after.slice(-40))}`);
+  await check("paste");
+  for (let i = 1; i <= 12; i += 1) {
+    await target.keyboard.press("Backspace");
+    await check(`Backspace ${i}`);
+  }
+  const put = (line, text) => target.evaluate(({ sel, line, text }) => {
+    const box = document.querySelector(sel);
+    const at = line ? box.value.split("\n").slice(0, line).join("\n").length : box.value.length;
+    box.setRangeText(text, at, at, "end");
+    box.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+  }, { sel: selector, line, text });
+  for (let i = 1; i <= 4; i += 1) {
+    await put(0, `\ncoded ${i}`);
+    await check(`line ${i} set by code at the end`);
+  }
+  await put(3, "\ncoded after line 3");
+  await check("a line set by code after line 3");
+  return { steps, lines, pasted: written ? "clipboard" : "insertText", hidden };
+}
+
 module.exports = {
+  caretWalk,
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,

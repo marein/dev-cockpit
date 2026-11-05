@@ -169,7 +169,7 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
         assert(all.length === 4 && !wrong, wrong || `the phone's sheet holds ${all.length} entries`);
         const field = await mp.$eval("[data-editor-sheet-body]", (body) => {
           const box = body.getBoundingClientRect();
-          return [...body.querySelectorAll("[data-editor-project-comment-text], [data-editor-project-comment-add]")].map((el) => {
+          return [...body.querySelectorAll("[data-project-comment-text], [data-project-comment-add]")].map((el) => {
             const r = el.getBoundingClientRect();
             return r.width > 0 && r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
           });

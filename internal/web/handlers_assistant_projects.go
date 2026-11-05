@@ -362,8 +362,9 @@ func (s *Server) assistantProjectView(c *gin.Context, owner string, g *guest) (r
 // comments hold them and the local ones, judged against the disk, and on a
 // forge the comments a publish would post.
 // Only the owner reads the ids of the forge's threads and what a thread
-// takes: a reply, a resolve, a reopen of a local one, a publish and a hand
-// off. The notes offer no edit and no delete, the editor does.
+// takes: a reply, a resolve, a reopen of a local one, a publish, a hand off
+// and the deletes of a thread and a reply the editor offers. The notes offer
+// no edit, the editor does.
 func (s *Server) projectReviews(c *gin.Context, p project.Project, card render.AssistantProjectCard, owner bool) render.AssistantProjectReviews {
 	r := render.AssistantProjectReviews{Project: p.Name}
 	b, polled, bound := s.forgePolledOf(p)
@@ -404,8 +405,10 @@ func (s *Server) projectReviews(c *gin.Context, p project.Project, card render.A
 			t.FileURL = editorFileURL(p.Name, filesystem.FileRef{Path: v.Path, Line: v.Line})
 		}
 		for i := range t.Notes {
-			t.Notes[i].Edit, t.Notes[i].Drop = false, false
+			t.Notes[i].Edit = false
+			t.Notes[i].Drop = t.Notes[i].Drop && owner
 		}
+		t.Deletes = owner && mayDeleteThread(c, v.Comment)
 		switch {
 		case v.Forge != nil:
 			kind := s.forgeKind(v.Forge.Kind)

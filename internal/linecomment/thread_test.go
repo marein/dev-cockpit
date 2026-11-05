@@ -130,7 +130,7 @@ func TestResolveAThread(t *testing.T) {
 }
 
 // A guest deletes a thread only when it wrote every note of it, the owner
-// every thread with its replies.
+// every thread with its replies, nobody one of the forge.
 func TestAThreadGoesWithItsReplies(t *testing.T) {
 	s := New(t.TempDir())
 	anna := Writer{Link: "l1", Name: "Anna"}
@@ -141,7 +141,10 @@ func TestAThreadGoesWithItsReplies(t *testing.T) {
 	if anna.MayAll(answered) || !anna.May(answered) || !anna.MayAll(s.List("p")[0]) || !(Writer{}).MayAll(answered) {
 		t.Fatal("the writer's rights over a thread are off")
 	}
-	if n := s.Remove("p", func(c Comment) bool { return anna.MayAll(c) }); n != 1 {
+	if anna.MayDelete(answered) || !anna.MayDelete(s.List("p")[0]) || !(Writer{}).MayDelete(answered) || (Writer{}).MayDelete(Comment{Forge: &Forge{Kind: "gitlab"}}) {
+		t.Fatal("the writer's deletes are off")
+	}
+	if n := s.Remove("p", func(c Comment) bool { return anna.MayDelete(c) }); n != 1 {
 		t.Fatalf("Anna's delete of all took %d threads", n)
 	}
 	if list := s.List("p"); len(list) != 1 || list[0].ID != answered.ID || len(list[0].Replies) != 1 {

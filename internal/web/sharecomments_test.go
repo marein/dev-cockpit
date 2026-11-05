@@ -333,10 +333,17 @@ func TestAGuestRepliesWhereItsLinkGrantsComment(t *testing.T) {
 	}
 	opened := savedComment(t, f.send(f.anna, shopComments, map[string]any{"path": "a.txt", "line": 2, "text": "anna's thread"}))
 	resolved := savedComment(t, f.send(f.anna, shopComments+"/resolve", map[string]any{"id": opened.ID, "resolved": true}))
-	if !resolved.Resolved {
+	if !resolved.Resolved || !resolved.Deletes {
 		t.Fatalf("Anna's resolve of her thread reads %+v", resolved)
 	}
-	savedComment(t, f.send("", reply, map[string]any{"thread": opened.ID, "text": "the owner joins"}))
+	if joined := savedComment(t, f.send("", reply, map[string]any{"thread": opened.ID, "text": "the owner joins"})); !joined.Deletes {
+		t.Fatalf("the owner may not delete Anna's thread: %+v", joined)
+	}
+	for name, token := range map[string]string{"Anna": f.anna, "Bert": f.bert} {
+		if _, list := f.read(t, token); len(list) != 2 || list[0].Deletes || list[1].Deletes {
+			t.Fatalf("%s may delete a thread with a note of somebody else: %+v", name, list)
+		}
+	}
 	if rec := f.send(f.anna, shopComments+"/delete", map[string]any{"ids": []string{opened.ID}}); !strings.Contains(rec.Body.String(), `"removed":0`) {
 		t.Fatalf("Anna's delete of a thread the owner answered = %s", rec.Body.String())
 	}

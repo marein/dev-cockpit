@@ -46,6 +46,26 @@ export function syncAnimations(root) {
   }
 }
 
+export const FLASH_MS = 1600;
+
+// flash marks a node briefly where something just landed. The class goes off
+// and on with a layout between, so a mark still running starts over. With
+// since a mark that began on a node since replaced goes on where it stands.
+export function flash(node, signal, since = performance.now()) {
+  const done = () => {
+    window.clearTimeout(node.dcFlash);
+    node.classList.remove("dc-flash");
+  };
+  done();
+  const gone = performance.now() - since;
+  if (gone >= FLASH_MS) return;
+  void node.offsetWidth;
+  node.classList.add("dc-flash");
+  for (const animation of node.getAnimations()) if (animation.animationName === "dc-flash") animation.currentTime = gone;
+  node.dcFlash = window.setTimeout(done, FLASH_MS - gone);
+  signal?.addEventListener("abort", done, { once: true });
+}
+
 export function markWorking(icon, since) {
   if (since > 0) icon.dataset.workingSince = since;
   else delete icon.dataset.workingSince;
@@ -76,13 +96,38 @@ export function jumpTextEdge(event, input) {
 const GROW_SHARE = 0.35;
 
 // A box that is not laid out measures a scrollHeight of 0, and growing it then
-// would leave it one line high once it shows.
+// would leave it one line high once it shows. Safari on iOS leaves the caret's
+// new line under the visible part of a box at its cap, so the box with the
+// focus shows it itself.
 export function growTextarea(input, surface) {
   if (!input?.getClientRects().length) return;
   input.style.height = "auto";
   const max = Math.round(surface() * GROW_SHARE);
   input.style.height = `${Math.min(input.scrollHeight, max)}px`;
-  input.style.overflowY = input.scrollHeight > max ? "auto" : "hidden";
+  const scrolls = input.scrollHeight > max;
+  input.style.overflowY = scrolls ? "auto" : "hidden";
+  if (scrolls && input === document.activeElement) showCaret(input);
+}
+
+const WRAP = ["font-family", "font-size", "font-weight", "font-style", "font-stretch", "font-variant", "font-kerning", "font-feature-settings", "line-height", "letter-spacing", "word-spacing", "text-transform", "text-indent", "tab-size", "white-space", "word-break", "overflow-wrap", "direction", "padding-top", "padding-right", "padding-bottom", "padding-left"];
+
+// A textarea tells nothing about where its caret stands, so the caret's line
+// is read from a copy of the text before it, wrapped at the box's width.
+function showCaret(input) {
+  const style = getComputedStyle(input);
+  const copy = document.createElement("div");
+  for (const name of WRAP) copy.style.setProperty(name, style.getPropertyValue(name));
+  Object.assign(copy.style, { position: "absolute", top: "0", left: "0", visibility: "hidden", border: "0", boxSizing: "border-box", width: `${input.clientWidth}px` });
+  copy.textContent = input.value.slice(0, input.selectionDirection === "backward" ? input.selectionStart : input.selectionEnd);
+  const mark = copy.appendChild(document.createElement("span"));
+  mark.style.display = "inline-block";
+  mark.textContent = "\u200b";
+  document.body.append(copy);
+  const top = mark.offsetTop - parseFloat(style.paddingTop);
+  const bottom = mark.offsetTop + mark.offsetHeight + parseFloat(style.paddingBottom);
+  copy.remove();
+  if (bottom > input.scrollTop + input.clientHeight) input.scrollTop = bottom - input.clientHeight;
+  else if (top < input.scrollTop) input.scrollTop = top;
 }
 
 // How a text wraps follows the box's width, which changes after a grow on

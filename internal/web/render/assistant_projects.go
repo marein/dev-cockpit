@@ -294,8 +294,8 @@ func (f AssistantProjectForge) PipelineNote() string {
 }
 
 // AssistantProjectView is one card opened inside the aside: its head, its
-// line comment threads and its changes, each a section of its own where the
-// project has it. Section is the one that shows. Back leads to the cards
+// line comment threads and, where git reads the project, its changes, each a
+// section of its own. Section is the one that shows. Back leads to the cards
 // again.
 type AssistantProjectView struct {
 	Card    AssistantProjectCard
@@ -310,24 +310,19 @@ const (
 	SectionChanges = "changes"
 )
 
-// HasReviews says the Reviews section stands: the project is on a forge, a
-// thread is there, or there is nothing else to show.
-func (v AssistantProjectView) HasReviews() bool {
-	r := v.Reviews
-	return v.Card.Forge != nil || len(r.Open) > 0 || len(r.Resolved) > 0 || v.Changes == nil
-}
-
-// Shows answers the section that shows, the asked one where it stands.
+// Shows answers the section that shows, Changes where it is asked for and
+// stands, else Reviews.
 func (v AssistantProjectView) Shows() string {
-	if v.Changes != nil && (v.Section == SectionChanges || !v.HasReviews()) {
+	if v.Changes != nil && v.Section == SectionChanges {
 		return SectionChanges
 	}
 	return SectionReviews
 }
 
-// Segmented says both sections stand, so a switch picks between them.
+// Segmented says Changes stands beside Reviews, so a switch picks between
+// them.
 func (v AssistantProjectView) Segmented() bool {
-	return v.Changes != nil && v.HasReviews()
+	return v.Changes != nil
 }
 
 // AssistantProjectChanges is the Changes section of a project opened in the
@@ -567,8 +562,8 @@ func (c AssistantCommit) When() string {
 // of them project comments. Branch is that branch, which a reply and a
 // resolve on the forge name. Publish and Threads are what the forge takes
 // there, nil for none or for a guest, who changes nothing. CommentsURL is
-// where the editor's line comments take a local thread's writes, empty for a
-// guest.
+// where the editor's line comments take a local thread's writes and a new
+// project comment, empty for a guest.
 type AssistantProjectReviews struct {
 	Project            string
 	Branch             string
@@ -590,9 +585,10 @@ type AssistantProjectReviews struct {
 // whether the forge resolves it and its id there in Thread, empty for a guest
 // and where the forge keeps no thread to answer. Local marks a thread that
 // stands in the cockpit alone, Writes says the reader answers, resolves and
-// reopens it there. FileURL opens the editor at its line, empty for a
-// project comment and for a guest whose link does not grant the project.
-// Handoff is the draft the hand off puts into the composer.
+// reopens it there, Deletes that the reader deletes it as the editor does.
+// FileURL opens the editor at its line, empty for a project comment and for a
+// guest whose link does not grant the project. Handoff is the draft the hand
+// off puts into the composer.
 type AssistantThread struct {
 	ID           string
 	Thread       string
@@ -608,6 +604,7 @@ type AssistantThread struct {
 	Unresolvable bool
 	Local        bool
 	Writes       bool
+	Deletes      bool
 	Notes        []LineNote
 	Handoff      string
 }

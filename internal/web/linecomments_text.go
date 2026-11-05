@@ -86,11 +86,10 @@ func (s *Server) handleEditorCommentsText(c *gin.Context) {
 	if !ok {
 		return
 	}
-	w := commentWriterOf(c)
 	views := s.reconciledLineComments(p)
 	list := make([]lineCommentView, 0, len(views))
 	for _, v := range views {
-		list = append(list, s.commentView(w, v))
+		list = append(list, s.commentView(c, v))
 	}
 	c.Header("Cache-Control", "no-store")
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(commentsText(p.Name, list)))

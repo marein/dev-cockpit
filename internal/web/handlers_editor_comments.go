@@ -34,7 +34,8 @@ func checkCommentPath(c *gin.Context, root, rel string) bool {
 // thread, whether its quote still matches the file, judged on every read and
 // never stored, so a file that comes back heals its comments by itself, and
 // where a thread of the forge came from. Resolved is the thread's state. Mine
-// marks a note the reading guest wrote under its own link. Nothing of the link a guest wrote a note under
+// marks a note the reading guest wrote under its own link. Deletes marks a
+// thread the reader may delete, the one rule every delete control follows. Nothing of the link a guest wrote a note under
 // shows, another guest has no business with it. Project marks a thread on the
 // whole project, its path empty and its line 0. Was is the id a published
 // comment had before, which a page that held it follows.
@@ -53,6 +54,7 @@ type lineCommentView struct {
 	UpdatedAt time.Time        `json:"updatedAt"`
 	Outdated  bool             `json:"outdated,omitempty"`
 	Mine      bool             `json:"mine,omitempty"`
+	Deletes   bool             `json:"deletes,omitempty"`
 }
 
 // lineReplyView is one reply of a thread the way a read answers it, Mine
@@ -87,8 +89,25 @@ func commentWriterOf(c *gin.Context) linecomment.Writer {
 	return linecomment.Writer{}
 }
 
-// commentView is a judged comment the way w reads it.
-func (s *Server) commentView(w linecomment.Writer, v linecomment.View) lineCommentView {
+// writesComments reports whether a request may write line comments at all,
+// a guest only where its link grants it.
+func writesComments(c *gin.Context) bool {
+	if g, ok := guestOf(c); ok {
+		return g.access.Can(share.Comments)
+	}
+	return true
+}
+
+// mayDeleteThread reports whether a request may delete the thread, the rule
+// the editor offers its delete under and the assistant's project view its
+// bin.
+func mayDeleteThread(c *gin.Context, comment linecomment.Comment) bool {
+	return writesComments(c) && commentWriterOf(c).MayDelete(comment)
+}
+
+// commentView is a judged comment the way the request's writer reads it.
+func (s *Server) commentView(c *gin.Context, v linecomment.View) lineCommentView {
+	w := commentWriterOf(c)
 	view := lineCommentView{
 		ID:        v.ID,
 		Project:   v.Project,
@@ -102,6 +121,7 @@ func (s *Server) commentView(w linecomment.Writer, v linecomment.View) lineComme
 		Was:       v.Was,
 		Outdated:  v.Outdated,
 		Mine:      w.Link != "" && v.Link == w.Link,
+		Deletes:   mayDeleteThread(c, v.Comment),
 	}
 	for _, r := range v.Replies {
 		view.Replies = append(view.Replies, lineReplyView{ID: r.ID, Text: r.Text, Author: r.Author, UpdatedAt: r.UpdatedAt, Mine: w.Link != "" && r.Link == w.Link})
@@ -149,12 +169,11 @@ func (s *Server) handleEditorComments(c *gin.Context) {
 	if !ok {
 		return
 	}
-	w := commentWriterOf(c)
 	patterns := c.QueryArray("path")
 	list := []lineCommentView{}
 	for _, comment := range s.reconciledLineComments(p) {
 		if len(patterns) == 0 || comment.OnPath(patterns) {
-			list = append(list, s.commentView(w, comment))
+			list = append(list, s.commentView(c, comment))
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"comments": list})
@@ -171,7 +190,7 @@ func (s *Server) handleEditorCommentThread(c *gin.Context) {
 	id := c.Query("id")
 	for _, comment := range s.lineComments.List(p.Name) {
 		if comment.ID == id {
-			c.HTML(http.StatusOK, "line_comment_notes.gohtml", s.lineNotes(c, comment))
+			c.HTML(http.StatusOK, "line_comment_notes.gohtml", gin.H{"Notes": s.lineNotes(c, comment)})
 			return
 		}
 	}
@@ -185,10 +204,6 @@ func (s *Server) handleEditorCommentThread(c *gin.Context) {
 // changes there and offers neither.
 func (s *Server) lineNotes(c *gin.Context, comment linecomment.Comment) []render.LineNote {
 	w := commentWriterOf(c)
-	writes := true
-	if g, ok := guestOf(c); ok {
-		writes = g.access.Can(share.Comments)
-	}
 	name := func(author, link string) string {
 		switch {
 		case comment.Forge != nil && author != "":
@@ -202,7 +217,7 @@ func (s *Server) lineNotes(c *gin.Context, comment linecomment.Comment) []render
 		}
 		return "Owner"
 	}
-	local := comment.Forge == nil && writes
+	local := comment.Forge == nil && writesComments(c)
 	notes := []render.LineNote{{Name: name(comment.Author, comment.Link), At: comment.UpdatedAt, Text: comment.Text, Edit: local && w.May(comment)}}
 	for _, r := range comment.Replies {
 		mine := local && w.MayReply(r)
@@ -237,10 +252,11 @@ func noteText(c *gin.Context, raw, noun string) (string, bool) {
 
 // answerThread answers a write of one thread: a refusal with its status, a
 // thread or reply deleted on another device meanwhile as gone instead of the
-// request echoed back as stored, else the thread as w reads it. Only a write
-// that changed something is published, so the other devices are not woken for
-// a note they already hold. It reports whether the write went through.
-func (s *Server) answerThread(c *gin.Context, p project.Project, w linecomment.Writer, thread linecomment.Comment, changed bool, err error) bool {
+// request echoed back as stored, else the thread as the request's writer
+// reads it. Only a write that changed something is published, so the other
+// devices are not woken for a note they already hold. It reports whether the
+// write went through.
+func (s *Server) answerThread(c *gin.Context, p project.Project, thread linecomment.Comment, changed bool, err error) bool {
 	if errors.Is(err, linecomment.ErrNotYours) || errors.Is(err, linecomment.ErrForgeThread) {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return false
@@ -256,7 +272,7 @@ func (s *Server) answerThread(c *gin.Context, p project.Project, w linecomment.W
 		c.JSON(http.StatusOK, gin.H{"gone": true})
 		return false
 	}
-	c.JSON(http.StatusOK, gin.H{"comment": s.commentView(w, linecomment.View{Comment: thread})})
+	c.JSON(http.StatusOK, gin.H{"comment": s.commentView(c, linecomment.View{Comment: thread})})
 	return true
 }
 
@@ -306,7 +322,7 @@ func (s *Server) handleEditorCommentSave(c *gin.Context) {
 		LineText: linecomment.FileLine(quote),
 		Text:     req.Text,
 	}, w)
-	if s.answerThread(c, p, w, comment, changed, err) && req.ID == "" {
+	if s.answerThread(c, p, comment, changed, err) && req.ID == "" {
 		s.guestWrote(p, w, comment, comment.Text, false)
 	}
 }
@@ -358,7 +374,7 @@ func (s *Server) handleEditorCommentReply(c *gin.Context) {
 	}
 	w := commentWriterOf(c)
 	thread, changed, err := s.lineComments.Reply(p.Name, req.Thread, linecomment.Reply{ID: req.ID, Text: text}, w)
-	if s.answerThread(c, p, w, thread, changed, err) && req.ID == "" {
+	if s.answerThread(c, p, thread, changed, err) && req.ID == "" {
 		s.guestWrote(p, w, thread, text, true)
 	}
 }
@@ -382,7 +398,7 @@ func (s *Server) handleEditorCommentReplyDelete(c *gin.Context) {
 	}
 	w := commentWriterOf(c)
 	thread, changed, err := s.lineComments.RemoveReply(p.Name, req.Thread, req.ID, w)
-	s.answerThread(c, p, w, thread, changed, err)
+	s.answerThread(c, p, thread, changed, err)
 }
 
 type editorCommentResolveRequest struct {
@@ -404,7 +420,7 @@ func (s *Server) handleEditorCommentResolve(c *gin.Context) {
 	}
 	w := commentWriterOf(c)
 	thread, changed, err := s.lineComments.Resolve(p.Name, req.ID, req.Resolved, w)
-	s.answerThread(c, p, w, thread, changed, err)
+	s.answerThread(c, p, thread, changed, err)
 }
 
 // GuestComment is a note a guest wrote on a project, the first of a thread or
@@ -484,7 +500,7 @@ func (s *Server) handleEditorCommentsDelete(c *gin.Context) {
 		}
 	}
 	w := commentWriterOf(c)
-	removed := s.lineComments.Remove(p.Name, func(comment linecomment.Comment) bool { return pick(comment) && w.MayAll(comment) })
+	removed := s.lineComments.Remove(p.Name, func(comment linecomment.Comment) bool { return pick(comment) && w.MayDelete(comment) })
 	if removed > 0 {
 		s.publishLineComments(p.Name)
 	}

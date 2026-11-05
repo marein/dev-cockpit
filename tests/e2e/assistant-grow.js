@@ -7,7 +7,8 @@ const { assert, BASE, sleep } = L;
 // the trigger form's task) has to stand at the height its text needs without
 // a keystroke: after leaving and coming back inside the app, after a reload,
 // after being hidden while code set its text, and after the viewport turned
-// or was resized. Desktop and a 390px touch phone.
+// or was resized. Past its cap the composer keeps the caret's line in view.
+// Desktop and a 390px touch phone.
 // Gotchas:
 // - fit reads the height the text needs by setting the box to auto for one
 //   synchronous read, nothing paints or observes that in between,
@@ -160,6 +161,23 @@ async function growChecks({ page, run, mobilePage, helpers }) {
       const turned = await turn(target, phone, (size) => assertFits(target, INPUT, `${where} ${size}`));
       seen[where] = { typed: typed.height, back: back.height, shown: shown.height, turned };
       await postForm(target, id, { form: "draft", message: "" });
+    }
+    return JSON.stringify(seen);
+  });
+
+  await run("the composer past its cap keeps the caret's line in view, typed, Enter at the end and in the middle, pasted, deleted and set by code, desktop and phone", async () => {
+    await own();
+    const seen = {};
+    for (const phone of [false, true]) {
+      const target = phone ? await mobilePage() : page;
+      const where = phone ? "phone" : "desktop";
+      await openAssistant(target, id);
+      await idle(target);
+      const walk = await L.caretWalk(target, INPUT, "Shift+Enter");
+      assert(walk.hidden.length === 0, `${where}: ${walk.hidden.length} of ${walk.steps} steps hid the caret: ${walk.hidden.slice(0, 4).join("; ")}`);
+      await target.fill(INPUT, "");
+      await postForm(target, id, { form: "draft", message: "" });
+      seen[where] = `${walk.steps} steps, ${walk.lines} lines typed, pasted by ${walk.pasted}`;
     }
     return JSON.stringify(seen);
   });

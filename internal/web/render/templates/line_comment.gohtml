@@ -2,21 +2,34 @@
 
 {{/* The notes of one line comment thread, the editor's thread dialog and the
      assistant's project view alike: who wrote each, when, the buttons that
-     change it and the note as written. */}}
+     change it and the note as written. Flush puts the buttons' icons on the
+     box's right edge, as far in as the content starts on its left. */}}
 {{define "line_comment_notes.gohtml"}}
-{{- range .}}
+{{- $flush := .Flush}}
+{{- range .Notes}}
 <div class="border-start border-2 ps-2 mt-2" data-comment-note="{{.ID}}">
   <div class="d-flex align-items-center gap-2 small text-secondary min-w-0">
     <span class="fw-medium text-body text-truncate" data-comment-note-author>{{template "visible_line.gohtml" .Name}}</span>
     {{- with .When}}<dc-time class="text-nowrap" datetime="{{.}}" relative></dc-time>{{end}}
     {{- if or .Edit .Drop}}
-    <span class="ms-auto d-flex gap-1">
+    <span class="ms-auto d-flex gap-1{{if $flush}} me-n2{{end}}">
       {{- if .Edit}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" title="{{.EditLabel}}" aria-label="{{.EditLabel}}" data-comment-note-edit><i class="ti ti-pencil" aria-hidden="true"></i></button>{{end}}
-      {{- if .Drop}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" title="Delete reply" aria-label="Delete reply" data-comment-note-drop><i class="ti ti-trash" aria-hidden="true"></i></button>{{end}}
+      {{- if .Drop}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon tone-danger" title="Delete reply" aria-label="Delete reply" data-comment-note-drop><i class="ti ti-trash" aria-hidden="true"></i></button>{{end}}
     </span>
     {{- end}}
   </div>
   <div class="dc-prompt-text" data-comment-note-text>{{.Text}}</div>
 </div>
 {{- end}}
+{{end}}
+
+{{/* The field of a new comment on the whole project, the editor's comments
+     sheet and the assistant's project view alike, Small in a view of small
+     controls. */}}
+{{define "project_comment_field.gohtml"}}
+<textarea class="form-control{{if .Small}} form-control-sm{{end}}" rows="2" data-project-comment-text placeholder="What about the whole project?" aria-label="Project comment"></textarea>
+<div class="invalid-feedback">A comment is required.</div>
+<div class="d-flex justify-content-end mt-2">
+  <button type="button" class="btn btn-sm btn-primary" data-project-comment-add>Add</button>
+</div>
 {{end}}

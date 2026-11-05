@@ -21,13 +21,13 @@ const { assert, sleep } = L;
 //
 // A project comment is the same thread on the whole project: the sheet heads
 // it under Project, above the line comments under Files, with a field to add
-// one (data-editor-project-comment-text, Add or Ctrl+Enter, an empty one
-// marked invalid). It marks no line, counts in the menu's badge, its cell
-// reads Project comment with its replies and opens the menu without Go to
-// line, its thread is titled Project comment without a place, the pencil
-// edits it as one, and the field goes while the sheet's filter narrows. A
-// project comment another device adds reaches the open sheet while the field
-// keeps what was typed and the focus.
+// one (data-project-comment-text, Add alone on its right edge below or
+// Ctrl+Enter, an empty one marked invalid). It marks no line, counts in the
+// menu's badge, its cell reads Project comment with its replies and opens the
+// menu without Go to line, its thread is titled Project comment without a
+// place, the pencil edits it as one, and the field goes while the sheet's
+// filter narrows. A project comment another device adds reaches the open
+// sheet while the field keeps what was typed and the focus.
 
 module.exports.threadChecks = async function threadChecks({ page, run, scratch, file, openEditor, openFile, openLineMenu, menuLabels, pickMenuItem, waitMarked, getComments, openSheet, sheetCell, commentDialogShown, commentDialogGone, confirmDialogGone }) {
   const comments = `/projects/${encodeURIComponent(scratch)}/editor/comments`;
@@ -164,7 +164,7 @@ module.exports.threadChecks = async function threadChecks({ page, run, scratch, 
     assert((await getComments(page)).comments.length === 0, "the thread stands after its delete");
   });
 
-  const field = "[data-editor-project-comment-text]";
+  const field = "[data-project-comment-text]";
   const projectCell = (text) => page.locator("[data-editor-sheet-body] .row .dropdown-item", { hasText: text });
   const sheetOrder = () => page.$$eval("[data-editor-sheet-body] [data-editor-sheet-head], [data-editor-sheet-body] [data-editor-project-comment-form], [data-editor-sheet-body] .row .dropdown-item", (els) => els
     .filter((el) => el.getClientRects().length > 0)
@@ -177,7 +177,13 @@ module.exports.threadChecks = async function threadChecks({ page, run, scratch, 
     await openSheet(page);
     assert((await sheetOrder()).join("|") === "# Project|field|# Files", `the empty sheet reads ${(await sheetOrder()).join(", ")}`);
     assert((await page.textContent("[data-editor-sheet-body]")).includes("No comments yet. Click a line number to add one."), "the empty sheet does not ask for a line comment");
-    await page.click("[data-editor-project-comment-add]");
+    const foot = await page.$eval("[data-editor-sheet-body] [data-editor-project-comment-form]", (form) => {
+      const add = form.querySelector("[data-project-comment-add]");
+      const box = form.querySelector("[data-project-comment-text]").getBoundingClientRect();
+      return { text: add.parentElement.textContent.replace(/\s+/g, " ").trim(), flush: Math.abs(add.getBoundingClientRect().right - box.right) <= 1 };
+    });
+    assert(foot.text === "Add" && foot.flush, `the field's foot reads ${JSON.stringify(foot)}`);
+    await page.click("[data-project-comment-add]");
     assert(await page.locator(`${field}.is-invalid`).count() === 1 && await shows("[data-editor-project-comment-form] .invalid-feedback"), "an empty add does not mark the field");
     await page.fill(field, "on the whole project");
     assert(await page.locator(`${field}.is-invalid`).count() === 0, "typing keeps the field marked");

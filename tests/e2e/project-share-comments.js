@@ -358,8 +358,8 @@ module.exports.commentChecks = async function commentChecks({ engine, browser, p
       const gp = links.anna.page;
       await openCommentsSheet(gp);
       await waitText(() => sheetLines(gp), ownerWide, "Anna's open sheet");
-      await gp.fill("[data-editor-project-comment-text]", annaWide);
-      await gp.click("[data-editor-project-comment-add]");
+      await gp.fill("[data-project-comment-text]", annaWide);
+      await gp.click("[data-project-comment-add]");
       const stored = JSON.parse(await waitText(async () => JSON.stringify(await noted(annaWide) || ""), anna, "Anna's project comment"));
       assert(stored.project && stored.author === anna && stored.path === "" && stored.line === 0 && !("link" in stored) && !stored.mine, `the owner reads ${JSON.stringify(stored)}`);
       const commented = JSON.parse(await waitText(async () => JSON.stringify(await unread()), annaWide, "the owner's news of the project comment"))[0];
