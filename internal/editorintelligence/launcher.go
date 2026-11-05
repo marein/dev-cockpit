@@ -2,7 +2,9 @@ package editorintelligence
 
 import (
 	"context"
+	"log"
 	"os/exec"
+	"runtime/debug"
 )
 
 // Launcher is one way to run a language server process; the Docker
@@ -23,11 +25,11 @@ type Launcher interface {
 	// where the way's own executable was found.
 	Detect(p *Profile) Detection
 	// Prepare stands up what one start needs, bounded by ctx. The Docker
-	// way builds its image on first use, creates the labeled cache volume
-	// and clears the stale container's name; a way with nothing to
-	// prepare returns nil. projectsRoot is the ownership boundary the
-	// labels carry.
-	Prepare(ctx context.Context, projectsRoot, project string, p *Profile) error
+	// way builds its image on first use, creates the labeled cache volume,
+	// clears the stale container's name and seeds a missing index; a way
+	// with nothing to prepare returns nil. projectsRoot is the ownership
+	// boundary the labels carry, root the project's directory.
+	Prepare(ctx context.Context, projectsRoot, project, root string, p *Profile) error
 	// Argv is the command line that starts the profile's server for the
 	// workspace at root. projectsRoot is the directory a container mounts
 	// at its own path so file URIs match inside and outside.
@@ -99,7 +101,7 @@ func (dockerLauncher) Detect(p *Profile) Detection { return lookPath("docker") }
 
 func (l dockerLauncher) ProcEnv() []string { return dockerHostEnv(l.hostValue()) }
 
-func (l dockerLauncher) Prepare(ctx context.Context, projectsRoot, project string, p *Profile) error {
+func (l dockerLauncher) Prepare(ctx context.Context, projectsRoot, project, root string, p *Profile) error {
 	dockerPath := l.Detect(p).Path
 	env := l.ProcEnv()
 	if err := ensureImage(ctx, dockerPath, env, p); err != nil {
@@ -117,7 +119,22 @@ func (l dockerLauncher) Prepare(ctx context.Context, projectsRoot, project strin
 		return err
 	}
 	removeStaleContainer(ctx, dockerPath, env, containerName(p.Server, project))
+	if p.container.SeedIndex != nil {
+		seedIndex(ctx, l.cacheRoot, p, project, root)
+	}
 	return nil
+}
+
+// seedIndex runs the profile's seed so that a panic in it costs the seed
+// alone: nothing above recovers one, and the whole cockpit would go down
+// with it, while the server can always start without a seed.
+func seedIndex(ctx context.Context, cacheRoot string, p *Profile, project, root string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("editor intelligence: seeding the %s index of %s panicked, the server starts without it: %v\n%s", p.ID, project, r, debug.Stack())
+		}
+	}()
+	p.container.SeedIndex(ctx, cacheRoot, p, project, root)
 }
 
 func (l dockerLauncher) Argv(projectsRoot, project, root string, p *Profile) []string {

@@ -49,6 +49,23 @@ func Read(dir string) Info {
 	return out
 }
 
+// WorkingCopies lists the working copies of the repository dir belongs to:
+// the main one, unless the repository is bare, and every linked worktree
+// registered in it, dir itself among them. A directory without a repository
+// answers none.
+func WorkingCopies(dir string) []string {
+	gitDir, err := resolveGitDir(filepath.Join(dir, ".git"))
+	if err != nil {
+		return nil
+	}
+	common := commonDir(gitDir)
+	var out []string
+	if filepath.Base(common) == ".git" {
+		out = append(out, filepath.Dir(common))
+	}
+	return append(out, registeredWorktrees(common)...)
+}
+
 // Remote is a remote url taken apart into what names a repository. Scheme is
 // the url's own, "ssh" for the scp form; Host is lower case, without user and
 // port; Path has no leading or trailing slash and no .git.

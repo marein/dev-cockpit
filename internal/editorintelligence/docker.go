@@ -113,6 +113,11 @@ type container struct {
 	// the cache directory explicitly, which keeps a per-project cleanup
 	// exact. Nil for servers without such options.
 	InitOptions func(cacheDir string) map[string]any
+	// SeedIndex fills a project's missing index before its server starts,
+	// from the index of another working copy of the same repository, run
+	// once no server of the project is left to write it. Nil for servers
+	// without one, which index a new project on their own.
+	SeedIndex func(ctx context.Context, cacheRoot string, p *Profile, project, root string)
 	// DefaultConfig marks a server whose image writes a configuration file
 	// for a project that brings none of its own, because without one it
 	// sees only the file it was handed and whatever that file imports: a

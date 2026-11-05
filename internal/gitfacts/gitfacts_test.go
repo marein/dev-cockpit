@@ -151,6 +151,41 @@ func TestReadListsRegisteredWorktrees(t *testing.T) {
 	}
 }
 
+func TestWorkingCopiesFromEveryMember(t *testing.T) {
+	root := t.TempDir()
+	mainDir := filepath.Join(root, "main")
+	writeMainRepo(t, mainDir)
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	writeLinkedWorktree(t, mainDir, a, "a")
+	writeLinkedWorktree(t, mainDir, b, "b")
+	want := []string{mainDir, a, b}
+	for _, dir := range want {
+		got := WorkingCopies(dir)
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+			t.Errorf("WorkingCopies(%s) = %v, want %v", dir, got, want)
+		}
+	}
+	if got := WorkingCopies(filepath.Join(root, "none")); len(got) != 0 {
+		t.Errorf("WorkingCopies without a repository = %v, want none", got)
+	}
+}
+
+func TestWorkingCopiesOfBareMainHoldWorktreesOnly(t *testing.T) {
+	root := t.TempDir()
+	bareDir := filepath.Join(root, "bare.git")
+	gitDir := filepath.Join(bareDir, "worktrees", "feature")
+	wtDir := filepath.Join(root, "feature")
+	writeTestFile(t, filepath.Join(gitDir, "HEAD"), "ref: refs/heads/feature\n")
+	writeTestFile(t, filepath.Join(gitDir, "commondir"), "../..\n")
+	writeTestFile(t, filepath.Join(gitDir, "gitdir"), filepath.Join(wtDir, ".git")+"\n")
+	writeTestFile(t, filepath.Join(wtDir, ".git"), "gitdir: "+gitDir+"\n")
+
+	got := WorkingCopies(wtDir)
+	if len(got) != 1 || got[0] != wtDir {
+		t.Errorf("WorkingCopies = %v, want the worktree alone, a bare main has no working copy", got)
+	}
+}
+
 func TestPruneWorktreeRegistration(t *testing.T) {
 	root := t.TempDir()
 	mainDir := filepath.Join(root, "main")

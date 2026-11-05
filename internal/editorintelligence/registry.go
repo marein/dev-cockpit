@@ -208,7 +208,8 @@ var profiles = []*Profile{
 					"globalStoragePath": dir + "/global",
 				}
 			},
-			ImageRoots: []string{"/usr/local/lib/node_modules/intelephense/lib/stub"},
+			ImageRoots: []string{intelephenseStubs},
+			SeedIndex:  seedIntelephenseIndex,
 		},
 	},
 	{

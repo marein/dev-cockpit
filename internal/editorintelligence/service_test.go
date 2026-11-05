@@ -1062,7 +1062,7 @@ func TestPrepareRemovesAForeignOwnedCache(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(own, "mod", "keep.go"), []byte("package dep\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := launcher.Prepare(context.Background(), t.TempDir(), "own", goProfile); err != nil {
+	if err := launcher.Prepare(context.Background(), t.TempDir(), "own", filepath.Join(t.TempDir(), "own"), goProfile); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(own, "mod", "keep.go")); err != nil {
@@ -1077,7 +1077,7 @@ func TestPrepareRemovesAForeignOwnedCache(t *testing.T) {
 	}
 	processUID = os.Getuid() + 1
 	t.Cleanup(func() { processUID = os.Getuid() })
-	if err := launcher.Prepare(context.Background(), t.TempDir(), "taken", goProfile); err != nil {
+	if err := launcher.Prepare(context.Background(), t.TempDir(), "taken", filepath.Join(t.TempDir(), "taken"), goProfile); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(foreign, "mod")); err == nil {

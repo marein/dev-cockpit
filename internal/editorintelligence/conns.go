@@ -177,7 +177,7 @@ func (s *Service) launch(ctx context.Context, key connKey, mc *managedConn, prof
 	// Preparation is bounded by the service's preparation context, not the
 	// lookup's: a canceled lookup must not abort an image build another one
 	// waits on.
-	if err := launcher.Prepare(s.prepCtx, s.projectsRoot, project, profile); err != nil {
+	if err := launcher.Prepare(s.prepCtx, s.projectsRoot, project, root, profile); err != nil {
 		log.Printf("editor intelligence: %v", err)
 		s.removeConn(key, mc)
 		close(mc.ready)
