@@ -269,7 +269,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "Switch projects",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "P"}}},
-					Desc:  `The project name above the file tree, or <em>Switch project</em> in the editor's menu, opens a palette: the last used projects first, then all of them, every row naming its repository and branch. Type to narrow by name, repository or branch, and Enter on a fresh palette goes back to the last used project. A project comes back exactly as it was left, the open tabs with their cursor and scroll included.`,
+					Desc:  `The project name above the file tree, or <em>Switch project</em> in the editor's menu, opens a palette: the last used projects first, then all of them, every row naming its repository and branch, a worktree under its main by its own name over its branch. Type to narrow by name, repository or branch, and Enter on a fresh palette goes back to the last used project. A project comes back exactly as it was left, the open tabs with their cursor and scroll included.`,
 				},
 				{
 					Title: "The file tree",

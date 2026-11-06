@@ -11,6 +11,23 @@ export function rankProject(row, query) {
   return rankTokens([name, repo], row.dataset.projectSearch || name, query);
 }
 
+// A member stands under its main, which names the repository already, so its
+// own name heads the row and its branch takes the line below.
+function asMember(row) {
+  row.classList.add("editor-palette-member");
+  row.querySelector(".editor-palette-repo").textContent = row.dataset.projectName;
+  const sub = row.querySelector(".editor-palette-sub");
+  const branch = row.querySelector(".editor-palette-branch");
+  if (!branch) {
+    sub.remove();
+    return;
+  }
+  sub.replaceChildren(...branch.childNodes);
+  const rest = branch.parentElement;
+  branch.remove();
+  if (!rest.childElementCount) rest.remove();
+}
+
 function group(label, rows, members) {
   const node = document.createElement("div");
   node.className = "editor-palette-group";
@@ -22,7 +39,7 @@ function group(label, rows, members) {
   }
   rows.forEach((row) => {
     const clone = row.cloneNode(true);
-    if (members && members.has(row)) clone.classList.add("editor-palette-member");
+    if (members && members.has(row)) asMember(clone);
     node.appendChild(clone);
   });
   return node;

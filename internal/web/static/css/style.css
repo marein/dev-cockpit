@@ -1548,6 +1548,8 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
   color: var(--tblr-secondary);
 }
 .editor-palette-row {
+  --dc-palette-icon: 0.85rem;
+  --dc-palette-gap: 0.5rem;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -1572,10 +1574,11 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
 .editor-palette-line {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--dc-palette-gap);
   min-width: 0;
 }
-.editor-palette-line .ti {
+.editor-palette-line > .ti {
+  width: var(--dc-palette-icon);
   color: var(--tblr-secondary);
   flex: 0 0 auto;
 }
@@ -1610,7 +1613,7 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
   color: var(--tblr-primary);
 }
 .editor-palette-sub {
-  padding-left: 1.55rem;
+  padding-left: calc(var(--dc-palette-icon) + var(--dc-palette-gap));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

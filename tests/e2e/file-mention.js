@@ -341,13 +341,13 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       assert(new Set(s.rows).size === all.length && all.every((name) => s.rows.includes(name)), `the list is not every project: ${s.rows} vs ${all}`);
       assert(s.count === `${all.length} project${all.length === 1 ? "" : "s"}`, `the head counts ${s.count}`);
       assert(s.active === 0 && s.described === s.activeID && s.activeID, `the first row is not marked for the keys: ${JSON.stringify(s)}`);
-      // The full list stands last, a recent shortlist above it lists the
-      // worktree again as a row of its own once an earlier engine opened it.
+      // The full list stands last, its member heads with its own name over its
+      // branch, a recent shortlist above lists it as itself once opened.
       const worktree = await page.evaluate((name) => {
         const row = [...document.querySelectorAll(`[data-mention-list] [data-project-name="${name}"]`)].at(-1);
         return { icon: row.querySelector(".ti").className, repo: row.querySelector(".editor-palette-repo").textContent, sub: row.querySelector(".editor-palette-sub")?.textContent || "", member: row.classList.contains("editor-palette-member") };
       }, CHECKOUT);
-      assert(worktree.icon.includes("ti-git-fork") && worktree.repo === SHOP && worktree.sub === CHECKOUT && worktree.member, `the worktree does not read as one: ${JSON.stringify(worktree)}`);
+      assert(worktree.icon.includes("ti-git-fork") && worktree.repo === CHECKOUT && worktree.sub.trim() === "checkout" && worktree.member, `the worktree does not read as its main's member, its name over its branch: ${JSON.stringify(worktree)}`);
       for (const query of [S, `${S} check`, `CHECKOUT ${S}`, `${S} notes`]) {
         await reset(page);
         await page.keyboard.type(`@${query}`);
