@@ -9,7 +9,7 @@ import { renameCoder, renameShell } from "@dc/rename";
 import { RowDrag } from "@dc/rowdrag";
 import { get } from "@dc/store";
 import { notifyError, notifySuccess } from "@dc/toast";
-import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder, steeredByItem } from "@dc/steer";
 import { NewMenu } from "@dc/terminal-new-menu";
 import { Switcher } from "@dc/terminal-switcher";
 import { openFormModal } from "dc-form-modal";
@@ -219,7 +219,7 @@ class TerminalTabs extends HTMLElement {
       });
     }
     if (dataset.tabKind === "coder") {
-      items.push(dataset.tabSteered
+      items.push(steeredByItem(tab), dataset.tabSteered
         ? {
           label: "Release",
           icon: "ti-steering-wheel-off",

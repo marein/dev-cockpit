@@ -123,6 +123,8 @@ type Page struct {
 	// so the marks stay current without client logic.
 	Steered      map[string]bool
 	SteerPrefill map[string]string
+	// Steerers names the assistant behind each mark, read through SteeredBy.
+	Steerers map[string]Steerer
 	// Working marks the sessions somebody is working in right now, keyed by
 	// terminal id, read the same way (`{{index $.Working .ID}}`). It is the
 	// state at render time; the client keeps it live from the activity
@@ -331,4 +333,23 @@ func (p Page) CockpitLabel() string {
 		return ""
 	}
 	return strings.Join(parts, ", ")
+}
+
+// Steerer is the assistant that steers a terminal: its title, which
+// assistant_title.gohtml words the way the assistants list does, and its
+// thread.
+type Steerer struct {
+	Title string
+	URL   string
+}
+
+// SteeredBy is the assistant steering the terminal, nil when none does. A
+// guest's page never names it, the title is the owner's own thread title, so
+// a guest's map is never read even where a render filled it.
+func (p Page) SteeredBy(id string) *Steerer {
+	by, ok := p.Steerers[id]
+	if !ok || p.Access.Guest {
+		return nil
+	}
+	return &by
 }

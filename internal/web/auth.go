@@ -210,7 +210,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 	user, _ := sess.Get(sessionUserKey).(string)
 	token := s.csrfToken(c)
 	qn := s.quicknav(c)
-	steered, prefill := s.watcher.Marks()
+	steered, prefill, steerers := s.steerMarks()
 	return render.Page{
 		Title:             title,
 		ActiveTab:         activeTab,
@@ -226,6 +226,7 @@ func (s *Server) page(c *gin.Context, title, activeTab string) render.Page {
 		UnreadNews:        s.notifier.UnreadCount(),
 		Steered:           steered,
 		SteerPrefill:      prefill,
+		Steerers:          steerers,
 		Working:           s.activity.Working(),
 		Host:              s.host.Stats(),
 		Links:             render.NewStatusLinks(qn.AllProjects, qn.CurrentProject),

@@ -158,7 +158,7 @@ func docsAssistantsTopic() DocsTopic {
 				Title:    "Steer and release where the coder is",
 				Tag:      "Ownership",
 				TagClass: "bg-blue-lt",
-				Desc:     `A steered coder's icon turns purple wherever it shows and follows steer and release without a reload. Both sit where the coder is listed: its tab's context menu (on a phone behind the three dots of its row), its pane header, its chip. The dialog asks which assistant the reports go to once there is more than one.`,
+				Desc:     `A steered coder's icon turns purple wherever it shows, and its tooltip names the assistant steering it. From a tablet's width up the coder's header and its pane header show that assistant after the coder's name, with the sparkles, and a click on it there opens its thread; on a desktop its row in the list names it too. Where room runs short the assistant's name is cut before the coder's. Steer and release sit where the coder is listed: its tab's context menu (on a phone behind the three dots of its row), its pane header, its chip, its tab in the editor's terminal panel; while it is steered that menu also holds the assistant's name with the sparkles, which opens its thread. On a phone a tap on the purple mark in the coder's header opens the same entry. All of it follows steer, release, a rename and a delete of the assistant without a reload. The dialog asks which assistant the reports go to once there is more than one.`,
 			},
 		},
 	}

@@ -107,6 +107,14 @@ function escapeAttr(value) {
   return escapeText(value).replaceAll('"', "&quot;");
 }
 
+// The server writes the steering assistant onto a coder's icon, and never
+// onto a guest's, so the entry needs no request and a guest gets none.
+export function steeredByItem(row) {
+  const icon = row?.querySelector("[data-steered-url]");
+  if (!icon) return null;
+  return { label: icon.dataset.steeredBy, icon: "ti-sparkles", title: `Steered by ${icon.dataset.steeredBy}`, href: icon.dataset.steeredUrl };
+}
+
 export async function releaseCoder({ terminal, name }) {
   const ok = await confirm({
     title: `Release "${name}"?`,

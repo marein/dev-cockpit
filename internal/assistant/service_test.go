@@ -1721,6 +1721,38 @@ func TestRenameBoundsTheTitle(t *testing.T) {
 	}
 }
 
+// The marks of a steered coder name the assistant steering it, so every new
+// title is announced: the one the first prompt gives and a rename. A prompt
+// after that and a refused rename change no title and announce none.
+func TestEveryNewTitleIsAnnounced(t *testing.T) {
+	svc, _, _ := newTestService(t, &fakeRunner{})
+	var mu sync.Mutex
+	var heard []string
+	svc.OnRetitle(func(id string) {
+		mu.Lock()
+		defer mu.Unlock()
+		heard = append(heard, id)
+	})
+	created, _ := svc.create("claude")
+	for _, prompt := range []string{"name me", "again"} {
+		if _, err := svc.Send(created.ID, prompt, nil); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		waitIdle(t, svc, created.ID)
+	}
+	if err := svc.Rename(created.ID, "  "); err == nil {
+		t.Fatal("want an empty title refused")
+	}
+	if err := svc.Rename(created.ID, "Nightly"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(heard, " ") != created.ID+" "+created.ID {
+		t.Fatalf("want the first prompt and the rename announced, heard %v", heard)
+	}
+}
+
 func TestStreamSnapshotCarriesTheRunningAnswer(t *testing.T) {
 	runner := &fakeRunner{events: []Event{{Kind: EventDelta, Text: "half"}}, block: make(chan struct{})}
 	svc, _, _ := newTestService(t, runner)

@@ -85,7 +85,8 @@ func (s *Service) send(id string, composer bool, compose func(Instance) (Message
 	// joins the transcript, and its headlines ride along in front of it.
 	since := notesSince(c)
 	c.Messages = append(c.Messages, user)
-	if c.Title == "" || c.Title == DefaultTitle {
+	named := c.Title == "" || c.Title == DefaultTitle
+	if named {
 		c.Title = deriveTitle(user.Content, user.Attachments)
 	}
 	ended := Ends(c.Messages, len(c.Messages)-1)
@@ -97,6 +98,9 @@ func (s *Service) send(id string, composer bool, compose func(Instance) (Message
 	s.spendDraft(id, composer, now, ended)
 	r.UserMessageID = user.ID
 	s.changed()
+	if named {
+		s.retitled(id)
+	}
 	return r, nil
 }
 
@@ -320,7 +324,8 @@ func (s *Service) flushReady(instanceID string) {
 	}
 	// A queued first message is what names the assistant, the same way a sent
 	// one does: the turn it goes out in is the first anybody sees.
-	if c.Title == "" || c.Title == DefaultTitle {
+	named := c.Title == "" || c.Title == DefaultTitle
+	if named {
 		c.Title = deriveTitle(queued[0].Content, queued[0].Attachments)
 	}
 	// The waiting entries go out with the new turn; every open page pulls them
@@ -335,6 +340,9 @@ func (s *Service) flushReady(instanceID string) {
 		return
 	}
 	s.changed()
+	if named {
+		s.retitled(instanceID)
+	}
 }
 
 // flushAllReady lets every assistant that has something waiting go. Only the

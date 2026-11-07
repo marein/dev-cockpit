@@ -678,23 +678,23 @@ func (w *Watcher) announceChange(project string) {
 }
 
 // Marks is what the pages render about the jobs: which terminals an open job
-// holds right now, and the stored criterion of the closed ones, which is what
-// the steer dialog offers as its prefill when a terminal is steered again. Every
-// assistant's jobs together, because the mark says the terminal is taken and
-// that is true whoever took it.
-func (w *Watcher) Marks() (steered map[string]bool, doneWhens map[string]string) {
-	steered = map[string]bool{}
+// holds right now, with the assistant that holds each, and the stored criterion
+// of the closed ones, which is what the steer dialog offers as its prefill when
+// a terminal is steered again. Every assistant's jobs together, because the
+// mark says the terminal is taken and that is true whoever took it.
+func (w *Watcher) Marks() (owners map[string]string, doneWhens map[string]string) {
+	owners = map[string]string{}
 	doneWhens = map[string]string{}
 	for _, job := range w.jobs.All() {
 		if job.State.Open() {
-			steered[job.Terminal] = true
+			owners[job.Terminal] = job.Owner
 			continue
 		}
 		if job.DoneWhen != "" {
 			doneWhens[job.Terminal] = job.DoneWhen
 		}
 	}
-	return steered, doneWhens
+	return owners, doneWhens
 }
 
 // ValidateDoneWhen normalizes a done-when and refuses what a job cannot

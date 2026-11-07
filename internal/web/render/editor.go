@@ -132,6 +132,7 @@ type EditorTerminal struct {
 	HasNews         bool
 	Working         int64
 	Steered         bool
+	SteeredBy       *Steerer
 	SteerPrefill    string
 	// FilesData feeds a coder's files modal, the same one the attach pages
 	// carry; nil for shells and for coders whose files cannot be listed.

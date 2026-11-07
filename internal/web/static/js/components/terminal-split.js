@@ -3,7 +3,7 @@ import { confirm } from "@dc/dialog";
 import { ensureOk, postForm, postJSON } from "@dc/http";
 import { renameCoder, renameShell } from "@dc/rename";
 import { splitCreateItems } from "@dc/split";
-import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder, steeredByItem } from "@dc/steer";
 import { notifyError, notifySuccess } from "@dc/toast";
 
 const DRAG_THRESHOLD = 6;
@@ -293,7 +293,7 @@ class TerminalSplit extends HTMLElement {
       });
     }
     if (dataset.paneKind === "coder") {
-      items.push(head.querySelector(".dc-term-icon.steered")
+      items.push(steeredByItem(head), head.querySelector(".dc-term-icon.steered")
         ? {
           label: "Release",
           icon: "ti-steering-wheel-off",
@@ -415,7 +415,7 @@ class TerminalSplit extends HTMLElement {
   onPointerDown(event) {
     if (event.button !== 0 || window.matchMedia("(pointer: coarse)").matches) return;
     const head = event.target.closest("[data-pane-head]");
-    if (!head || event.target.closest("[data-pane-close]")) return;
+    if (!head || event.target.closest("[data-pane-close], [data-steered-label]")) return;
     this.suppressClick = false;
     this.drag = {
       head,

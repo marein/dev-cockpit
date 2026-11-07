@@ -17,7 +17,9 @@ function isCdnNoise(t) {
 // /events stream connect, the /update/check and /costs/status polls, the
 // page's one /time measurement, the editor's terminals fragment pull and its
 // renewal of what it watches on disk, an assistant's pull of its own answer,
-// a terminal's lookup of the words it printed, which catches its own failure)
+// a terminal's lookup of the words it printed, which catches its own failure,
+// and the pulls of a terminal page's head on a terminals event: its name, its
+// steered mark and the assistant steering it)
 // as a page error ending in "due to access control checks".
 // That is a browser artifact of racing navigations on the throwaway
 // instance, not an app defect, so it joins the non-gating noise bucket. The
@@ -30,16 +32,16 @@ function isCdnNoise(t) {
 // page itself (`refreshProjectList`, a fetch that already carries its own
 // catch), and a runner navigating on while that pull is out leaves this error
 // behind. An assistant's page pulls itself the same way (`syncFromServer`),
-// and so does a split page whose members moved (`refreshPage`) and the tab
+// and so does a split page whose members moved (`refreshPage`), the tab
 // strip on a terminals event (`tryRefresh`, whose writes under
-// `/terminal-tabs/` still gate). Naming it in the list would swallow every project scoped route under
+// `/terminal-tabs/` still gate) and the list column sheet (`/ctx/<area>`). Naming it in the list would swallow every project scoped route under
 // it, `/projects/<name>/editor/…` included, which is exactly where a real
 // access control failure would have to gate.
 function isWebkitAbortNoise(t) {
   return /\/(events|update\/check|costs\/status|git\/prompt|time|editor\/(terminals|docker|lsp\/(status|source)|list|file|watch|git\/changes|search-draft))\b.*due to access control checks/.test(t)
-    || /\/(projects|terminal-tabs|assistants\/[^/\s?]+|splits\/[^/\s?]+)(\?\S*)? due to access control checks/.test(t)
+    || /\/(projects|terminal-tabs|ctx\/[^/\s?]+|assistants\/[^/\s?]+|splits\/[^/\s?]+)(\?\S*)? due to access control checks/.test(t)
     || /\/assistants\/[^/\s]+\/messages\/[^/\s]+ due to access control checks/.test(t)
-    || /\/(shells|coders)\/[^/\s]+\/file-links due to access control checks/.test(t);
+    || /\/(shells|coders)\/[^/\s]+\/(file-links|name|steered|steered-by) due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
   bag.cdnNoise = bag.cdnNoise || [];

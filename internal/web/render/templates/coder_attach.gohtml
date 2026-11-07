@@ -2,14 +2,15 @@
 {{template "app_start.gohtml" .}}
 {{template "terminals_ctx.gohtml" .}}
 {{template "work_start.gohtml" .}}
-<dc-steered-mark class="d-inline-flex d-lg-none" src="{{.Access.Base}}/coders/{{.Running.Identifier}}/steered">
-  {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Launcher" .Launcher "Steered" (index $.Steered .Running.Identifier) "Working" (index $.Working .Running.Identifier)) -}}
+<dc-steered-mark class="d-inline-flex d-lg-none" src="{{.Access.Base}}/coders/{{.Running.Identifier}}/steered" menu>
+  {{- template "steered_icon.gohtml" (dict "ID" .Running.Identifier "Coder" .Coder "Launcher" .Launcher "Steered" (index $.Steered .Running.Identifier) "Working" (index $.Working .Running.Identifier) "By" ($.SteeredBy .Running.Identifier)) -}}
 </dc-steered-mark>
 {{$rename := ""}}{{if .Access.Can "terminals"}}{{$rename = coderRename .Coder}}{{end}}
 <dc-live-name class="d-flex min-w-0" name-url="{{.Access.Base}}/coders/{{.Running.Identifier}}/name" title-suffix="{{if .ProjectName}} - {{.ProjectName}}{{end}} - Dev Cockpit"{{with $rename}} rename-id="{{$.Running.Identifier}}" rename-mode="{{.}}" coder-label="{{coderLabel $.Coder}}"{{end}}>
   <h1 class="dc-work-title dc-mono" data-name-label{{if $rename}} role="button" tabindex="0" title="Click to rename"{{end}}>{{.Running.Name}}</h1>
 </dc-live-name>
 {{if .ProjectURL}}<a class="text-secondary small dc-trunc dc-hide-xs text-decoration-none flex-shrink-0" href="{{.ProjectURL}}" title="Back to {{.ProjectName}}">{{.ProjectName}}</a>{{else if .ProjectName}}<span class="text-secondary small dc-trunc dc-hide-xs flex-shrink-0">{{.ProjectName}}</span>{{end}}
+{{if not .Access.Guest}}<dc-steered-mark class="dc-steered-slot" src="/coders/{{.Running.Identifier}}/steered-by">{{template "steered_by.gohtml" ($.SteeredBy .Running.Identifier)}}</dc-steered-mark>{{end}}
 <span class="flex-fill"></span>
 <div class="attach-settings dropdown">
   <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Terminal settings" title="Terminal settings">

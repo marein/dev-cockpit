@@ -8,12 +8,32 @@
   client.
 
   Dict: ID (terminal), Coder (coder id), Launcher, Steered (bool), Working
-  (stamp). A job's row adds what its job alone knows: Stopped (bool), News
-  (bool), Tone (a colour over the session's), Held (the stamp of a check, which
-  the activity event does not carry, so working.js keeps its stroke), Label
-  (in place of the coder's name) and Job (its state).
+  (stamp), By (the *render.Steerer of Page.SteeredBy, nil for a guest). A job's
+  row adds what its job alone knows: Stopped (bool), News (bool), Tone (a
+  colour over the session's), Held (the stamp of a check, which the activity
+  event does not carry, so working.js keeps its stroke), Label (in place of the
+  coder's name) and Job (its state).
 */}}
 {{define "steered_icon.gohtml"}}
 {{- $label := or .Label (coderLabel .Coder) -}}
-<span class="dc-term-icon{{if not .Stopped}} running{{end}}{{if or .Working .Held}} working{{end}}{{if .Steered}} steered{{end}}{{with .Tone}} {{.}}{{end}}{{if .News}} news{{end}}"{{with or .Working .Held}} data-working-since="{{.}}"{{end}}{{with .Held}} data-working-held="{{.}}"{{end}}{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-notify-target="{{.ID}}"{{with .Job}} data-assistant-job-state="{{.}}"{{end}} role="img" title="{{$label}}" aria-label="{{$label}}">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
+<span class="dc-term-icon{{if not .Stopped}} running{{end}}{{if or .Working .Held}} working{{end}}{{if .Steered}} steered{{end}}{{with .Tone}} {{.}}{{end}}{{if .News}} news{{end}}"{{with or .Working .Held}} data-working-since="{{.}}"{{end}}{{with .Held}} data-working-held="{{.}}"{{end}}{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-notify-target="{{.ID}}"{{with .Job}} data-assistant-job-state="{{.}}"{{end}} role="img" title="{{template "steered_title.gohtml" (dict "Label" $label "By" .By)}}" aria-label="{{template "steered_title.gohtml" (dict "Label" $label "By" .By)}}"{{template "steered_data.gohtml" .By}}>{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
 {{- end}}
+
+{{/* What a steered coder's icon says of the assistant steering it: its title
+     names it after the coder (dict: Label, By), and the row menus read its
+     name and thread off the icon (By). By is the *render.Steerer of
+     Page.SteeredBy, nil while nobody steers and for a guest. */}}
+{{define "steered_title.gohtml"}}{{.Label}}{{with .By}}, steered by {{template "assistant_title.gohtml" .Title}}{{end}}{{end}}
+{{define "steered_data.gohtml"}}{{with .}} data-steered-by="{{template "assistant_title.gohtml" .Title}}" data-steered-url="{{.URL}}"{{end}}{{end}}
+{{/* The same on an icon that has no title of its own, a row's: the title
+     stands only while somebody steers. Dict: Coder, By. */}}
+{{define "steered_tab.gohtml"}}{{with .By}} title="{{template "steered_title.gohtml" (dict "Label" (coderLabel $.Coder) "By" .)}}"{{template "steered_data.gohtml" .}}{{end}}{{end}}
+
+{{/* The steering assistant beside a coder's name where a large screen has
+     room: the sparkles and its name, which give way before the coder's name
+     does. A head links its thread; a strip row is a link to the coder
+     already, so its label only names it. By is the *render.Steerer of
+     Page.SteeredBy and nil renders nothing, so the slot around it stays
+     empty and takes no room. */}}
+{{define "steered_by.gohtml"}}{{with .}}<a class="d-flex align-items-center gap-1 min-w-0 small text-secondary text-nowrap text-decoration-none" href="{{.URL}}" title="Steered by {{template "assistant_title.gohtml" .Title}}" data-steered-label><i class="ti ti-sparkles text-purple flex-shrink-0" aria-hidden="true"></i><span class="text-truncate">{{template "assistant_title.gohtml" .Title}}</span></a>{{end}}{{end}}
+{{define "steered_by_row.gohtml"}}{{with .}}<span class="dc-steered-by d-none d-lg-flex align-items-center gap-1 text-nowrap" title="Steered by {{template "assistant_title.gohtml" .Title}}" data-steered-label><i class="ti ti-sparkles text-purple flex-shrink-0" aria-hidden="true"></i><span class="text-truncate">{{template "assistant_title.gohtml" .Title}}</span></span>{{end}}{{end}}

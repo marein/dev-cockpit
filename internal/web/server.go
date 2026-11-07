@@ -276,6 +276,13 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 	watcher.OnStateChange(func(project string) {
 		s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": project}})
 	})
+	// The marks name the assistant that steers them, so its new title moves
+	// them on the same event.
+	conversations.OnRetitle(func(id string) {
+		for _, job := range watcher.OpenJobs(id) {
+			s.bus.Publish(eventbus.Event{Type: "terminals", Data: map[string]string{"project": job.Project}})
+		}
+	})
 	// The docker cache moved: every open projects page pulls its own fresh
 	// render, the same way it follows the terminals.
 	dockerService.OnChange(func() {

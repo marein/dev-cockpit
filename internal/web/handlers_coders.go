@@ -567,36 +567,6 @@ func (s *Server) handleCoderActivity(c *gin.Context) {
 	c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("No coder session %q is running or resumable.", id)})
 }
 
-// handleCoderSteeredMark serves the coder icon of one terminal, which is how
-// the attach pages follow the terminals event: their icons do not re-render
-// on it, so a dc-steered-mark element pulls this fragment instead. The icon
-// is rendered here exactly like everywhere else, purple while a job holds the
-// terminal, and the client only swaps it in. A terminal that is gone answers
-// empty: the page showing it is stale either way.
-func (s *Server) handleCoderSteeredMark(c *gin.Context) {
-	id := c.Param("id")
-	coderID, launcher := "", ""
-	for _, m := range s.coders {
-		if _, err := m.ResolveRunning(id); err == nil {
-			coderID = m.ID()
-			launcher = coder.LauncherForSession(m.Coder(), id)
-			break
-		}
-	}
-	if coderID == "" {
-		c.Status(http.StatusOK)
-		return
-	}
-	steered, _ := s.watcher.Marks()
-	c.HTML(http.StatusOK, "steered_icon.gohtml", map[string]any{
-		"ID":       id,
-		"Coder":    coderID,
-		"Launcher": launcher,
-		"Steered":  steered[id],
-		"Working":  s.activity.Working()[id],
-	})
-}
-
 func (s *Server) handleCoderResize(c *gin.Context) {
 	id := c.Param("id")
 	var form terminalResizeForm

@@ -1,7 +1,11 @@
+import { menuJustClosed, openMenu } from "@dc/contextmenu";
 import { syncAnimations } from "@dc/dom";
-import { onServerEvent } from "@dc/events";
+import { missedServerEvent, onServerEvent } from "@dc/events";
 import { getText } from "@dc/http";
+import { steeredByItem } from "@dc/steer";
 
+// A mark carrying `menu` stands in a page's head, where no row of the coder
+// stands on a phone, so a tap on it is the way to the steering assistant.
 class SteeredMark extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
@@ -9,11 +13,42 @@ class SteeredMark extends HTMLElement {
     this.inFlight = false;
     this.dirty = false;
     onServerEvent("terminals", () => this.refresh(), { signal: this.ac.signal });
+    if (missedServerEvent("terminals")) this.refresh();
+    if (!this.hasAttribute("menu")) return;
+    const signal = this.ac.signal;
+    this.addEventListener("click", (event) => this.openMenu(event), { signal });
+    this.addEventListener("contextmenu", (event) => this.openMenu(event), { signal });
+    this.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") this.openMenu(event);
+    }, { signal });
+    this.syncMenu();
   }
 
   disconnectedCallback() {
     this.ac?.abort();
     this.ac = null;
+  }
+
+  syncMenu() {
+    if (!this.hasAttribute("menu")) return;
+    if (steeredByItem(this)) {
+      this.setAttribute("role", "button");
+      this.setAttribute("aria-haspopup", "menu");
+      this.tabIndex = 0;
+      return;
+    }
+    this.removeAttribute("role");
+    this.removeAttribute("aria-haspopup");
+    this.removeAttribute("tabindex");
+  }
+
+  openMenu(event) {
+    const item = steeredByItem(this);
+    if (!item) return;
+    event.preventDefault();
+    if (menuJustClosed()) return;
+    const rect = this.getBoundingClientRect();
+    openMenu({ x: Math.round(rect.left), y: Math.round(rect.bottom + 4), items: [item], signal: this.ac.signal });
   }
 
   refresh() {
@@ -30,6 +65,7 @@ class SteeredMark extends HTMLElement {
       .then((html) => {
         this.innerHTML = html;
         syncAnimations(this);
+        this.syncMenu();
       })
       .catch(() => {})
       .finally(() => {

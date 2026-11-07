@@ -377,6 +377,10 @@ dc-host-status.dc-cockpit-icon { display: flex; }
 .dc-term-icon.steered { background: rgba(var(--dc-steer-rgb), 0.18); color: var(--dc-steer); }
 .dc-term-icon.steered.working { box-shadow: 0 0 0 2px rgba(var(--dc-steer-rgb), 0.3); }
 .dc-term-icon.steered.working::before { background: var(--dc-steer); box-shadow: 0 0 3px var(--dc-steer); }
+.dc-steered-slot { display: none; flex: 1000 1 0; max-width: max-content; min-width: 12px; }
+@media (min-width: 768px) {
+  .dc-steered-slot:not(:empty) { display: flex; }
+}
 .dc-term-icon.assistant { background: rgba(var(--dc-steer-rgb), 0.18); color: var(--dc-steer); border-radius: 50%; }
 .dc-term-icon.assistant.working { box-shadow: 0 0 0 2px rgba(var(--dc-steer-rgb), 0.3); }
 .dc-term-icon.assistant.working::before { background: var(--dc-steer); box-shadow: 0 0 3px var(--dc-steer); }
@@ -864,6 +868,7 @@ terminal-tabs[data-tabs-vertical] .terminal-tabs-strip { display: flex; flex-dir
 .terminal-tab-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; line-height: 1.25; }
 .terminal-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--tblr-font-monospace); }
 .terminal-tab-project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; color: var(--tblr-secondary); }
+.terminal-tab-project > .dc-steered-by { flex: 1000 1 0; max-width: max-content; min-width: 12px; }
 .terminal-tab-close {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
   width: 1.25rem; height: 1.25rem; border-radius: 4px; color: var(--tblr-secondary); font-size: 0.8125rem;

@@ -195,7 +195,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Tab context menu",
 					Tag:      "Desktop",
 					TagClass: "bg-secondary-lt",
-					Desc:     `Right-click a tab for rename, mark read, steer or release, project and editor links, ungroup, stop, and delete. Split pane heads and the chips on the projects page carry their own.`,
+					Desc:     `Right-click a tab for rename, mark read, the assistant steering it, steer or release, project and editor links, ungroup, stop, and delete. Split pane heads and the chips on the projects page carry their own.`,
 				},
 				{
 					Title:    "A new project needs no permission",

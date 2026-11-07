@@ -84,9 +84,10 @@ type Service struct {
 	reservedMu sync.RWMutex
 	reserved   map[string]bool
 
-	onChange func()
-	onDone   func(instanceID string)
-	render   func(string) (string, error)
+	onChange  func()
+	onDone    func(instanceID string)
+	onRetitle func(id string)
+	render    func(string) (string, error)
 
 	// events is the reactor: where an event a source publishes goes, and where
 	// the triggers live. Built with the service, see newReactor.
@@ -136,6 +137,16 @@ func newService(store *Store, runs *RunStore, coders Coders, workdirs Workdirs) 
 func (s *Service) SetHooks(onChange func(), onDone func(instanceID string)) {
 	s.onChange = onChange
 	s.onDone = onDone
+}
+
+// OnRetitle registers who hears that an assistant's title changed, by a
+// rename or by the first prompt that names it. Runs outside the service lock.
+func (s *Service) OnRetitle(fn func(id string)) { s.onRetitle = fn }
+
+func (s *Service) retitled(id string) {
+	if s.onRetitle != nil {
+		s.onRetitle(id)
+	}
 }
 
 // SetRenderer installs the Markdown renderer used while an answer streams. The
@@ -456,6 +467,7 @@ func (s *Service) Rename(id, rawTitle string) error {
 	s.mu.Unlock()
 
 	s.changed()
+	s.retitled(id)
 	return nil
 }
 

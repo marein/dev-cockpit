@@ -2670,6 +2670,10 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
       return (data.assistants || []).map((a) => a.id).find((id) => id !== mine) || "";
     }, chatID);
     assert(other, "there is no second assistant to run beside the first");
+    // WebKit on Linux holds a POST back while six connections to the host are
+    // busy, and every page on a thread keeps two streams open. With this page
+    // on one too, a send of the clock pages waits until a stream closes.
+    await page.goto("about:blank");
     const row = (id) => `.dc-app > .dc-ctx [data-assistant-instance="${id}"] .dc-term-icon.assistant`;
     const head = "dc-assistant [data-assistant-head-icon]";
     const problems = [];

@@ -10,7 +10,7 @@ import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
 import { ensureOk, postForm } from "@dc/http";
 import { inactiveCoderRenameItem, renameCoder, renameShell } from "@dc/rename";
 import { notifyError, notifySuccess } from "@dc/toast";
-import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder, steeredByItem } from "@dc/steer";
 import { narrow, swapBar, tagFilter } from "@dc/tags";
 
 const FILTER_KEY = "dc-project-filter";
@@ -303,7 +303,7 @@ class ProjectList extends HTMLElement {
         : inactiveCoderRenameItem);
     }
     if (chip.dataset.chipKind === "coder" && chip.dataset.chipId && main) {
-      items.push(chip.dataset.chipSteered
+      items.push(steeredByItem(chip), chip.dataset.chipSteered
         ? {
           label: "Release",
           icon: "ti-steering-wheel-off",

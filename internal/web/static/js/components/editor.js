@@ -14,7 +14,7 @@ import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, S
 import { matchesTokens, rankTokens } from "@dc/filter";
 import { appPath, csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
 import { renameCoder, renameShell } from "@dc/rename";
-import { alsoDropped, releaseCoder, steerCoder } from "@dc/steer";
+import { alsoDropped, releaseCoder, steerCoder, steeredByItem } from "@dc/steer";
 import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
 import * as editorLSP from "@dc/editor-lsp";
@@ -10812,7 +10812,7 @@ async function init(root) {
       });
     }
     if (coder && !guest) {
-      items.push(tab.hasAttribute("data-term-steered")
+      items.push(steeredByItem(tab), tab.hasAttribute("data-term-steered")
         ? {
           label: "Release",
           icon: "ti-steering-wheel-off",

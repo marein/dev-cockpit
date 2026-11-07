@@ -48,7 +48,7 @@
        data-tab-id="{{.ID}}" data-tab-kind="split" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-members="{{.MemberIDs}}" data-tab-member-kinds="{{.MemberKinds}}" data-tab-member-cols="{{.MemberCols}}"
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
       <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-tab-icon data-notify-targets="{{.MemberIDs}}" aria-hidden="true"><i class="ti ti-layout"></i>{{template "news_dot.gohtml"}}</span>
-      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>{{end}}</span>
+      {{$t := .}}<span class="d-none" aria-hidden="true">{{range $t.Members}}<span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}}{{template "steered_tab.gohtml" (dict "Coder" .Coder "By" ($.SteeredBy .ID))}} data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} data-member-name="{{.Name}}" data-member-url="/splits/{{$t.ID}}?focus={{.ID}}">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>{{end}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         <span class="terminal-tab-project">{{if .Project}}{{.Project}} · {{end}}{{len .Members}} terminals</span>
@@ -65,7 +65,7 @@
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}" data-tab-group="{{$t.ID}}"
        {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{with coderRename .Coder}} data-tab-renames="{{.}}"{{end}} data-tab-coder-label="{{coderLabel .Coder}}"{{end}}
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}}{{template "steered_tab.gohtml" (dict "Coder" .Coder "By" ($.SteeredBy .ID))}} data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
       <span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
         {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
@@ -81,10 +81,10 @@
        data-tab-id="{{.ID}}" data-tab-kind="{{.Kind}}" data-tab-name="{{.Name}}" data-tab-project="{{.Project}}"
        {{- if .Coder}}{{if index $.Steered .ID}} data-tab-steered="1"{{end}}{{with index $.SteerPrefill .ID}} data-tab-steer-prefill="{{.}}"{{end}}{{with coderRename .Coder}} data-tab-renames="{{.}}"{{end}} data-tab-coder-label="{{coderLabel .Coder}}"{{end}}
        title="{{.Name}}{{if .Project}} ({{.Project}}){{end}}">
-      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}} data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
-      <span class="terminal-tab-text">
+      <span class="terminal-tab-icon dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if and .Coder (index $.Steered .ID)}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}}{{template "steered_tab.gohtml" (dict "Coder" .Coder "By" ($.SteeredBy .ID))}} data-tab-icon data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
+      {{$by := $.SteeredBy .ID}}<span class="terminal-tab-text">
         <span class="terminal-tab-name">{{.Name}}</span>
-        {{if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
+        {{if and .Coder $by}}<span class="terminal-tab-project d-flex align-items-center gap-2">{{with .Project}}<span class="text-truncate">{{.}}</span>{{end}}{{template "steered_by_row.gohtml" $by}}</span>{{else if .Project}}<span class="terminal-tab-project">{{.Project}}</span>{{end}}
       </span>
       {{if or (not $.Access.Guest) (and .Coder ($.Access.Can "terminals"))}}<span class="terminal-tab-close" data-tab-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
         <i class="ti ti-x" aria-hidden="true"></i>

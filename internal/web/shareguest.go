@@ -211,7 +211,7 @@ func (s *Server) guestStands(g *guest, sh share.Share, id string) bool {
 // wear the steered mark and the working ring the owner's icons wear, which
 // name no assistant; the steer dialog's prefill stays the owner's.
 func (s *Server) guestPage(c *gin.Context, g *guest, title, activeTab string) render.Page {
-	steered, _ := s.watcher.Marks()
+	steered, _, _ := s.steerMarks()
 	return render.Page{
 		Title:      title,
 		ActiveTab:  activeTab,

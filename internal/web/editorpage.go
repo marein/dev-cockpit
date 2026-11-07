@@ -204,7 +204,6 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 		return
 	}
 	acc := accessOf(c)
-	steered, prefill := s.watcher.Marks()
 	page := s.page(c, "", "projects")
 	sessions := []render.EditorTerminal{}
 	for _, t := range s.terminalTabs() {
@@ -223,12 +222,13 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 			TextURL:       base + "/copy",
 			ScrollHistory: t.Kind == "shell",
 			Working:       t.Working,
-			Steered:       steered[t.ID],
+			Steered:       page.Steered[t.ID],
+			SteeredBy:     page.SteeredBy(t.ID),
 		}
 		if !acc.Guest {
 			et.ResizeURL = base + "/resize"
 			et.HasNews = t.HasNews
-			et.SteerPrefill = prefill[t.ID]
+			et.SteerPrefill = page.SteerPrefill[t.ID]
 		}
 		if acc.Can(share.TerminalInput) {
 			et.InputURL = base + "/input"
