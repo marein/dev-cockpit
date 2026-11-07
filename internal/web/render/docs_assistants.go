@@ -51,7 +51,7 @@ func docsAssistantsTopic() DocsTopic {
 				Title:    "As many as you want",
 				Tag:      "Side by side",
 				TagClass: "bg-blue-lt",
-				Desc:     `The new-assistant button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts another one, asking which coder answers when more than one is installed. Each keeps its own thread and its own steered coders and they all stay live. Its row says the name, how many coders it holds and when it last spoke; its menu renames, shares and deletes it, thread and files included.`,
+				Desc:     `The new-assistant button <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> starts another one, asking which coder answers when more than one is installed. Ask an assistant to start one, with a name and a first message, or to prompt one that already runs, itself included, in its chat or in the task of a trigger, and it does: the message goes in as if you had sent it, answered at once or waiting in the queue while that one is busy. It never does either on its own idea. Each keeps its own thread and its own steered coders and they all stay live. Its row says the name, how many coders it holds and when it last spoke; its menu renames, shares and deletes it, thread and files included.`,
 			},
 			{
 				Title:    "Say the next thing right away",

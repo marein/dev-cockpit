@@ -49,6 +49,10 @@ func (s *Server) assistantSend(c *gin.Context, id string) {
 		s.assistantActionError(c, id, err)
 		return
 	}
+	if s.localCall(c) {
+		s.assistantPrompt(c, id)
+		return
+	}
 	attachments, err := s.assistantAttachments(id, c.PostFormArray("attachment"))
 	if err != nil {
 		s.assistantActionError(c, id, err)
@@ -62,6 +66,20 @@ func (s *Server) assistantSend(c *gin.Context, id string) {
 	// The message took the draft with it, so the other devices empty their
 	// composer instead of holding words that are already in the transcript.
 	s.publishDraft(id)
+	s.assistantRunResponse(c, id, run)
+}
+
+// assistantPrompt is a send over the local socket, what `assistant-send-prompt`
+// posts: the message goes in as one the user typed, answered now or waiting in
+// the queue, and the words the user has not sent yet stay in the composer.
+// When to run it is the assistant's instructions' rule, on the user's word
+// alone; the server checks the input.
+func (s *Server) assistantPrompt(c *gin.Context, id string) {
+	run, err := s.assistants.Prompt(id, c.PostForm("message"))
+	if err != nil {
+		s.assistantActionError(c, id, err)
+		return
+	}
 	s.assistantRunResponse(c, id, run)
 }
 

@@ -80,6 +80,11 @@ type Summary struct {
 	CoderID       string    `json:"coderId"`
 	CreatedAt     time.Time `json:"createdAt"`
 	LastMessageAt time.Time `json:"lastMessageAt"`
+	// Named marks an assistant somebody gave its name, on the page or with
+	// assistant-new, so no message renames it, not even when the name is the
+	// default's. One stored before carries none and its next message names it
+	// while it holds the default, as it always did.
+	Named bool `json:"named,omitempty"`
 	// Preview is the opening of the last assistant answer, bounded for the list.
 	Preview string `json:"preview"`
 	// Running marks an assistant whose last answer is still being written. It is

@@ -401,6 +401,10 @@ func (s *Server) handleAssistantNew(c *gin.Context) {
 // there. The memory is shared, so a new one knows what the others know and
 // only starts its own thread.
 func (s *Server) assistantNew(c *gin.Context, coderID string) {
+	if s.localCall(c) {
+		s.assistantStart(c, strings.TrimSpace(coderID))
+		return
+	}
 	created, err := s.assistants.Create(strings.TrimSpace(coderID))
 	if err != nil {
 		if wantsJSON(c.Request) {

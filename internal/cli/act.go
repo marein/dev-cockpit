@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/filesystem"
 	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/plaintext"
 	"github.com/spf13/cobra"
 )
 
@@ -468,6 +470,108 @@ func runDeleteAssistant(out io.Writer, opts inspectOptions, id string) error {
 	if released, _ := answer["released"].(string); released != "" {
 		fmt.Fprintln(out, released)
 	}
+	return nil
+}
+
+// newNewAssistantCommand starts another assistant. The help repeats the rule
+// of the instructions, because a turn reads this right before it runs it; the
+// rule is the instructions' alone, the server refuses no caller.
+func newNewAssistantCommand(opts *inspectOptions) *cobra.Command {
+	var coderID, name, message string
+	cmd := &cobra.Command{
+		Use:   "assistant-new",
+		Short: "Start another assistant, only when the user asks for exactly that",
+		Long: "Start an assistant the way the page's New does: a thread, a workspace, jobs and " +
+			"triggers of its own, the memory every assistant shares, nothing of yours. The first " +
+			"message is answered the way the user's own messages are, so it has to stand alone: " +
+			"the new assistant reads nothing of your thread. Prints the new id and its name, " +
+			"which is what the user finds it by. Run it only when the user asked for exactly that, " +
+			"never on your own idea: a trigger or a sequel whose task the user asked for counts as " +
+			"their word, a task you thought of yourself does not. One call starts one assistant.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runNewAssistant(cmd.OutOrStdout(), *opts, coderID, name, message)
+		},
+	}
+	cmd.Flags().StringVar(&coderID, "coder", "", "which coder answers (default: the one New on the page offers)")
+	cmd.Flags().StringVar(&name, "name", "", "what it is called (default: named after its first message)")
+	cmd.Flags().StringVar(&message, "message", "", "its first message, answered as if the user had sent it")
+	return cmd
+}
+
+func runNewAssistant(out io.Writer, opts inspectOptions, coderID, name, message string) error {
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	form := url.Values{"form": {"new"}}
+	for field, value := range map[string]string{"coder": coderID, "name": name, "message": message} {
+		if value = strings.TrimSpace(value); value != "" {
+			form.Set(field, value)
+		}
+	}
+	created, err := client.PostForm("/assistants/new", form, actionTimeout)
+	if err != nil {
+		return err
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		return errors.New("The cockpit started the assistant but did not name it.")
+	}
+	line := fmt.Sprintf("assistant %s started, called %s", id, quoted(plaintext.Visible(text(created["name"]))))
+	if jsonBool(created["answering"]) {
+		line += ", answering its first message"
+	}
+	fmt.Fprintln(out, line)
+	if failed, _ := created["messageError"].(string); failed != "" {
+		return errors.New(failed)
+	}
+	return nil
+}
+
+// newSendPromptAssistantCommand sends a prompt to an assistant that already
+// runs. Like assistant-new, the help repeats the rule of the instructions,
+// because a turn reads this right before it runs it; the server refuses no
+// caller.
+func newSendPromptAssistantCommand(opts *inspectOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:   "assistant-send-prompt <id> <text>",
+		Short: "Send a prompt to an assistant, only when the user asks for exactly that",
+		Long: "Send text to an assistant that already runs, another one or yourself, the way the user " +
+			"types into its composer: it is the user's own message there, nothing marks it as yours. " +
+			"It is answered at once, or waits in that assistant's queue while it answers something " +
+			"else, sent to yourself until this turn ends. That assistant reads nothing of your thread, " +
+			"so the text has to stand alone. The id is from `assistant-list`. Prints which assistant " +
+			"got it and whether it answers now or waits. Run it only when the user asked for exactly " +
+			"that, never on your own idea: a trigger or a sequel whose task the user asked for counts " +
+			"as their word, a task you thought of yourself does not.",
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSendPromptAssistant(cmd.OutOrStdout(), *opts, args[0], strings.Join(args[1:], " "))
+		},
+	}
+}
+
+func runSendPromptAssistant(out io.Writer, opts inspectOptions, id, message string) error {
+	id = strings.TrimSpace(id)
+	if !assistant.ValidID(id) {
+		return fmt.Errorf("No assistant %q. `assistant-list` names the ones there are.", id)
+	}
+	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
+	if err != nil {
+		return err
+	}
+	sent, err := client.PostForm("/assistants/"+id, url.Values{"form": {"message"}, "message": {message}}, actionTimeout)
+	if err != nil {
+		return err
+	}
+	line := fmt.Sprintf("prompt sent to assistant %s, called %s", id, quoted(plaintext.Visible(text(sent["title"]))))
+	if jsonBool(sent["queued"]) {
+		line += ", waiting in its queue"
+	} else {
+		line += ", answering it now"
+	}
+	fmt.Fprintln(out, line)
 	return nil
 }
 

@@ -881,6 +881,41 @@ func TestAssistantListCapsAndNamesTheDroppedTail(t *testing.T) {
 	}
 }
 
+// A name is stored as typed and may hold a control or an invisible character;
+// every command that prints one prints it visible, so it can neither steer
+// the terminal nor turn the line around.
+func TestCommandsPrintAssistantNamesVisible(t *testing.T) {
+	const raw = "Old \x1b[31m name\u202e"
+	const visible = `Old \x1b[31m name\u202e`
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == assistantsPath {
+			_, _ = w.Write([]byte(`{"assistants":[{"id":"conv-1","title":"Old \u001b[31m name\u202e","coderId":"claude"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"conv-1","title":"Old \u001b[31m name\u202e","coderId":"claude","messages":[]}`))
+	})
+
+	var list, show strings.Builder
+	if err := runAssistants(&list, inspectOptions{stateDir: dir}, ""); err != nil {
+		t.Fatalf("assistant-list: %v", err)
+	}
+	if err := runAssistantShow(&show, inspectOptions{stateDir: dir}, "conv-1", "", 0, false); err != nil {
+		t.Fatalf("assistant-show: %v", err)
+	}
+	job := jobLine{Terminal: "aaa", Name: "readme-task", State: "steering", Open: true, MaxWakes: 10, DoneWhen: "x", OwnerName: raw}
+	for command, out := range map[string]string{
+		"assistant-list": list.String(),
+		"assistant-show": show.String(),
+		"job-show":       formatJob(time.Now(), job),
+		"job-list":       formatJobs(jobsReport{Now: time.Now(), Jobs: []jobLine{job}, Owners: true}),
+	} {
+		if !strings.Contains(out, visible) || strings.ContainsAny(out, "\x1b\u202e") {
+			t.Fatalf("%s printed the name raw:\n%s", command, out)
+		}
+	}
+}
+
 // --contains travels as a query the server filters by, the command only caps
 // and prints. An empty answer still says what was searched.
 func TestAssistantListPassesTheContainsWord(t *testing.T) {

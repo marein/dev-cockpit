@@ -328,7 +328,7 @@ func formatAssistants(contains, own string, answer map[string]any) string {
 		if own != "" && id == own {
 			mark = "*"
 		}
-		fmt.Fprintf(&b, " %s%-9s %s", mark, orDash(coder), quoted(title))
+		fmt.Fprintf(&b, " %s%-9s %s", mark, orDash(coder), quoted(plaintext.Visible(title)))
 		if jobs := jsonCount(m["openJobs"]); jobs > 0 {
 			fmt.Fprintf(&b, "  steering %d", jobs)
 		}
@@ -668,7 +668,7 @@ func formatAssistantThread(contains string, answer map[string]any) string {
 	total := jsonCount(answer["messageCount"])
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Assistant %s", quoted(title))
+	fmt.Fprintf(&b, "Assistant %s", quoted(plaintext.Visible(title)))
 	if coder != "" {
 		fmt.Fprintf(&b, " on coder %s", coder)
 	}
@@ -1083,7 +1083,7 @@ func formatJob(now time.Time, job jobLine) string {
 	fmt.Fprintf(&b, "Job %s\n", quoted(name))
 	fmt.Fprintf(&b, "  terminal  %s\n", job.Terminal)
 	if job.OwnerName != "" {
-		fmt.Fprintf(&b, "  steered by %s\n", job.OwnerName)
+		fmt.Fprintf(&b, "  steered by %s\n", plaintext.Visible(job.OwnerName))
 	}
 	if job.Coder != "" {
 		fmt.Fprintf(&b, "  coder     %s\n", job.Coder)
@@ -1238,7 +1238,7 @@ func writeJobLines(b *strings.Builder, now time.Time, job jobLine, full bool) {
 	// your own list the answer is always you, and a line repeating that on
 	// every job is noise paid for in the answer that carries it.
 	if job.OwnerName != "" {
-		fmt.Fprintf(b, "    steered by: %s\n", job.OwnerName)
+		fmt.Fprintf(b, "    steered by: %s\n", plaintext.Visible(job.OwnerName))
 	}
 	// A closed job says what became of it in its state, and that is everything
 	// a list has to say about it. Its criterion and the report of its last

@@ -171,6 +171,19 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 				// which forbids working a time out in the first place.
 				"the schedule falls out once", "the schedule fires twice"}},
 		{"coder-stop", nil, []string{"a trigger on this terminal stands", "the session keeps its identifier"}},
+		// The rule a start of an assistant runs under stands in the
+		// instructions and again here, read right before the call.
+		{"assistant-new", []string{"coder", "name", "message"}, []string{"the way the page's New does", "nothing of yours",
+			"reads nothing of your thread", "Prints the new id and its name",
+			"only when the user asked for exactly that, never on your own idea",
+			"a trigger or a sequel whose task the user asked for counts as their word", "One call starts one assistant"}},
+		// A prompt into a running assistant stands under the same rule, and
+		// the asking turn has to know it reads as the user's own there.
+		{"assistant-send-prompt", nil, []string{"another one or yourself", "the way the user types into its composer",
+			"nothing marks it as yours", "waits in that assistant's queue", "the text has to stand alone",
+			"Prints which assistant got it and whether it answers now or waits",
+			"only when the user asked for exactly that, never on your own idea",
+			"a trigger or a sequel whose task the user asked for counts as their word"}},
 		// A delete takes the whole assistant, its triggers with it, and this
 		// is the one place somebody reads before running it. The instructions
 		// name the same three, because an assistant that answers "your

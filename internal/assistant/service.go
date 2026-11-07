@@ -338,7 +338,8 @@ func (s *Service) chatRunLocked(instanceID string) *activeRun {
 // Create starts a new assistant. coderID picks the coder that answers for it
 // and is empty for the first installed one. It is the one way in, and it is
 // always somebody asking: nothing in the cockpit creates an assistant by
-// itself, so the list only ever holds what the user made.
+// itself, so the list only ever holds what the user made, on the page or by
+// asking an assistant for one, see CreateWith.
 func (s *Service) Create(coderID string) (Instance, error) {
 	coders := s.coders.Available()
 	if len(coders) == 0 {
@@ -462,6 +463,7 @@ func (s *Service) Rename(id, rawTitle string) error {
 		return errors.New("Assistant not found.")
 	}
 	c.Title = title
+	c.Named = true
 	c.UpdatedAt = s.now().UTC()
 	s.store.Save(c)
 	s.mu.Unlock()

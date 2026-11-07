@@ -345,6 +345,31 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     shown=$(eval "$show" 2>&1) || shown="forge-show failed: $shown"
     answer=$(printf 'Event: %s\n\n```\n%s\n```' "$event" "$shown")
     ;;
+  *SPAWN:*)
+    # assistant-new run the way the instructions spell it, through the wrapper
+    # with nothing else on the line: named by the word behind SPAWN: and handed
+    # MAGIC as its first message, so the new assistant answers AIRPORT. The
+    # answer is what the command printed.
+    spawn=$(printf '%s' "$prompt" | grep -o 'SPAWN:[A-Za-z0-9-]*' | head -1 | cut -d: -f2)
+    spawned=$("$PWD/cockpit" assistant-new --name "$spawn" --message MAGIC 2>&1) || spawned="failed: $spawned"
+    answer=$(printf '```\n%s\n```' "$spawned")
+    ;;
+  *PROMPT_TO:*)
+    # assistant-send-prompt run the way the instructions spell it: PROMPT_TO:<id>:<word>
+    # sends MAGIC <word> to that assistant, which answers AIRPORT. The answer is
+    # what the command printed.
+    target=$(printf '%s' "$prompt" | grep -o 'PROMPT_TO:[A-Za-z0-9-]*:[A-Za-z0-9-]*' | head -1)
+    to=$(printf '%s' "$target" | cut -d: -f2)
+    word=$(printf '%s' "$target" | cut -d: -f3)
+    sent=$("$PWD/cockpit" assistant-send-prompt "$to" "MAGIC $word" 2>&1) || sent="failed: $sent"
+    answer=$(printf '```\n%s\n```' "$sent")
+    ;;
+  *INSTRUCTIONS:*)
+    # The lines of the instruction file this turn runs under that carry the
+    # word behind INSTRUCTIONS:, so a runner reads what an assistant is told.
+    word=$(printf '%s' "$prompt" | grep -o 'INSTRUCTIONS:[A-Za-z0-9-]*' | head -1 | cut -d: -f2)
+    answer=$(grep -F -- "$word" "$PWD/CLAUDE.md" || echo "no line carries $word")
+    ;;
   *OWNER*)
     # A cockpit command run the way the instructions say, through the wrapper
     # in the workspace by its path and nothing else on the line. The list marks

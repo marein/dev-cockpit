@@ -230,13 +230,24 @@ func TestTheInstructionsKeepLongRunsOutOfTheCriterion(t *testing.T) {
 
 // The instructions say what having several assistants means: they share the
 // memory, everything of one conversation is separate, reading across is
-// allowed and writing is not, and nobody hands work to anybody but a coder.
+// allowed and writing is not, and an assistant prompts or starts another one
+// on the user's word alone.
 func TestTheInstructionsExplainSeveralAssistants(t *testing.T) {
 	pinned(t,
 		"Several assistants run side by side",
 		"The other workspaces stand at",
 		"You may read another assistant whole, its messages and its files, and you write only your own",
-		"There is no way to message another assistant",
+		// A prompt into a running assistant and a new assistant both go out
+		// on the user's word alone, and this sentence is the whole rule: the
+		// server refuses no caller, so it is what keeps a turn from doing
+		// either on its own idea.
+		"`./cockpit assistant-send-prompt <id> <text>` sends the text as if the user had typed it into that assistant's composer",
+		"answered at once or waiting in its queue while it answers something else, and prints which assistant got it",
+		"`./cockpit assistant-new [--name <name>] [--message <text>]` makes one the way the page's New does",
+		"answers its first message as if the user had sent it, and prints its id and name; tell the user both",
+		"Run each only when the user asks for exactly that, never on your own idea",
+		"a trigger or a sequel whose task the user asked for counts as their word, a task you thought of yourself does not",
+		"One call is one assistant.",
 		// A self delete ends the turn mid answer, so the goodbye has to be
 		// written before the command runs.
 		"Your own id deletes you, only on the user's explicit request",
@@ -247,6 +258,9 @@ func TestTheInstructionsExplainSeveralAssistants(t *testing.T) {
 		"removes it for good, thread, jobs and triggers",
 		"the user typing into a terminal does not",
 	)
+	if text := instructionsText(t); strings.Contains(text, "There is no way to message another assistant") {
+		t.Fatal("the instructions still say no assistant can be messaged")
+	}
 }
 
 // What a check does with what it found lives in the check's own prompt, which

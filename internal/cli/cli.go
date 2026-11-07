@@ -283,7 +283,7 @@ func newAssistantCommand() *cobra.Command {
 		newSendCommand(opts), newKeysCommand(opts),
 		newSteerCommand(opts), newReleaseCommand(opts),
 		newResumeCoderCommand(opts), newStopCoderCommand(opts), newDeleteCoderCommand(opts),
-		newAssistantsCommand(opts), newAssistantCommandShow(opts), newDeleteAssistantCommand(opts),
+		newAssistantsCommand(opts), newAssistantCommandShow(opts), newNewAssistantCommand(opts), newSendPromptAssistantCommand(opts), newDeleteAssistantCommand(opts),
 		newJobsCommand(opts), newJobCommand(opts),
 		newNotificationsCommand(opts),
 		newTriggerNewCommand(opts), newTriggerListCommand(opts), newTriggerEditCommand(opts), newTriggerDeleteCommand(opts),

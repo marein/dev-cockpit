@@ -85,7 +85,7 @@ func (s *Service) send(id string, composer bool, compose func(Instance) (Message
 	// joins the transcript, and its headlines ride along in front of it.
 	since := notesSince(c)
 	c.Messages = append(c.Messages, user)
-	named := c.Title == "" || c.Title == DefaultTitle
+	named := c.awaitsName()
 	if named {
 		c.Title = deriveTitle(user.Content, user.Attachments)
 	}
@@ -324,7 +324,7 @@ func (s *Service) flushReady(instanceID string) {
 	}
 	// A queued first message is what names the assistant, the same way a sent
 	// one does: the turn it goes out in is the first anybody sees.
-	named := c.Title == "" || c.Title == DefaultTitle
+	named := c.awaitsName()
 	if named {
 		c.Title = deriveTitle(queued[0].Content, queued[0].Attachments)
 	}
@@ -524,6 +524,12 @@ func withAttachments(text string, attachments []Attachment) string {
 		fmt.Fprintf(&b, "- %s\n", a.Path)
 	}
 	return b.String()
+}
+
+// awaitsName reports whether the next message names the assistant: it holds
+// the default and nobody gave it a name.
+func (c Instance) awaitsName() bool {
+	return !c.Named && (c.Title == "" || c.Title == DefaultTitle)
 }
 
 // deriveTitle names an assistant after its first prompt, or after the file it

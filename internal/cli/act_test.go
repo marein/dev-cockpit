@@ -814,3 +814,90 @@ func TestDeletingSeveralIsOneRequest(t *testing.T) {
 		}
 	}
 }
+
+// assistant-new posts the page's create with the name, the first message and
+// the coder it was given, as the assistant on --as, and prints the id and the
+// name the cockpit answered. A first message that could not go out fails the
+// command after the line that says the assistant stands.
+func TestANewAssistantIsStartedWithANameAndAFirstMessage(t *testing.T) {
+	var path, assistantID string
+	var form url.Values
+	answer := `{"id":"b2","name":"Release\nnotes","answering":true}`
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		path, form = r.URL.Path, r.PostForm
+		assistantID = r.Header.Get(localapi.AssistantHeader)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(answer))
+	})
+	opts := inspectOptions{stateDir: dir, assistantID: "a1"}
+	var out strings.Builder
+	if err := runNewAssistant(&out, opts, "", " Release notes ", " Write the notes for 2.1. "); err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	want := url.Values{"form": {"new"}, "name": {"Release notes"}, "message": {"Write the notes for 2.1."}}
+	if path != "/assistants/new" || !reflect.DeepEqual(form, want) || assistantID != "a1" {
+		t.Fatalf("posted %s %v as %q", path, form, assistantID)
+	}
+	if out.String() != `assistant b2 started, called "Release\nnotes", answering its first message`+"\n" {
+		t.Fatalf("the output reads %q", out.String())
+	}
+
+	answer = `{"id":"b3","name":"New assistant","answering":false}`
+	out.Reset()
+	if err := runNewAssistant(&out, opts, "copilot", "", ""); err != nil {
+		t.Fatalf("new without a message: %v", err)
+	}
+	if form.Get("coder") != "copilot" || form.Has("name") || form.Has("message") || out.String() != "assistant b3 started, called \"New assistant\"\n" {
+		t.Fatalf("posted %v and printed %q", form, out.String())
+	}
+
+	answer = `{"id":"b4","name":"New assistant","answering":false,"messageError":"The coder could not be started."}`
+	out.Reset()
+	err := runNewAssistant(&out, opts, "", "", "hello")
+	if err == nil || err.Error() != "The coder could not be started." || !strings.HasPrefix(out.String(), "assistant b4 started") {
+		t.Fatalf("a first message that failed reads %q, %v", out.String(), err)
+	}
+}
+
+// assistant-send-prompt posts the page's send to the assistant it names, as
+// the assistant on --as, and prints which assistant got it and whether it
+// answers now or waits in its queue. An id that cannot be one reaches nothing.
+func TestAPromptIsSentToAnAssistantThatRuns(t *testing.T) {
+	var path, assistantID string
+	var form url.Values
+	answer := `{"runId":"r1","title":"Release\nnotes","queued":false}`
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		path, form = r.URL.Path, r.PostForm
+		assistantID = r.Header.Get(localapi.AssistantHeader)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(answer))
+	})
+	opts := inspectOptions{stateDir: dir, assistantID: "a1a1a1a1"}
+	var out strings.Builder
+	if err := runSendPromptAssistant(&out, opts, " b2b2b2b2 ", "Write the notes for 2.1."); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	want := url.Values{"form": {"message"}, "message": {"Write the notes for 2.1."}}
+	if path != "/assistants/b2b2b2b2" || !reflect.DeepEqual(form, want) || assistantID != "a1a1a1a1" {
+		t.Fatalf("posted %s %v as %q", path, form, assistantID)
+	}
+	if out.String() != `prompt sent to assistant b2b2b2b2, called "Release\nnotes", answering it now`+"\n" {
+		t.Fatalf("the output reads %q", out.String())
+	}
+
+	answer = `{"runId":"","title":"Helper","queued":true}`
+	out.Reset()
+	if err := runSendPromptAssistant(&out, opts, "a1a1a1a1", "and this too"); err != nil {
+		t.Fatalf("send to itself: %v", err)
+	}
+	if out.String() != "prompt sent to assistant a1a1a1a1, called \"Helper\", waiting in its queue\n" {
+		t.Fatalf("a waiting prompt reads %q", out.String())
+	}
+
+	path = ""
+	if err := runSendPromptAssistant(&out, opts, "../settings", "hello"); err == nil || path != "" {
+		t.Fatalf("an id that is none reached %q: %v", path, err)
+	}
+}
