@@ -367,7 +367,8 @@ templates plus ES modules.
 - There is one meaning, a target (coder, shell, job, run) has news.
   `internal/notify` has no finer event kinds and classifies nothing. A
   target holds at most one unread entry, follow ups within 30s are
-  swallowed unless the resolver marks them urgent.
+  swallowed unless the resolver marks them urgent or a failure follows
+  news that did not fail, which it then replaces.
 - Signals are coder native, never parsed from pane content: claude hooks,
   copilot's bell, an opencode plugin, OSC 133 marks for shells. Everything
   enters through the notify inbox under the state directory.
@@ -376,7 +377,10 @@ templates plus ES modules.
   wording lives next to `notifyResolver` in `internal/cli`.
 - Opening a target's page marks it read. The client holds new news for a
   short grace period, so a read in another tab can cancel it.
-- Blue marks news, red is for errors only (`news_dot.gohtml`).
+- Blue marks news, red is for errors only (`news_dot.gohtml`). News that
+  reports a failure is marked by the place that knows it failed
+  (`TargetInfo.Failed`), never read from its title, and its icon and toast
+  wear red. Its unread dot stays blue, the dot means unread.
 - `internal/push` forwards unread news off the page (Web Push, webhooks)
   after a short re-check.
 

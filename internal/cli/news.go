@@ -74,10 +74,11 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			// run in the same moment.
 			if run, ok := dockerService.LastComposeRun(project); ok {
 				info.Title, info.Detail = composeNews(run)
+				info.Failed = run.Failure != ""
 				// A failure is no follow-up: right after a success the fresh
 				// unread entry says everything went through, and the dedupe
 				// window would swallow the one word the user is owed.
-				info.Urgent = run.Failure != ""
+				info.Urgent = info.Failed
 				// The output of the run is what somebody wants after such a
 				// notification, not the row it ran for.
 				if run.ID != "" {
@@ -105,7 +106,7 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			if ok {
 				info.URL += "#message-" + m.ID
 			}
-			info.Title, info.Detail = assistantNews(info.Name, m)
+			info.Title, info.Detail, info.Failed = assistantNews(info.Name, m)
 			return info
 		}
 		if targetID == notify.BackupTarget {
@@ -115,6 +116,7 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			// newest finished entry is the one it is about.
 			if b, ok := backups.LastFinished(); ok {
 				info.Title, info.Detail = backupNews(b.Name, b.Done())
+				info.Failed = !b.Done()
 			}
 			return info
 		}
@@ -306,7 +308,12 @@ func assistantNewsName(entry assistant.Summary) string {
 // The job's name comes from the message's own note, never from a lookup: this
 // resolver runs before the job store exists, and a terminal that is steered
 // again would hand back the successor's job.
-func assistantNews(who string, m assistant.Message) (title, detail string) {
+//
+// failed is decided with the title, so the two never disagree: a compose run
+// or an approved action that failed, and a turn that broke off. A job that
+// ended blocked waits for the user and one that expired stopped being steered,
+// neither is a failure, the way the thread does not draw them red either.
+func assistantNews(who string, m assistant.Message) (title, detail string, failed bool) {
 	ident := ""
 	if m.Note != nil && m.Note.Source == assistant.NoteCheck {
 		// A job ends in one of three states and the title says which one, in
@@ -327,7 +334,7 @@ func assistantNews(who string, m assistant.Message) (title, detail string) {
 		case assistant.ComposeKindDone:
 			title = "Compose done."
 		case assistant.ComposeKindFailed:
-			title = "Compose failed."
+			title, failed = "Compose failed.", true
 		}
 		ident = m.Note.Name
 	}
@@ -338,7 +345,7 @@ func assistantNews(who string, m assistant.Message) (title, detail string) {
 		case approval.Done:
 			title = "Action approved."
 		case approval.Failed:
-			title = "Approved action failed."
+			title, failed = "Approved action failed.", true
 		case approval.Declined:
 			title = "Action declined."
 		}
@@ -354,7 +361,7 @@ func assistantNews(who string, m assistant.Message) (title, detail string) {
 		if unfinished {
 			// The word the thread and the code use for a turn that stopped
 			// before it was done.
-			title = "Trigger broke off."
+			title, failed = "Trigger broke off.", true
 		}
 	}
 	if title == "" {
@@ -362,7 +369,7 @@ func assistantNews(who string, m assistant.Message) (title, detail string) {
 		if unfinished {
 			// Whatever was written before it broke off is still the best line
 			// about what the turn was doing.
-			title = "Answer broke off."
+			title, failed = "Answer broke off.", true
 		}
 	}
 	// Nothing narrower than the assistant itself: an answer somebody asked
@@ -370,7 +377,7 @@ func assistantNews(who string, m assistant.Message) (title, detail string) {
 	if strings.TrimSpace(ident) == "" {
 		ident = who
 	}
-	return title, newsDetail(ident, answerExcerpt(m.Content))
+	return title, newsDetail(ident, answerExcerpt(m.Content)), failed
 }
 
 // newsTitleRunes is the room a title has. Every title above is a fixed

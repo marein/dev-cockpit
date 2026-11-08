@@ -1,8 +1,10 @@
 package notify
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -215,6 +217,138 @@ func TestUrgentNewsPassesTheDedupeWindow(t *testing.T) {
 	events := published()
 	if len(events) != 2 || events[1].Added == nil || events[1].Added.Title != "Compose failed." {
 		t.Fatalf("want the failure to ring with its own Added, got %+v", events)
+	}
+}
+
+// A failure is stored and fanned out as one, a success and plain news carry
+// no mark, and a read failure keeps it: only the unread dot goes, the color of
+// what it reported stays.
+func TestAFailureIsStoredAsOneAndKeepsItWhenRead(t *testing.T) {
+	s := NewService(filepath.Join(t.TempDir(), "notifications.json"), func(targetID string) TargetInfo {
+		if targetID == "failing" {
+			return TargetInfo{Name: "Backup", Title: "Backup failed.", Failed: true}
+		}
+		return TargetInfo{Name: "Backup", Title: "Backup ready."}
+	})
+	published := collect(t, s)
+
+	s.Add("failing")
+	s.Add("passing")
+
+	byTarget := map[string]Notification{}
+	for _, n := range s.List(0) {
+		byTarget[n.TargetID] = n
+	}
+	if n := byTarget["failing"]; !n.Failed || n.Title != "Backup failed." {
+		t.Fatalf("want the failure marked, got %+v", n)
+	}
+	if n := byTarget["passing"]; n.Failed || n.Title != "Backup ready." {
+		t.Fatalf("want the success unmarked, got %+v", n)
+	}
+	events := published()
+	if len(events) != 2 || events[0].Added == nil || !events[0].Added.Failed || events[1].Added == nil || events[1].Added.Failed {
+		t.Fatalf("want the toast trigger to carry the mark of each, got %+v", events)
+	}
+	failed, _ := json.Marshal(byTarget["failing"])
+	passed, _ := json.Marshal(byTarget["passing"])
+	if !strings.Contains(string(failed), `"failed":true`) || strings.Contains(string(passed), `"failed"`) {
+		t.Fatalf("want the mark on the wire for a failure alone, got %s and %s", failed, passed)
+	}
+
+	s.MarkAllRead()
+	for _, n := range s.List(0) {
+		if n.TargetID == "failing" && (!n.Read || !n.Failed) {
+			t.Fatalf("want a read failure that is still one, got %+v", n)
+		}
+	}
+}
+
+// An entry an older build wrote has no mark and reads as plain news, with
+// everything else it carried intact.
+func TestAnEntryOfAnOlderBuildReadsAsNews(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notifications.json")
+	old := `[{"id":"n1","targetId":"docker:shop","targetName":"Compose","title":"Compose failed.","detail":"Compose up","project":"shop","url":"/projects","createdAt":"2026-10-01T10:00:00Z","read":false}]`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewService(path, nil)
+
+	list := s.List(0)
+	if len(list) != 1 || list[0].Failed || list[0].Title != "Compose failed." || list[0].Detail != "Compose up" || list[0].Read {
+		t.Fatalf("want the old entry as it was, unmarked, got %+v", list)
+	}
+}
+
+// The mark is written with the words and never apart from them, so a failure
+// and a success of one target inside the dedupe window leave an entry whose
+// color says what its title says, whichever of them stands at the end. A
+// failure behind news that did not fail is never swallowed, it replaces that
+// entry and rings with its own Added, which is what push and webhooks deliver.
+func TestAFailureAndASuccessInsideTheWindowNeverMix(t *testing.T) {
+	cases := []struct {
+		what        string
+		first, then TargetInfo
+		want        TargetInfo
+		rings       bool
+	}{
+		{"compose failure after a success",
+			TargetInfo{Title: "Compose finished."},
+			TargetInfo{Title: "Compose failed.", Failed: true, Urgent: true},
+			TargetInfo{Title: "Compose failed.", Failed: true}, true},
+		{"compose success after a failure",
+			TargetInfo{Title: "Compose failed.", Failed: true, Urgent: true},
+			TargetInfo{Title: "Compose finished."},
+			TargetInfo{Title: "Compose failed.", Failed: true}, false},
+		{"backup failure after a success",
+			TargetInfo{Title: "Backup ready."},
+			TargetInfo{Title: "Backup failed.", Failed: true},
+			TargetInfo{Title: "Backup failed.", Failed: true}, true},
+		{"backup success after a failure",
+			TargetInfo{Title: "Backup failed.", Failed: true},
+			TargetInfo{Title: "Backup ready."},
+			TargetInfo{Title: "Backup failed.", Failed: true}, false},
+		{"backup failure after a failure",
+			TargetInfo{Title: "Backup failed.", Detail: "first", Failed: true},
+			TargetInfo{Title: "Backup failed.", Detail: "second", Failed: true},
+			TargetInfo{Title: "Backup failed.", Detail: "first", Failed: true}, false},
+		{"backup success after a success",
+			TargetInfo{Title: "Backup ready.", Detail: "first"},
+			TargetInfo{Title: "Backup ready.", Detail: "second"},
+			TargetInfo{Title: "Backup ready.", Detail: "first"}, false},
+	}
+	for _, c := range cases {
+		s := testService(t)
+		s.AddResolved("target", c.first)
+		published := collect(t, s)
+		s.AddResolved("target", c.then)
+		list := s.List(0)
+		if len(list) != 1 || list[0].Read || list[0].Title != c.want.Title || list[0].Detail != c.want.Detail || list[0].Failed != c.want.Failed {
+			t.Fatalf("%s: want %q %q failed=%v alone and unread, got %+v", c.what, c.want.Title, c.want.Detail, c.want.Failed, list)
+		}
+		events := published()
+		if !c.rings {
+			if len(events) != 0 {
+				t.Fatalf("%s: want it swallowed without a word, got %+v", c.what, events)
+			}
+			continue
+		}
+		if len(events) != 1 || events[0].Added == nil || events[0].Added.ID != list[0].ID || !events[0].Added.Failed || events[0].Unread != 1 || len(events[0].Targets) != 1 || events[0].Targets[0] != "target" {
+			t.Fatalf("%s: want the failure to ring as the target's one unread entry, got %+v", c.what, events)
+		}
+		if !s.UnreadTargets()["target"] {
+			t.Fatalf("%s: want the target unread for the push re-check", c.what)
+		}
+	}
+
+	// A failure that was read is history: the success after it is a line of
+	// its own, and neither takes the other's color.
+	s := testService(t)
+	s.AddResolved("target", TargetInfo{Title: "Compose failed.", Failed: true})
+	s.MarkAllRead()
+	s.AddResolved("target", TargetInfo{Title: "Compose finished."})
+	list := s.List(0)
+	if len(list) != 2 || list[0].Failed || list[0].Read || !list[1].Failed || !list[1].Read {
+		t.Fatalf("want an unread success over a read failure, got %+v", list)
 	}
 }
 

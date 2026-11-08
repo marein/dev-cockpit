@@ -97,7 +97,7 @@ func pipelineEnded(publish func(assistant.PipelineReport), notifier *notify.Serv
 		if report.Kind != assistant.PipelineKindFailed {
 			return
 		}
-		info := notify.TargetInfo{Name: report.Project, Project: report.Project, URL: "/projects/" + url.PathEscape(report.Project) + "/editor?view=pipeline"}
+		info := notify.TargetInfo{Name: report.Project, Project: report.Project, URL: "/projects/" + url.PathEscape(report.Project) + "/editor?view=pipeline", Failed: true}
 		info.Title, info.Detail = pipelineNews(report)
 		notifier.AddResolved(notify.PipelineTarget(report.Project), info)
 	}

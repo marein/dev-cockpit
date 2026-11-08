@@ -127,4 +127,7 @@ func TestAFailedPipelineAloneIsNews(t *testing.T) {
 	if n.Title != "Pipeline failed." || n.Detail != "feature in my shop, merge request !4: unit" {
 		t.Fatalf("the news reads %q and %q", n.Title, n.Detail)
 	}
+	if !n.Failed {
+		t.Fatalf("the failure is not marked as one: %+v", n)
+	}
 }

@@ -481,7 +481,7 @@ func DocsTopics() []DocsTopic {
 			Title: "Notifications",
 			Icon:  "ti-bell-ringing",
 			Lead:  "When a coder or shell has news, and where it shows.",
-			Intro: `Every notification reads the same way round: one line saying what happened, and below it which coder, shell, job or command it happened to and a piece of what was written. The title is always the same short sentence, so a stack of them reads at a glance, and the name stands where a phone gives it room. Each target has at most one unread entry, and follow-up signals within 30 seconds are grouped on purpose. Opening a visible coder, shell or split pane marks its news read everywhere. Terminal icons double as status lights: green busy, blue unread, gray idle.`,
+			Intro: `Every notification reads the same way round: one line saying what happened, and below it which coder, shell, job or command it happened to and a piece of what was written. The title is always the same short sentence, so a stack of them reads at a glance, and the name stands where a phone gives it room. Each target has at most one unread entry, and follow-up signals within 30 seconds are grouped on purpose, only a failure replaces unread news that did not fail. Opening a visible coder, shell or split pane marks its news read everywhere. Terminal icons double as status lights: green busy, blue unread, gray idle.`,
 			Items: []DocsItem{
 				{
 					Title: "Coders",
@@ -499,7 +499,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "In the browser",
-					Desc:  `The bell <i class="ti ti-bell align-text-bottom" aria-hidden="true"></i>, the blue marks on terminals and projects, the browser title, a toast and the jingle all show the same unread notifications; the bell opens the list, where single entries or everything can be marked read. On a phone the Cockpit tab shows a dot and its sheet holds the list. Sound needs one browser interaction first, its volume is stored per device.`,
+					Desc:  `The bell <i class="ti ti-bell align-text-bottom" aria-hidden="true"></i>, the blue marks on terminals and projects, the browser title, a toast and the jingle all show the same unread notifications; the bell opens the list, where single entries or everything can be marked read. News of a failure wears a red icon and toast, and the icon stays red once read: a compose run, pipeline, backup, post script or approved action that failed, and an assistant turn that broke off. The unread dot is blue for every entry, failed or not. On a phone the Cockpit tab shows a dot and its sheet holds the list. Sound needs one browser interaction first, its volume is stored per device.`,
 				},
 				{
 					Title:    "A steered coder stays quiet",

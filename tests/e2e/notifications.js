@@ -66,6 +66,104 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage, bag }) => {
       assert(bells.dot === 1, "the Cockpit tab carries no dot");
     });
 
+    await run("a failure's icon and toast read red in the center, the Cockpit sheet and Show all, every unread dot stays blue", async () => {
+      const at = new Date().toISOString();
+      const entry = (id, title, extra) => ({ id, targetId: `e2e-${id}`, targetName: id, title, detail: `${id} ${tag}`, project: "", url: "/projects", createdAt: at, read: false, ...extra });
+      // The older entry is what a build before the failure mark stored: no
+      // field at all. The read failure keeps its red icon, only the dot goes.
+      const entries = [
+        entry("failed", "Compose failed.", { failed: true }),
+        entry("seen", "Pipeline failed.", { failed: true, read: true }),
+        entry("older", "Compose finished."),
+        entry("passed", "Compose finished.", { failed: false }),
+      ];
+      const want = { failed: ["red", "blueDot"], seen: ["red", null], older: ["blue", "blueDot"], passed: ["blue", "blueDot"] };
+      const answer = (route) => (route.request().method() === "GET"
+        ? route.fulfill({ contentType: "application/json", body: JSON.stringify({ notifications: entries, unread: 3 }) })
+        : route.continue());
+      // palette reads Tabler's own red and blue off probes, rows the icon color
+      // and the unread dot of each row, null where the row shows none.
+      const palette = (target) => target.evaluate(() => {
+        const read = (cls, prop) => {
+          const el = document.createElement("span");
+          el.className = cls;
+          document.body.append(el);
+          const value = getComputedStyle(el)[prop];
+          el.remove();
+          return value;
+        };
+        return { red: read("text-danger", "color"), blue: read("text-primary", "color"), info: read("text-info", "color"), blueDot: read("bg-blue", "backgroundColor") };
+      });
+      const rows = (target, scope) => target.evaluate((scope) => Object.fromEntries([...document.querySelectorAll(`${scope} a[data-notify-id]`)].map((a) => {
+        const dot = a.querySelector(".status-dot");
+        return [a.dataset.notifyId, {
+          icon: getComputedStyle(a.querySelector(".dc-notify-icon")).color,
+          dot: dot && dot.getClientRects().length ? getComputedStyle(dot).backgroundColor : null,
+        }];
+      })), scope);
+      const judge = async (where, target, scope, ids) => {
+        const tone = await palette(target);
+        const seen = await rows(target, scope);
+        assert(tone.red !== tone.blue, `${where}: red and blue read alike`);
+        const problems = [];
+        for (const id of ids) {
+          const row = seen[id];
+          const [icon, dot] = want[id];
+          if (!row) { problems.push(`${id}: no row`); continue; }
+          if (row.icon !== tone[icon]) problems.push(`${id}: icon ${row.icon}, want ${icon} ${tone[icon]}`);
+          if (row.dot !== (dot ? tone[dot] : null)) problems.push(`${id}: dot ${row.dot}, want ${dot ? tone[dot] : "none"}`);
+        }
+        assert(!problems.length, `${where}: ${problems.join("; ")}`);
+      };
+
+      await page.route("**/notifications", answer);
+      try {
+        await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        assert((await L.waitUpgraded(page, ["dc-notifications"], 8000)).length === 0, "dc-notifications not upgraded");
+        await page.locator(".dc-notify-bell:visible").first().click();
+        await page.waitForSelector('.dc-notify-menu.show a[data-notify-id="passed"]', { timeout: 6000 });
+        await judge("the bell", page, ".dc-notify-menu.show", Object.keys(want));
+        await page.keyboard.press("Escape");
+      } finally {
+        await page.unroute("**/notifications", answer);
+      }
+
+      const mp = await mobilePage();
+      await mp.route("**/notifications", answer);
+      try {
+        await mp.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        await mp.tap('.dc-tabbar button[data-ctx-area="cockpit"]');
+        await mp.waitForSelector('dc-ctx-sheet [data-cockpit-section=news] a[data-notify-id="older"]', { timeout: 8000 });
+        await judge("the Cockpit sheet", mp, "dc-ctx-sheet [data-cockpit-section=news]", ["failed", "seen", "older"]);
+        await mp.tap("dc-ctx-sheet [data-cockpit-show-all]");
+        await mp.waitForSelector('dc-ctx-sheet [data-cockpit-news] a[data-notify-id="passed"]', { timeout: 8000 });
+        await judge("Show all", mp, "dc-ctx-sheet [data-cockpit-news]", Object.keys(want));
+        await mp.keyboard.press("Escape");
+      } finally {
+        await mp.unroute("**/notifications", answer);
+      }
+
+      // The toast reads what the stream's added entry says. The page is loaded
+      // fresh afterwards, so the fired state leaves nothing behind.
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      assert((await L.waitUpgraded(page, ["dc-notifications"], 8000)).length === 0, "dc-notifications not upgraded");
+      const toastTone = async (added) => {
+        await page.evaluate((a) => document.dispatchEvent(new CustomEvent("dc:notifications", {
+          detail: { unread: 1, targets: [a.targetId], terminals: [], assistants: [], added: a },
+        })), added);
+        await page.waitForFunction((text) => [...document.querySelectorAll(".dc-toast")].some((t) => t.textContent.includes(text) && t.getClientRects().length), added.detail, { timeout: 6000 });
+        return page.evaluate((text) => getComputedStyle([...document.querySelectorAll(".dc-toast")]
+          .find((t) => t.textContent.includes(text)).querySelector("i.ti")).color, added.detail);
+      };
+      const tone = await palette(page);
+      assert(tone.red !== tone.info, `red and the toast's info color read alike: ${JSON.stringify(tone)}`);
+      const red = await toastTone(entry("toast-failed", "Compose failed.", { failed: true }));
+      assert(red === tone.red, `the failure's toast glyph reads ${red}, want ${tone.red}`);
+      const plain = await toastTone(entry("toast-older", "Compose finished."));
+      assert(plain === tone.info, `the older entry's toast glyph reads ${plain}, want ${tone.info}`);
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    });
+
     await run("settings: volume bar drives the notification player's volume, the master stays at 1", async () => {
       await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
       assert((await L.waitUpgraded(page, ["dc-notify-volume"], 8000)).length === 0, "dc-notify-volume not upgraded");
@@ -119,10 +217,14 @@ L.runFeature("NOTIFICATIONS", async ({ page, run, mobilePage, bag }) => {
       assert(meta === "retro", `meta dc-jingle: ${meta}`);
       await page.goto(`${BASE}/settings/notifications`, { waitUntil: "domcontentloaded" });
       await page.check('input[name="jingle"][value="arpeggio"]');
-      await Promise.all([
-        page.waitForURL(/\/settings\/notifications(#[a-z-]+)?$/, { timeout: 10000 }),
-        page.locator('form:has(dc-jingle-picker) button[type="submit"]').click(),
-      ]);
+      // The same proof as above: a navigation of the next check would cancel
+      // a put back still in flight, WebKit then keeps retro for the next run.
+      await page.locator('form:has(dc-jingle-picker) button[type="submit"]').click();
+      await page.waitForFunction(
+        () => document.querySelector('meta[name="dc-jingle"]')?.getAttribute("content") === "arpeggio",
+        null,
+        { timeout: 8000 },
+      );
     });
 
     await run("settings: push channels section renders web push state and the webhook form", async () => {

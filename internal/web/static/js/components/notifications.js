@@ -374,7 +374,7 @@ function toast(added) {
 
   shownToastTarget = added.targetId;
   shownToastHandle = showToast({
-    icon: "info",
+    icon: added.failed ? "error" : "info",
     title: added.title || `Something new in "${added.targetName}".`,
     detail: detail,
     timer: 8000,
@@ -519,7 +519,7 @@ class Notifications extends HTMLElement {
     item.className = "list-group-item list-group-item-action d-flex align-items-start gap-3 dc-notify-item" + (n.read ? "" : " dc-notify-unread");
 
     const icon = document.createElement("i");
-    icon.className = "ti ti-bell-ringing text-primary fs-2 dc-notify-icon";
+    icon.className = `ti ti-bell-ringing ${n.failed ? "text-danger" : "text-primary"} fs-2 dc-notify-icon`;
     icon.setAttribute("aria-hidden", "true");
 
     const body = document.createElement("div");
@@ -571,7 +571,7 @@ class Notifications extends HTMLElement {
     item.className = "list-group-item list-group-item-action d-flex align-items-center gap-2 py-2 small dc-notify-item" + (n.read ? "" : " dc-notify-unread");
 
     const icon = document.createElement("i");
-    icon.className = "ti ti-bell-ringing text-primary dc-notify-icon";
+    icon.className = `ti ti-bell-ringing ${n.failed ? "text-danger" : "text-primary"} dc-notify-icon`;
     icon.setAttribute("aria-hidden", "true");
 
     const text = document.createElement("span");

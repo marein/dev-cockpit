@@ -659,7 +659,7 @@ func runServe(opts serveOptions) error {
 	// called after it is released.
 	conversations.SetHooks(srv.PublishConversations, notifier.Add)
 	srv.SetPostScriptFailed(func(name string, run project.PostScriptRun) {
-		info := notify.TargetInfo{Name: name, Project: name, URL: "/projects#project-" + name}
+		info := notify.TargetInfo{Name: name, Project: name, URL: "/projects#project-" + name, Failed: true}
 		info.Title, info.Detail = postScriptNews(name, run)
 		notifier.AddResolved(notify.WorktreeTarget(name), info)
 	})

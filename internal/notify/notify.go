@@ -20,9 +20,11 @@ const maxStored = 100
 
 // dedupeWindow swallows follow-up signals for a target that already has a
 // fresh unread entry: a question dialog and the turn end can ring within
-// seconds of each other, and one piece of news deserves one toast. News the
-// resolver marked urgent passes it, see TargetInfo.Urgent: what says the
-// opposite of the entry standing there is no follow-up.
+// seconds of each other, and one piece of news deserves one toast. What says
+// the opposite of the entry standing there is no follow-up and passes it: a
+// failure after news that did not fail, and news the resolver marked urgent,
+// see TargetInfo.Urgent. A success after a failure is still swallowed, the
+// failure is the word the user must not miss.
 const dedupeWindow = 30 * time.Second
 
 // Notification is one entry in the notification center: this target (a
@@ -52,6 +54,10 @@ type Notification struct {
 	// SetSilent. It is what lets the next silent entry of the same target
 	// replace this one without touching the lines a person really read.
 	Silent bool `json:"silent,omitempty"`
+	// Failed marks news that reports a failure, said by the place that knows
+	// it failed, so every surface can draw it red. An entry of an older build
+	// carries none and reads as plain news.
+	Failed bool `json:"failed,omitempty"`
 }
 
 // BackupTarget is the well known target id for finished backup jobs. It is
@@ -153,6 +159,10 @@ type TargetInfo struct {
 	// fresh unread entry standing there, and that word is owed. The resolver
 	// decides at ingest, this service still classifies nothing.
 	Urgent bool
+	// Failed is written into the entry together with its title, so an entry
+	// that replaces or outlasts another never wears a color its words do not
+	// say.
+	Failed bool
 }
 
 // Resolver looks up display context for a target.
@@ -295,6 +305,7 @@ func (s *Service) AddResolved(targetID string, info TargetInfo) {
 		CreatedAt:  s.now().UTC(),
 		Read:       silent,
 		Silent:     silent,
+		Failed:     info.Failed,
 	}
 
 	s.mu.Lock()
@@ -302,7 +313,7 @@ func (s *Service) AddResolved(targetID string, info TargetInfo) {
 	list := s.load()
 	if !silent && !info.Urgent {
 		for _, existing := range list {
-			if !existing.Read && existing.TargetID == targetID && s.now().UTC().Sub(existing.CreatedAt) < dedupeWindow {
+			if !existing.Read && existing.TargetID == targetID && s.now().UTC().Sub(existing.CreatedAt) < dedupeWindow && (existing.Failed || !info.Failed) {
 				return
 			}
 		}

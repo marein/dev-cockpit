@@ -136,7 +136,7 @@ func TestEveryKindIsBuiltTheSameWayRound(t *testing.T) {
 // thing there is for an answer somebody asked for, and then carries the first
 // words of the answer itself.
 func TestAnAnsweredNotificationCarriesAnExcerpt(t *testing.T) {
-	title, detail := assistantNews("Release work", assistant.Message{
+	title, detail, _ := assistantNews("Release work", assistant.Message{
 		State:   assistant.StateComplete,
 		Content: "## Done\n\nThe **tests** pass and the [branch](https://example.test) is pushed.",
 	})
@@ -186,7 +186,7 @@ func TestAJobReportSaysHowItEndedAndNamesTheJob(t *testing.T) {
 		{assistant.VerdictExpired, "Job expired."},
 	}
 	for _, c := range cases {
-		title, detail := assistantNews("Release work", assistant.Message{
+		title, detail, _ := assistantNews("Release work", assistant.Message{
 			Role:    assistant.RoleCockpit,
 			State:   assistant.StateComplete,
 			Content: "The **README** is written and the tests pass.",
@@ -211,7 +211,7 @@ func TestAJobReportSaysHowItEndedAndNamesTheJob(t *testing.T) {
 // that word off the check's answer before anything is written down, so the
 // excerpt never says twice what the title already said once.
 func TestAReportsExcerptDoesNotRepeatTheVerdict(t *testing.T) {
-	title, detail := assistantNews("Release work", assistant.Message{
+	title, detail, _ := assistantNews("Release work", assistant.Message{
 		Role:    assistant.RoleCockpit,
 		State:   assistant.StateComplete,
 		Content: "The tests pass, the branch is pushed.",
@@ -229,7 +229,7 @@ func TestAReportsExcerptDoesNotRepeatTheVerdict(t *testing.T) {
 // assistant it came from, so that is what opens the line: the rule is the
 // most precise identifier there is, and this is the least precise it gets.
 func TestAJobReportWithoutANameFallsBackToTheAssistant(t *testing.T) {
-	title, detail := assistantNews("Release work", assistant.Message{
+	title, detail, _ := assistantNews("Release work", assistant.Message{
 		Role:    assistant.RoleCockpit,
 		State:   assistant.StateComplete,
 		Content: "The job is finished.",
@@ -246,7 +246,7 @@ func TestAJobReportWithoutANameFallsBackToTheAssistant(t *testing.T) {
 // A turn that never finished says so, and what it managed to write is still
 // the best line about what it was doing.
 func TestAFailedAnswerSaysSo(t *testing.T) {
-	title, detail := assistantNews("Release work", assistant.Message{State: assistant.StateFailed, Content: "half an answer"})
+	title, detail, _ := assistantNews("Release work", assistant.Message{State: assistant.StateFailed, Content: "half an answer"})
 	if title != "Answer broke off." {
 		t.Fatalf("want the failure wording, got %q", title)
 	}
@@ -271,7 +271,7 @@ func TestAnUnnamedAssistantRingsUnderTheSurfaceName(t *testing.T) {
 // opens with what fired it and carries the reaction's own answer: that answer
 // is the whole reason a trigger was worth firing.
 func TestATriggeredAnswerSaysATriggerFiredAndCarriesItsAnswer(t *testing.T) {
-	title, detail := assistantNews("Bro", assistant.Message{
+	title, detail, _ := assistantNews("Bro", assistant.Message{
 		Role:    assistant.RoleAssistant,
 		State:   assistant.StateComplete,
 		Content: "The coder is done, the **tests** pass.",
@@ -299,7 +299,7 @@ func TestATriggeredAnswerSaysATriggerFiredAndCarriesItsAnswer(t *testing.T) {
 // count, and it opens the line below like every other identifier.
 func TestATriggeredAnswerOfSeveralEventsCarriesTheirNumber(t *testing.T) {
 	for _, count := range []int{2, 3, 12} {
-		title, detail := assistantNews("Release work", assistant.Message{
+		title, detail, _ := assistantNews("Release work", assistant.Message{
 			Role:    assistant.RoleAssistant,
 			State:   assistant.StateComplete,
 			Content: "All of them are done.",
@@ -326,7 +326,7 @@ func TestATriggeredAnswerOfSeveralEventsCarriesTheirNumber(t *testing.T) {
 // the turn managed to write still stands below it.
 func TestATriggeredAnswerThatBrokeOffStaysATrigger(t *testing.T) {
 	for _, state := range []assistant.State{assistant.StateFailed, assistant.StateInterrupted} {
-		title, detail := assistantNews("Bro", assistant.Message{
+		title, detail, _ := assistantNews("Bro", assistant.Message{
 			Role:    assistant.RoleAssistant,
 			State:   state,
 			Content: "I read the screen and",
@@ -345,7 +345,7 @@ func TestATriggeredAnswerThatBrokeOffStaysATrigger(t *testing.T) {
 			t.Fatalf("want what fired it and what was written below it, got %q", detail)
 		}
 		// And the count of a batch opens that line the same way.
-		_, detail = assistantNews("Release work", assistant.Message{
+		_, detail, _ = assistantNews("Release work", assistant.Message{
 			Role: assistant.RoleAssistant, State: state, Auto: true,
 			Origin: &assistant.Note{Source: assistant.NoteEvent, Headline: "12 events arrived", Count: 12},
 		})
@@ -360,7 +360,7 @@ func TestATriggeredAnswerThatBrokeOffStaysATrigger(t *testing.T) {
 // one line the note is read by, and the name is what it carries where there
 // is one. What fired it stays in the thread, where the fold has room for it.
 func TestATriggeredAnswerRingsUnderTheTriggersName(t *testing.T) {
-	title, detail := assistantNews("Release work", assistant.Message{
+	title, detail, _ := assistantNews("Release work", assistant.Message{
 		Role:    assistant.RoleAssistant,
 		State:   assistant.StateComplete,
 		Content: "The tests pass.",
@@ -379,7 +379,7 @@ func TestATriggeredAnswerRingsUnderTheTriggersName(t *testing.T) {
 	if detail != "nightly readme: The tests pass." {
 		t.Fatalf("want the trigger's name in front of its answer, got %q", detail)
 	}
-	title, detail = assistantNews("Release work", assistant.Message{
+	title, detail, _ = assistantNews("Release work", assistant.Message{
 		Role: assistant.RoleAssistant, State: assistant.StateInterrupted, Auto: true, Content: "half",
 		Origin: &assistant.Note{Source: assistant.NoteEvent, Headline: "nightly readme", Event: "5 events arrived", Count: 5},
 	})
@@ -391,7 +391,7 @@ func TestATriggeredAnswerRingsUnderTheTriggersName(t *testing.T) {
 // A headline is the cockpit's own line and no Markdown: what a coder is
 // called reaches the line below as it is written.
 func TestAHeadlineIsNotReadAsMarkdown(t *testing.T) {
-	_, detail := assistantNews("Bro", assistant.Message{
+	_, detail, _ := assistantNews("Bro", assistant.Message{
 		Role:   assistant.RoleAssistant,
 		State:  assistant.StateComplete,
 		Auto:   true,
@@ -445,8 +445,8 @@ func TestATitleIsTheKindAndNothingElse(t *testing.T) {
 	}
 	for _, c := range cases {
 		for _, who := range []string{"Bro", assistantNewsName(assistant.Summary{Title: long})} {
-			first, _ := assistantNews(who, c.first)
-			second, _ := assistantNews(who, c.second)
+			first, _, _ := assistantNews(who, c.first)
+			second, _, _ := assistantNews(who, c.second)
 			if first != c.want || second != c.want {
 				t.Fatalf("want %q from both, got %q and %q", c.want, first, second)
 			}
@@ -463,7 +463,7 @@ func TestATitleIsTheKindAndNothingElse(t *testing.T) {
 // same.
 func TestTheIdentifierOpensTheLineBelowWhole(t *testing.T) {
 	done := func(name string) string {
-		_, detail := assistantNews("Bro", assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete,
+		_, detail, _ := assistantNews("Bro", assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete,
 			Content: "The tests pass.",
 			Note:    &assistant.Note{Source: assistant.NoteCheck, Terminal: "term-1", Name: name, Verdict: string(assistant.VerdictDone)}})
 		return detail
@@ -479,7 +479,7 @@ func TestTheIdentifierOpensTheLineBelowWhole(t *testing.T) {
 		t.Fatalf("want the job's name whole in front of the report, got %q", second)
 	}
 	// A headline is a line of its own and reaches that place whole too.
-	_, detail := assistantNews("Bro", assistant.Message{Role: assistant.RoleAssistant, State: assistant.StateComplete,
+	_, detail, _ := assistantNews("Bro", assistant.Message{Role: assistant.RoleAssistant, State: assistant.StateComplete,
 		Content: "read", Auto: true,
 		Origin: &assistant.Note{Source: assistant.NoteEvent, Headline: "Coder ended: fix-login in dev-cockpit", Count: 1}})
 	if detail != "Coder ended: fix-login in dev-cockpit: read" {
@@ -502,7 +502,7 @@ func TestTheLowerLineIsTheIdentifierPlusTheExcerpt(t *testing.T) {
 	}
 	for ident, m := range idents {
 		detail := ""
-		if _, detail = assistantNews("Release work", m); !strings.HasPrefix(detail, ident+": ") {
+		if _, detail, _ = assistantNews("Release work", m); !strings.HasPrefix(detail, ident+": ") {
 			t.Fatalf("want %q opening the line, got %q", ident, detail)
 		}
 		max := utf8.RuneCountInString(ident) + 2 + assistant.PreviewRunes + 1
@@ -539,18 +539,18 @@ func TestTheNameIsOnlyInTheLineOfAnAnsweredTurn(t *testing.T) {
 	}
 	for _, who := range []string{"Zq7", raw, long} {
 		for _, m := range append(append([]assistant.Message{}, named...), answers...) {
-			title, _ := assistantNews(who, m)
+			title, _, _ := assistantNews(who, m)
 			if strings.Contains(title, who) || strings.Contains(title, "Cockpit") {
 				t.Fatalf("the name %q reached the title: %q", who, title)
 			}
 		}
 		for _, m := range named {
-			if _, detail := assistantNews(who, m); strings.Contains(detail, oneLine(who)) {
+			if _, detail, _ := assistantNews(who, m); strings.Contains(detail, oneLine(who)) {
 				t.Fatalf("the name %q reached a line that names its own thing: %q", who, detail)
 			}
 		}
 		for _, m := range answers {
-			if _, detail := assistantNews(who, m); !strings.HasPrefix(detail, oneLine(who)+": ") {
+			if _, detail, _ := assistantNews(who, m); !strings.HasPrefix(detail, oneLine(who)+": ") {
 				t.Fatalf("want the name opening an answer's line, got %q", detail)
 			}
 		}
@@ -564,7 +564,7 @@ func TestAComposeNoteRingsUnderItsCommand(t *testing.T) {
 	m := assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete,
 		Content: "On shop: went through, exit status 0.",
 		Note:    &assistant.Note{Source: assistant.NoteCompose, Run: "run-1", Name: "Compose up", Project: "shop", Verdict: assistant.ComposeKindDone}}
-	title, detail := assistantNews("Bro", m)
+	title, detail, _ := assistantNews("Bro", m)
 	if title != "Compose done." || detail != "Compose up: On shop: went through, exit status 0." {
 		t.Fatalf("the news reads %q / %q", title, detail)
 	}
@@ -576,8 +576,49 @@ func TestAnApprovalNoteRingsUnderItsAction(t *testing.T) {
 	m := assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete,
 		Content: "Not done, the approval expired unanswered.",
 		Note:    &assistant.Note{Source: assistant.NoteApproval, Name: "Delete project shop", Verdict: approval.Declined}}
-	title, detail := assistantNews("Bro", m)
+	title, detail, _ := assistantNews("Bro", m)
 	if title != "Action declined." || detail != "Delete project shop: Not done, the approval expired unanswered." {
 		t.Fatalf("the news reads %q / %q", title, detail)
+	}
+}
+
+// The failure is decided with the title, so the two never disagree: a compose
+// run or an approved action that failed and a turn that broke off are drawn
+// red, a job that ended blocked or expired, a declined action and every turn
+// that finished are not.
+func TestAnAssistantsFailureIsDecidedWithItsTitle(t *testing.T) {
+	note := func(source, verdict string) assistant.Message {
+		return assistant.Message{Role: assistant.RoleCockpit, State: assistant.StateComplete, Content: "x",
+			Note: &assistant.Note{Source: source, Name: "n", Verdict: verdict}}
+	}
+	trigger := func(state assistant.State) assistant.Message {
+		return assistant.Message{Role: assistant.RoleAssistant, State: state, Auto: true,
+			Origin: &assistant.Note{Source: assistant.NoteEvent, Headline: "h", Count: 1}}
+	}
+	cases := []struct {
+		title  string
+		m      assistant.Message
+		failed bool
+	}{
+		{"Job done.", note(assistant.NoteCheck, string(assistant.VerdictDone)), false},
+		{"Job blocked.", note(assistant.NoteCheck, string(assistant.VerdictBlocked)), false},
+		{"Job expired.", note(assistant.NoteCheck, string(assistant.VerdictExpired)), false},
+		{"Compose done.", note(assistant.NoteCompose, assistant.ComposeKindDone), false},
+		{"Compose failed.", note(assistant.NoteCompose, assistant.ComposeKindFailed), true},
+		{"Action approved.", note(assistant.NoteApproval, approval.Done), false},
+		{"Approved action failed.", note(assistant.NoteApproval, approval.Failed), true},
+		{"Action declined.", note(assistant.NoteApproval, approval.Declined), false},
+		{"Trigger fired.", trigger(assistant.StateComplete), false},
+		{"Trigger broke off.", trigger(assistant.StateFailed), true},
+		{"Trigger broke off.", trigger(assistant.StateInterrupted), true},
+		{"Answer ready.", assistant.Message{Role: assistant.RoleAssistant, State: assistant.StateComplete}, false},
+		{"Answer broke off.", assistant.Message{Role: assistant.RoleAssistant, State: assistant.StateFailed}, true},
+		{"Answer broke off.", assistant.Message{Role: assistant.RoleAssistant, State: assistant.StateInterrupted}, true},
+	}
+	for _, c := range cases {
+		title, _, failed := assistantNews("Bro", c.m)
+		if title != c.title || failed != c.failed {
+			t.Fatalf("want %q failed=%v, got %q failed=%v", c.title, c.failed, title, failed)
+		}
 	}
 }
