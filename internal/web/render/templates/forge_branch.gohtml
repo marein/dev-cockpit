@@ -26,7 +26,7 @@
 </div>
 <span hidden data-forge-bar data-forge-bar-title="{{.Kind.Label}}: {{.Lead}}"><i class="ti {{.Kind.Icon}} dc-ink-icon" aria-hidden="true"></i>
   {{- with $badge}}
-  {{- with .Change}}<span class="dc-ink-cap">{{$badge.ChangeRef}}</span>{{end}}
+  {{- with .Change}}<span class="dc-ink-cap" data-statusbar-text>{{$badge.ChangeRef}}</span>{{end}}
   {{- with .Pipeline}}<i class="ti {{$badge.PipelineIcon}} text-{{$badge.PipelineColor}} dc-ink-icon" aria-hidden="true" data-forge-bar-pipeline="{{.Status}}"></i>{{end}}
   {{- with .Problem}}<i class="ti ti-alert-triangle text-warning dc-ink-icon" aria-hidden="true" data-forge-bar-problem></i>{{end}}
   {{- end}}

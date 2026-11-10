@@ -83,7 +83,7 @@ func TestTheEditorsForgeSheetShowsWhatTheForgePollerRead(t *testing.T) {
 	for _, want := range []string{
 		`<div data-forge-summary data-forge-label="GitLab">`,
 		`<span class="small text-secondary text-truncate mw-100" data-forge-title>Fix the login</span>`,
-		`<span hidden data-forge-bar data-forge-bar-title="GitLab: !4 draft · Pipeline #12 running"><i class="ti ti-brand-gitlab dc-ink-icon" aria-hidden="true"></i><span class="dc-ink-cap">!4</span><i class="ti ti-progress dc-icon-spinner text-blue dc-ink-icon" aria-hidden="true" data-forge-bar-pipeline="running"></i>`,
+		`<span hidden data-forge-bar data-forge-bar-title="GitLab: !4 draft · Pipeline #12 running"><i class="ti ti-brand-gitlab dc-ink-icon" aria-hidden="true"></i><span class="dc-ink-cap" data-statusbar-text>!4</span><i class="ti ti-progress dc-icon-spinner text-blue dc-ink-icon" aria-hidden="true" data-forge-bar-pipeline="running"></i>`,
 		`<button type="button" class="dropdown-item d-flex align-items-center gap-2" data-forge-jobs>`,
 		`<span class="small text-secondary text-truncate">5 jobs, 5 failed</span>`,
 		`<button type="button" class="dropdown-item d-flex align-items-center gap-2" data-forge-job="31" data-forge-job-name="unit" data-forge-job-status="failed">`,

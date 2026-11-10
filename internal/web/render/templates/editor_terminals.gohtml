@@ -1,39 +1,12 @@
 {{define "editor_terminals.gohtml"}}
-<div class="editor-term-tabs" data-editor-term-tabs role="tablist" aria-label="Terminals">
+{{/* The project's running terminals in tab strip order, a row of the
+     picker each, with what a terminal tab and its menu read off them. */}}
+<div data-editor-term-sessions>
   {{range .Sessions}}
-  <button type="button" class="editor-term-tab" role="tab" aria-selected="false"
-          data-term-tab="{{.ID}}" data-term-kind="{{.Kind}}" data-term-name="{{.Name}}" data-term-url="{{.URL}}"
-          {{- if .Steered}} data-term-steered="1"{{end}}{{with .SteerPrefill}} data-term-steer-prefill="{{.}}"{{end}}{{if .Coder}}{{with coderRename .Coder}} data-term-renames="{{.}}"{{end}} data-term-coder-label="{{coderLabel .Coder}}"{{end}}
-          title="{{.Name}}">
+  <div data-term-session="{{.ID}}"
+       data-term-kind="{{.Kind}}" data-term-name="{{.Name}}" data-term-url="{{.URL}}" data-term-label="{{if .Coder}}{{coderLabel .Coder}}{{else}}Shell{{end}}"
+       {{- if .Steered}} data-term-steered="1"{{end}}{{with .SteerPrefill}} data-term-steer-prefill="{{.}}"{{end}}{{if .Coder}}{{with coderRename .Coder}} data-term-renames="{{.}}"{{end}} data-term-coder-label="{{coderLabel .Coder}}"{{end}}>
     <span class="dc-term-icon running{{if .Working}} working{{end}}{{if .HasNews}} news{{end}}{{if .Steered}} steered{{end}}"{{with .Working}} data-working-since="{{.}}"{{end}}{{template "steered_tab.gohtml" (dict "Coder" .Coder "By" .SteeredBy)}} data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{if .Coder}}{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{else}}<i class="ti ti-terminal-2"></i>{{end}}{{template "news_dot.gohtml"}}</span>
-    <span class="editor-term-tab-name text-truncate">{{.Name}}</span>
-    {{if or (not $.Access.Guest) (and .Coder ($.Access.Can "terminals"))}}<span class="editor-term-tab-close" data-term-close role="button" tabindex="-1" aria-label="{{if .Coder}}Stop coder{{else}}Delete shell{{end}} {{.Name}}" title="{{if .Coder}}Stop coder{{else}}Delete shell{{end}}">
-      <i class="ti ti-x" aria-hidden="true"></i>
-    </span>{{end}}
-  </button>
-  {{end}}
-</div>
-<div class="editor-term-panes" data-editor-term-panes>
-  {{range .Sessions}}
-  <div class="editor-term-pane attach-stage" data-term-pane="{{.ID}}" data-term-kind="{{.Kind}}"
-       data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}>
-    {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL "Typing" (ne .InputURL ""))}}
-  </div>
-  {{end}}
-</div>
-<div data-editor-term-foots>
-  {{range .Sessions}}
-  <div class="d-flex gap-1" data-term-foot="{{.ID}}" data-terminal-footer="{{.ID}}" hidden>
-    {{if .ConversationURL}}<button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-terminal-copy aria-label="Copy" aria-pressed="false" title="Copy from the conversation">
-      <i class="ti ti-messages"></i>
-    </button>{{else}}<button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-terminal-copy aria-label="Copy" aria-pressed="false" title="Copy text from this terminal">
-      <i class="ti ti-copy"></i>
-    </button>{{end}}
-    {{if .FilesData}}<coder-file-upload class="d-flex">
-      <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary coder-files-button" data-coder-files-toggle data-bs-toggle="modal" data-bs-target="#coder-files-modal-{{.ID}}" aria-label="Files" title="Files">
-        <i class="ti ti-upload coder-files-button-icon"></i>
-      </button>
-    </coder-file-upload>{{end}}
   </div>
   {{end}}
 </div>
@@ -46,21 +19,34 @@
   </div>
   {{end}}{{end}}
 </div>
-<div data-editor-term-resume>
-  {{if .Inactive}}
-  <div class="dropdown-divider"></div>
-  <h6 class="dropdown-header">Inactive coders</h6>
-  <div data-term-resume-fold>
-    {{range .Inactive}}
-    <form method="post" action="{{.URL}}" data-term-resume data-no-pe>
-      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-      <button type="submit" class="dropdown-item d-flex align-items-center gap-2" data-resume-id="{{.ID}}" title="Resume coder {{.Name}}">
-        <span class="terminal-tab-icon dc-term-icon{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
-        <span class="text-truncate">{{.Name}}</span>
-      </button>
-    </form>
-    {{end}}
+{{/* A terminal opened as an editor tab: its stage, where the island mounts
+     and the copy view stands, and the attach pages' own footer, which always
+     shows here because the view holds one terminal. */}}
+<div data-editor-term-views>
+  {{range .Sessions}}
+  <div class="d-flex flex-column flex-fill min-w-0 overflow-hidden" data-terminal-view="{{.ID}}">
+    <div class="attach-stage min-w-0 w-100" data-term-stage="{{.ID}}"
+         data-stream-url="{{.StreamURL}}" data-resize-url="{{.ResizeURL}}" data-input-url="{{.InputURL}}"{{if .ScrollHistory}} data-scroll-history{{end}}>
+      {{template "terminal_copy_surface.gohtml" (dict "ID" .ID "TextURL" .TextURL "ConversationURL" .ConversationURL "Typing" (ne .InputURL ""))}}
+    </div>
+    <div class="attach-footer min-w-0" data-terminal-footer="{{.ID}}">
+      {{if not .InputURL}}{{template "terminal_footer_watch.gohtml" (dict "Coder" .Coder "Settings" true)}}{{else if .Coder}}{{template "terminal_footer_coder.gohtml" (dict "Files" (printf "#coder-files-modal-%s" .ID) "Shortcuts" "#editor-shortcuts-modal" "Settings" true)}}{{else}}{{template "terminal_footer_shell.gohtml" (dict "Shortcuts" "#editor-shortcuts-modal" "Settings" true)}}{{end}}
+    </div>
   </div>
   {{end}}
+</div>
+{{/* What a tab of a coder that stopped shows in its place, the owner's. */}}
+<div data-editor-term-stopped>
+  {{if not .Access.Guest}}{{range .Inactive}}
+  <div class="d-flex flex-column align-items-center justify-content-center gap-2 flex-fill p-4 text-center" data-term-stopped="{{.ID}}" data-term-name="{{.Name}}" data-term-label="{{coderLabel .Coder}}">
+    <span class="dc-term-icon{{if .HasNews}} news{{end}}" data-notify-target="{{.ID}}"{{if eq .Launcher "ollama"}} data-launcher="ollama"{{end}} aria-hidden="true">{{template "coder_icon.gohtml" (dict "ID" .Coder "Launcher" .Launcher)}}{{template "news_dot.gohtml"}}</span>
+    <div class="fw-medium text-break">{{.Name}}</div>
+    <div class="text-secondary small">Coder stopped.</div>
+    <form method="post" action="{{.URL}}" data-term-resume data-no-pe>
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <button type="submit" class="btn btn-primary" data-resume-id="{{.ID}}"><i class="ti ti-player-play me-1" aria-hidden="true"></i>Resume</button>
+    </form>
+  </div>
+  {{end}}{{end}}
 </div>
 {{end}}

@@ -3754,9 +3754,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       return `strip ${strip.strip.w}px, three controls in the header`;
     });
 
-    // The terminal panel is the one entry the two widths do not share: a
-    // phone has no panel.
-    await run("mobile: the menu carries the same entries as the wide screen, minus the terminal panel", async () => {
+    await run("mobile: the menu carries the same entries as the wide screen", async () => {
       const mp = await mobilePage();
       // The same file open on both, so a file bound entry cannot make the two
       // lists differ for a reason that has nothing to do with the width. The
@@ -3768,13 +3766,10 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await openViaPalette(page, noteFile);
       const phone = await menuEntries(mp);
       const desktop = await menuEntries(page);
-      assert(!phone.includes("data-editor-term-item"), `the phone menu offers the terminal panel: ${phone.join(", ")}`);
-      assert(desktop.includes("data-editor-term-item"), `the wide menu lost the terminal panel: ${desktop.join(", ")}`);
-      const want = desktop.filter((entry) => entry !== "data-editor-term-item");
-      assert(JSON.stringify(phone) === JSON.stringify(want),
-        `the menus differ beyond the terminal panel:\n  390:  ${phone.join(", ")}\n  1360: ${desktop.join(", ")}`);
+      assert(JSON.stringify(phone) === JSON.stringify(desktop),
+        `the menus differ:\n  390:  ${phone.join(", ")}\n  1360: ${desktop.join(", ")}`);
       for (const entry of ["data-editor-files-item", "data-editor-quick-open-item", "data-editor-find-item",
-        "data-editor-search-project-item", "data-editor-settings-item"]) {
+        "data-editor-search-project-item", "data-editor-settings-item", "data-editor-term-open-item"]) {
         assert(phone.includes(entry), `the menu misses ${entry}: ${phone.join(", ")}`);
       }
       // The file actions belong to the file: the tab menu and the tree row

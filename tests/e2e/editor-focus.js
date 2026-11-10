@@ -1,12 +1,12 @@
 const L = require("./lib");
-const { assert, BASE } = L;
+const { assert, BASE, sleep } = L;
 
 // Editor focus while a file loads: the editor takes the focus when a file
 // stands, but a file that arrives while the project palette (Ctrl+Shift+P), the
 // quick open (Ctrl+Shift+O, and its find and replace in files modes) or a sheet
 // (git, comments, open files) stands must leave their field the keystrokes. A
 // restored tab after a load, a jump from `?file=&line=` and a file link from
-// the terminal panel (the `dc:open-file` event) are the late arrivals; before,
+// a terminal tab (the `dc:open-file` event) are the late arrivals; before,
 // they moved the focus into the buffer under the open overlay and the next keys
 // landed in the file. Closing the palette, the quick open or a sheet hands the
 // focus to the editor, by Escape, a sheet's close button or a click on the
@@ -19,7 +19,7 @@ const { assert, BASE } = L;
 // that element is gone; an action of the overlay focuses its target instead.
 // A tab click always focuses that tab's editor, the front tab of the other
 // group included; Ctrl+Tab and Ctrl+Shift+Tab move the focus along only from
-// an editor, the terminal and the commit message keep it. Closing a tab behind
+// an editor or a terminal tab, the commit message keeps it. Closing a tab behind
 // with its cross and a drag that reorders the strip leave it in the editor in
 // front, a tab whose git diff is rebuilt side by side comes back with it in the
 // working copy side, a viewer tab takes none, and on a phone neither a tab tap
@@ -41,8 +41,9 @@ const { assert, BASE } = L;
 //     Split right and keep that layout to the end; the diff check builds the
 //     repository through a shell (the app never writes git) and pins the
 //     view to side by side in this device's editor settings. That shell is
-//     the terminal the panel shows for the terminal checks after it, and the
-//     change the diff leaves is what puts the commit view up.
+//     the terminal tab the picker opens for the terminal check after it, which
+//     closes the tab again, and the change the diff leaves is what puts the
+//     commit view up.
 //   - the terminal owns its keys, the editor's shortcuts are not taken from
 //     inside it, so from there the overlays open with the mouse (the project
 //     switcher, the menu's Go to file, the status line's git button), and the
@@ -477,15 +478,29 @@ L.runFeature("EDITOR-FOCUS", async ({ engine, page, run, mobilePage }) => {
       return `git sheet without a search panel, the panel walked ${down} then ${up}`;
     });
 
-    const termPanel = "[data-editor-term-panel]";
-    const inTerminal = () => page.evaluate((p) => !!document.activeElement?.closest(p) && document.activeElement.tagName === "TEXTAREA", termPanel);
+    const termBox = () => `.editor-term-box:has([data-terminal-view="${new URL(shellUrl).pathname.split("/").pop()}"])`;
+    const termTab = () => `.editor-tab[data-path="//terminal/${new URL(shellUrl).pathname.split("/").pop()}"]`;
+    const inTerminal = () => page.evaluate((b) => !!document.activeElement?.closest(b) && document.activeElement.tagName === "TEXTAREA", termBox());
     const focusTerminal = async () => {
-      if (!(await page.$(`${termPanel}:not([hidden])`))) await page.keyboard.press("Control+j");
-      await page.waitForSelector(`${termPanel}:not([hidden])`, { timeout: 6000 });
-      await page.waitForSelector(`${termPanel} [data-term-tab]`, { timeout: 15000 });
-      await page.waitForSelector(`${termPanel} .editor-term-pane.active terminal-attach[embedded] .xterm-screen canvas`, { timeout: 15000 });
-      await page.click(`${termPanel} .editor-term-pane.active .xterm-screen`);
-      await page.waitForFunction((p) => !!document.activeElement?.closest(p) && document.activeElement.tagName === "TEXTAREA", termPanel, { timeout: 4000 })
+      const id = new URL(shellUrl).pathname.split("/").pop();
+      // A click within 350ms of a menu closing is the click that closed it
+      // (@dc/contextmenu), and the check before this one ends on a sheet's
+      // Escape, so the statusbar button waits like a hand would.
+      await sleep(400);
+      if (!(await page.$(termTab()))) {
+        await page.click("[data-editor-term-status]");
+        await L.openPicked(page, `[data-editor-sheet-body] [data-term-pick="${id}"]`);
+      }
+      await page.waitForSelector(`${termTab()}.active`, { timeout: 15000 }).catch(async () => {
+        const seen = await page.evaluate(() => ({
+          rows: [...document.querySelectorAll("[data-editor-sheet-body] [data-term-pick]")].map((c) => c.getAttribute("data-term-pick")),
+          tabs: [...document.querySelectorAll(".editor-tab")].map((t) => `${t.dataset.path}${t.classList.contains("active") ? "*" : ""}`),
+        }));
+        throw new Error(`the terminal ${id} did not come to the front as a tab: ${JSON.stringify(seen)}`);
+      });
+      await page.waitForSelector(`${termBox()} terminal-attach[embedded] .xterm-screen canvas`, { timeout: 15000 });
+      await page.click(`${termBox()} .xterm-screen`);
+      await page.waitForFunction((b) => !!document.activeElement?.closest(b) && document.activeElement.tagName === "TEXTAREA", termBox(), { timeout: 4000 })
         .catch(async () => { throw new Error(`a click into the terminal left the focus on ${await focusIs()}`); });
     };
     const commitMessage = "[data-editor-commit-message]";
@@ -521,20 +536,19 @@ L.runFeature("EDITOR-FOCUS", async ({ engine, page, run, mobilePage }) => {
       await page.keyboard.press("Escape");
       await page.waitForFunction((box) => document.querySelector(box)?.hidden, sheet.box, { timeout: 4000 });
       assert(await inTerminal(), `Escape on the git sheet left the focus on ${await focusIs()}, not the terminal`);
-      return "palette, quick open and git sheet all closed back into the terminal";
+      await page.click(`${termTab()} .editor-tab-state`);
+      await page.waitForSelector(termTab(), { state: "detached", timeout: 6000 });
+      return "palette, quick open and git sheet all closed back into the terminal ";
     });
 
-    await run("Ctrl+Tab keeps the focus where it stands outside an editor: the terminal keeps it, the commit message keeps it while the tab switches", async () => {
-      await focusTerminal();
-      await page.keyboard.press("Control+Tab");
-      assert(await inTerminal(), `Ctrl+Tab took the focus out of the terminal to ${await focusIs()}`);
+    await run("Ctrl+Tab keeps the focus where it stands outside an editor: the commit message keeps it while the tab switches", async () => {
       await focusCommitMessage();
       const before = await frontTab();
       await page.keyboard.press("Control+Tab");
       await page.waitForFunction((was) => document.querySelector(".editor-group-focused .editor-tab.active")?.dataset.path !== was, before, { timeout: 4000 })
         .catch(() => { throw new Error("Ctrl+Tab from the commit message did not switch the tab"); });
       assert(await focusIn(commitMessage), `Ctrl+Tab took the focus out of the commit message to ${await focusIs()}`);
-      return `the terminal kept it, the commit message kept it while ${before} gave way to ${await frontTab()}`;
+      return `the commit message kept it while ${before} gave way to ${await frontTab()}`;
     });
 
     await run("a sheet closed over the commit message gives it back, and a tab click then focuses that tab's editor", async () => {

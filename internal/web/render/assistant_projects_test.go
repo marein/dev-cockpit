@@ -15,7 +15,7 @@ func TestAChangesListGitCutEndsSayingSo(t *testing.T) {
 	changes := AssistantProjectChanges{
 		Project:    "app",
 		Since:      AssistantProjectSince{Read: true, From: "main", Commits: 3, Changed: 2, Added: 3},
-		Files:      NewAssistantFileList("app", ChangesFiles, files, 1, true, true, "/projects/app/editor?pair=suggested&view=compare"),
+		Files:      NewAssistantFileList("a1", "app", ChangesFiles, files, 1, true, true, "/projects/app/editor?pair=suggested&view=compare"),
 		Commits:    NewAssistantRows(commits, 3, 1, true, true),
 		LogRead:    true,
 		CompareURL: "/projects/app/editor?pair=suggested&view=compare",
@@ -101,5 +101,31 @@ func TestACardsJobRowsResumeForTheOwnerAlone(t *testing.T) {
 	reviews := AssistantProjectReviews{Project: "app", Resolved: []AssistantThread{{ID: "a"}, {ID: "b"}}}
 	if got := reviews.ResolvedLabel(); got != (FoldLabel{Shut: "Show 2 resolved threads", Open: "Hide resolved threads"}) {
 		t.Fatalf("the resolved fold says %+v", got)
+	}
+}
+
+// Two assistants side by side as editor tabs may show the same project, and
+// Bootstrap finds a fold or a tab by its id in the whole document: every id
+// of the aside carries the assistant, and stays the same for it.
+func TestAsideIDsCarryTheAssistant(t *testing.T) {
+	ids := func(owner string) []string {
+		card := AssistantProjectCard{Owner: owner, Name: "app"}
+		list := NewAssistantFileList(owner, "app", ChangesFiles, nil, 1, false, false, "")
+		return []string{
+			card.FoldID(),
+			AssistantProjectView{Card: card}.PaneID(),
+			AssistantProjectReviews{Owner: owner, Project: "app"}.ResolvedFold(),
+			AssistantProjectChanges{Owner: owner, Project: "app"}.CommitsFold(),
+			list.Fold(),
+			AssistantChangedFile{Owner: owner, List: ChangesFiles, Path: "a.txt"}.Fold(),
+		}
+	}
+	a, again, b := ids("a1"), ids("a1"), ids("a2")
+	seen := map[string]bool{}
+	for i := range a {
+		if a[i] != again[i] || a[i] == b[i] || seen[a[i]] || seen[b[i]] {
+			t.Fatalf("id %d is not the assistant's own: %s, %s, %s", i, a[i], again[i], b[i])
+		}
+		seen[a[i]], seen[b[i]] = true, true
 	}
 }

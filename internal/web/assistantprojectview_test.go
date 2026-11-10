@@ -309,9 +309,10 @@ func TestAProjectViewShowsTheChangesOfItsBranch(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the view answered %d: %s", rec.Code, html)
 	}
+	pane := render.AssistantProjectView{Card: render.AssistantProjectCard{Owner: inst.ID, Name: "app"}}.PaneID()
 	for _, want := range []string{
 		`data-assistant-project-view-body="app" data-section="changes">`,
-		`<section class="tab-pane active" id="assistant-project-changes" role="tabpanel" aria-labelledby="assistant-project-changes-tab" data-assistant-project-changes-section>`,
+		`<section class="tab-pane active" id="` + pane + `-changes" role="tabpanel" aria-labelledby="` + pane + `-changes-tab" data-assistant-project-changes-section>`,
 		`data-assistant-changes-commits>2</div>`,
 		`data-assistant-changes-files>3</div>`,
 		`data-assistant-changes-added>+7</div>`,
@@ -339,7 +340,7 @@ func TestAProjectViewShowsTheChangesOfItsBranch(t *testing.T) {
 	}
 	for _, want := range []string{
 		`data-assistant-project-switch="reviews">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>0</span>`,
-		`<section class="tab-pane" id="assistant-project-reviews" role="tabpanel" aria-labelledby="assistant-project-reviews-tab" data-assistant-project-reviews="0" data-comments-url="/projects/app/editor/comments">`,
+		`<section class="tab-pane" id="` + pane + `-reviews" role="tabpanel" aria-labelledby="` + pane + `-reviews-tab" data-assistant-project-reviews="0" data-comments-url="/projects/app/editor/comments">`,
 		`<div class="mb-3" data-assistant-project-comment>`,
 		`data-assistant-project-threads-none>No comment.</div>`,
 	} {

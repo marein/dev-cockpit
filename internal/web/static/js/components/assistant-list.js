@@ -1,13 +1,15 @@
 import { FLASH_MS, el, flash, growTextarea, isModEnter, keepGrown, syncAnimations } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 import { getJSON, getText, postForm, postJSON, ensureOk } from "@dc/http";
-import { confirm, fire } from "@dc/dialog";
+import { confirm } from "@dc/dialog";
 import { openMenu, wireRowMenus } from "@dc/contextmenu";
 import { deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, mayDelete, postForgeThread, publishComments, publishQuestion, writeLineComment } from "@dc/editor-comments";
 import { inlineDiff } from "@dc/inline-diff";
 import { retryPipeline } from "@dc/project-actions";
+import * as assistantActions from "@dc/assistant-actions";
+import { renameAssistant } from "@dc/rename";
 import { RowDrag } from "@dc/rowdrag";
-import { notifyError, notifySuccess } from "@dc/toast";
+import { notifyError } from "@dc/toast";
 
 // A self-refreshing assistant list: the projects and the steered jobs of an
 // assistant, the assistants in the list column, and the memory. The list swaps
@@ -933,55 +935,18 @@ class AssistantList extends HTMLElement {
           },
         },
         { label: "Rename", icon: "ti-pencil", action: () => void this.renameAssistant(url, name) },
-        { label: "Share", icon: "ti-share", href: `/settings/sharing?assistant=${encodeURIComponent(row.dataset.assistantInstance)}` },
+        assistantActions.shareItem(row.dataset.assistantInstance),
         { label: "Delete", icon: "ti-trash", danger: true, action: () => void this.deleteAssistant(url, name) },
       ],
     });
   }
 
   async renameAssistant(url, name) {
-    const result = await fire({
-      title: "Rename this assistant",
-      input: "text",
-      inputValue: name,
-      inputAttributes: { "aria-label": "Name" },
-      showCancelButton: true,
-      confirmButtonText: "Rename",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
-    });
-    if (!result.isConfirmed) return;
-    const title = (result.value || "").trim();
-    if (!title || title === name) return;
-    try {
-      const response = await postForm(url, { form: "rename", title });
-      await ensureOk(response, "The assistant could not be renamed.");
-    } catch (err) {
-      notifyError(err?.message || "The assistant could not be renamed.");
-      return;
-    }
-    await this.refresh();
+    if (await renameAssistant(url, name)) await this.refresh();
   }
 
   async deleteAssistant(url, name) {
-    const ok = await confirm({
-      title: name ? `Delete "${name}"?` : "Delete this assistant?",
-      text: "Its thread goes with it. The coders it steers are released and yours again, the shared memory is kept.",
-      confirmText: "Delete",
-    });
-    if (!ok) return;
-    let released = "";
-    try {
-      const response = await postForm(url, { form: "delete" });
-      await ensureOk(response, "The assistant could not be deleted.");
-      // The answer names the coders that came back, and that is the one thing
-      // the user cannot see for themselves once the row is gone.
-      released = (await response.json().catch(() => ({})))?.released || "";
-    } catch (err) {
-      notifyError(err?.message || "The assistant could not be deleted.");
-      return;
-    }
-    if (released) notifySuccess(released);
+    if (!(await assistantActions.deleteAssistant(url, name))) return;
     // The page of the deleted assistant is gone with it, the bare address opens
     // whichever one is left; every other page just sees the row go.
     if (window.location.pathname === url) {

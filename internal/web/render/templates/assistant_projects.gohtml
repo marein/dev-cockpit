@@ -189,7 +189,7 @@
      out is where the eye starts. The owner's field of a new project comment
      heads the reviews. */}}
 {{define "assistant_project_view.gohtml"}}
-{{- $r := .Reviews}}{{$shows := .Shows}}{{$seg := .Segmented}}
+{{- $r := .Reviews}}{{$shows := .Shows}}{{$seg := .Segmented}}{{$pane := .PaneID}}
 <div data-assistant-project-view-body="{{.Card.Name}}" data-section="{{$shows}}">
   <button type="button" class="btn btn-link btn-sm text-primary text-decoration-none px-0 mb-2" data-assistant-project-back><i class="ti ti-chevron-left me-1" aria-hidden="true"></i>Projects</button>
   <div class="card mb-3{{if .Card.Needs}} border-danger{{end}}" data-assistant-project-view-card>
@@ -198,12 +198,12 @@
   </div>
   {{- if $seg}}
   <div class="nav nav-segmented w-100 mb-3" role="tablist">
-    <button type="button" class="nav-link{{if eq $shows "reviews"}} active{{end}}" id="assistant-project-reviews-tab" data-bs-toggle="tab" data-bs-target="#assistant-project-reviews" role="tab" aria-controls="assistant-project-reviews" aria-selected="{{eq $shows "reviews"}}" data-assistant-project-switch="reviews">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>{{$r.Count}}</span></button>
-    <button type="button" class="nav-link{{if eq $shows "changes"}} active{{end}}" id="assistant-project-changes-tab" data-bs-toggle="tab" data-bs-target="#assistant-project-changes" role="tab" aria-controls="assistant-project-changes" aria-selected="{{eq $shows "changes"}}" data-assistant-project-switch="changes">Changes{{with .Changes.Since}}{{if .Read}}<span class="badge bg-secondary-lt" title="{{.CommitsLine}}" data-assistant-project-changes-count>{{.Commits}}</span>{{end}}{{end}}</button>
+    <button type="button" class="nav-link{{if eq $shows "reviews"}} active{{end}}" id="{{$pane}}-reviews-tab" data-bs-toggle="tab" data-bs-target="#{{$pane}}-reviews" role="tab" aria-controls="{{$pane}}-reviews" aria-selected="{{eq $shows "reviews"}}" data-assistant-project-switch="reviews">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>{{$r.Count}}</span></button>
+    <button type="button" class="nav-link{{if eq $shows "changes"}} active{{end}}" id="{{$pane}}-changes-tab" data-bs-toggle="tab" data-bs-target="#{{$pane}}-changes" role="tab" aria-controls="{{$pane}}-changes" aria-selected="{{eq $shows "changes"}}" data-assistant-project-switch="changes">Changes{{with .Changes.Since}}{{if .Read}}<span class="badge bg-secondary-lt" title="{{.CommitsLine}}" data-assistant-project-changes-count>{{.Commits}}</span>{{end}}{{end}}</button>
   </div>
   {{- end}}
   <div class="tab-content">
-  <section class="tab-pane{{if eq $shows "reviews"}} active{{end}}" id="assistant-project-reviews"{{if $seg}} role="tabpanel" aria-labelledby="assistant-project-reviews-tab"{{end}} data-assistant-project-reviews="{{$r.Count}}"{{with $r.ThreadURL}} data-thread-url="{{.}}" data-branch="{{$r.Branch}}"{{end}}{{with $r.CommentsURL}} data-comments-url="{{.}}"{{end}}>
+  <section class="tab-pane{{if eq $shows "reviews"}} active{{end}}" id="{{$pane}}-reviews"{{if $seg}} role="tabpanel" aria-labelledby="{{$pane}}-reviews-tab"{{end}} data-assistant-project-reviews="{{$r.Count}}"{{with $r.ThreadURL}} data-thread-url="{{.}}" data-branch="{{$r.Branch}}"{{end}}{{with $r.CommentsURL}} data-comments-url="{{.}}"{{end}}>
     {{- if not $seg}}
     <h3 class="d-flex align-items-center gap-2 small text-uppercase text-secondary fw-medium mb-2">Reviews<span class="badge bg-secondary-lt" data-assistant-project-reviews-count>{{$r.Count}}</span></h3>
     {{- end}}
@@ -238,7 +238,7 @@
     {{- end}}
   </section>
   {{- with .Changes}}
-  <section class="tab-pane{{if eq $shows "changes"}} active{{end}}" id="assistant-project-changes"{{if $seg}} role="tabpanel" aria-labelledby="assistant-project-changes-tab"{{end}} data-assistant-project-changes-section>
+  <section class="tab-pane{{if eq $shows "changes"}} active{{end}}" id="{{$pane}}-changes"{{if $seg}} role="tabpanel" aria-labelledby="{{$pane}}-changes-tab"{{end}} data-assistant-project-changes-section>
     {{- if not $seg}}
     <h3 class="small text-uppercase text-secondary fw-medium mb-2">Changes</h3>
     {{- end}}

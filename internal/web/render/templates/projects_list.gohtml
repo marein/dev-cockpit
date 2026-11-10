@@ -158,7 +158,7 @@
               <span class="project-chip-name">{{.Name}}</span>
             </button>
           </form>
-          <form method="post" action="/coders/{{.ID}}/delete" data-confirm="Delete inactive coder &quot;{{.Name}}&quot;?" data-confirm-button="Delete" data-ajax-refresh data-chip-x>
+          <form method="post" action="/coders/{{.ID}}/delete" data-inactive-coder="{{.ID}}" data-inactive-coder-name="{{.Name}}" data-ajax-refresh data-chip-x>
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="project-chip-x" aria-label="Delete coder {{.Name}}" title="Delete"><i class="ti ti-trash"></i></button>
           </form>

@@ -1,6 +1,8 @@
 import * as docker from "@dc/docker";
 import { openMenu } from "@dc/contextmenu";
+import { confirm } from "@dc/dialog";
 import { ensureOk, postForm, postJSON } from "@dc/http";
+import { alsoDropped } from "@dc/steer";
 import { notifyError, notifyInfo, notifySuccess } from "@dc/toast";
 
 // A project's own actions, shared by every surface that offers them: the
@@ -201,4 +203,30 @@ export async function deleteProject(name) {
     notifyError(error.message);
     return false;
   }
+}
+
+// The server answers JSON, the toast says what the flash would have said, and
+// the terminals event draws what shows the session.
+export async function actOnSession(action, { shell = false, name = "" } = {}) {
+  const stop = action.endsWith("/stop");
+  try {
+    const response = await postForm(action, {});
+    await ensureOk(response, stop ? "Could not stop the coder." : shell ? "Could not delete the shell." : "Could not delete the coder.");
+    const data = await response.json().catch(() => null);
+    const named = (data && data.name) || name;
+    notifySuccess(alsoDropped(stop ? `Coder "${named}" stopped.` : shell ? `Shell "${named}" deleted.` : `Coder "${named}" deleted.`, data));
+    return true;
+  } catch (error) {
+    notifyError(error.message);
+    return false;
+  }
+}
+
+export async function deleteInactiveCoder(id, name, busy = () => {}) {
+  const ok = await confirm({ title: `Delete inactive coder "${name}"?`, confirmText: "Delete" });
+  if (!ok) return false;
+  busy(true);
+  const done = await actOnSession(`/coders/${encodeURIComponent(id)}/delete`, { name });
+  if (!done) busy(false);
+  return done;
 }

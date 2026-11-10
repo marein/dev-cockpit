@@ -27,9 +27,9 @@
                assistant's own page the answer is always the same. */}}
           <div class="text-secondary small text-truncate">{{if .Owner}}{{.Owner}}{{if .Project}} · {{end}}{{end}}{{if and .Project $.Access.Guest}}{{.Project}}{{else if .Project}}<a class="link-secondary text-decoration-none" href="/projects#project-{{.Project}}" data-assistant-job-project-link>{{.Project}}</a>{{end}}</div>
         </div>
-        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" data-bs-toggle="collapse" data-bs-target="#assistant-job-{{.Terminal}}-details" aria-expanded="false" aria-controls="assistant-job-{{.Terminal}}-details" aria-label="Details" title="Details" data-assistant-job-fold><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
+        <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary flex-shrink-0" data-bs-toggle="collapse" data-bs-target="#assistant-job-{{.OwnerID}}-{{.Terminal}}-details" aria-expanded="false" aria-controls="assistant-job-{{.OwnerID}}-{{.Terminal}}-details" aria-label="Details" title="Details" data-assistant-job-fold><i class="ti ti-chevron-down" aria-hidden="true"></i></button>
       </div>
-      <div class="collapse" id="assistant-job-{{.Terminal}}-details" data-assistant-fold data-assistant-job-details>
+      <div class="collapse" id="assistant-job-{{.OwnerID}}-{{.Terminal}}-details" data-assistant-fold data-assistant-job-details>
         {{if .Task}}
         <div class="mt-2">
           <div class="datagrid-title mb-1">Prompt</div>

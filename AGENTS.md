@@ -308,6 +308,9 @@ templates plus ES modules.
   tear down everything in `disconnectedCallback`. Use one `AbortController`
   per element for all listeners, close streams, disconnect observers,
   clear timers, dispose xterm and CodeMirror. Nothing outlives the element.
+  `terminal-attach` and `dc-assistant` tear down only once they are still
+  off the page a microtask later, so a DOM move (an editor tab changing its
+  group, a split of the groups) keeps their stream.
 - **Assets**: Reference static files through the manifest,
   `{{ asset "/css/style.css" }}`, never by raw path
   (`internal/web/static_assets.go`). The import map in `layout.gohtml`

@@ -261,7 +261,7 @@ const maxTabOrderIDs = 512
 // resolve to a live coder or shell are dropped, so a client posting a strip
 // that contains a session which ended in the meantime still succeeds.
 //
-// A caller may post a subset (the editor's terminal panel shows one project),
+// A caller may post a subset (a view that shows one project),
 // so the posted ids are folded into the current order by applyTabOrder rather
 // than taken as the whole strip, and the write always covers every live
 // session, which is what keeps the positions collision free.
@@ -301,9 +301,8 @@ func (s *Server) handleTerminalTabsOrder(c *gin.Context) {
 }
 
 // applyTabOrder folds a posted order into the current one and answers the full
-// strip, left to right. A caller only ever sees part of the strip: the editor's
-// terminal panel lists one project, the quick nav and the tab strip list
-// everything. Taking a posted subset as the whole order would renumber those
+// strip, left to right. A caller may see only part of the strip, a view of
+// one project, while the quick nav and the tab strip list everything. Taking a posted subset as the whole order would renumber those
 // sessions from one and push every session the caller never saw aside, so a
 // subset is read as what it is, a permutation of the places those sessions
 // already hold: the slots stay, only who sits in which changes, and sessions

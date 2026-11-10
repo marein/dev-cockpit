@@ -44,18 +44,18 @@
      same reason the new forms stand here: the composer is itself a form. The
      selects reach it through the form attribute; the element posts it with
      fetch, and without JS the menu's Save button submits it. */}}
-<form method="post" action="{{.PostURL}}" id="assistant-new-model" class="d-none" data-assistant-model-form data-no-pe>
+<form method="post" action="{{.PostURL}}" id="{{.DOMID}}-new-model" class="d-none" data-assistant-model-form data-no-pe>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="model">
 </form>
 <form method="post" action="{{.PostURL}}" class="assistant-composer position-relative" data-assistant-form data-assistant-footer data-no-pe>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="message">
-  {{template "file_mention.gohtml"}}
+  {{template "file_mention.gohtml" .DOMID}}
   <input type="file" class="d-none" multiple data-assistant-file accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv,.log,.zip">
   <div class="d-flex flex-wrap gap-2 mb-2 d-none" data-assistant-attachments aria-label="Attached files"></div>
   <div class="d-flex align-items-end gap-2">
-    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "Models" .Models "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" "assistant-new")}}
+    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "Models" .Models "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" (printf "%s-new" .DOMID))}}
     <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Attach a file" title="Attach a file, or drop it anywhere on the page" data-assistant-attach>
       <i class="ti ti-paperclip"></i>
     </button>

@@ -8,6 +8,8 @@
 // on the assistant event and write the number onto the body they swap in, so
 // the answer is already here and a fetch of its own would be the same request
 // a third time. The lists say when they swapped, and every badge recounts.
+// Several assistants can stand side by side as editor tabs, so a badge reads
+// its own assistant's aside: the one it stands in, or the one its scope names.
 const COUNTS = {
   projects: ["[data-assistant-projects-needs]", "assistantProjectsNeeds"],
   jobs: ["[data-assistant-jobs-open]", "assistantJobsOpen"],
@@ -28,11 +30,12 @@ class SteerBadge extends HTMLElement {
 
   refresh() {
     if (!this.ac) return;
+    const scope = this.closest("[data-assistant-aside]") || document.getElementById(this.getAttribute("scope") || "") || document;
     let open = 0;
     for (const name of (this.getAttribute("count") || "jobs").split(/\s+/)) {
       const count = COUNTS[name];
       if (!count) continue;
-      open += Number(document.querySelector(count[0])?.dataset[count[1]]) || 0;
+      open += Number(scope.querySelector(count[0])?.dataset[count[1]]) || 0;
     }
     this.textContent = String(open);
     this.classList.toggle("d-none", open === 0);

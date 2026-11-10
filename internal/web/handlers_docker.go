@@ -142,7 +142,7 @@ func (s *Server) dockerShell(c *gin.Context, logs bool) {
 // output, the project wide counterpart of a container's logs: one stream for
 // every service, so nobody has to find the container that is talking first.
 // It is a normal shell like the container ones, so it lives in the tab strip
-// and the terminal panel like any other.
+// and the editor's dock like any other.
 func (s *Server) handleDockerComposeLogs(c *gin.Context) {
 	p, stack, ok := s.composeStack(c)
 	if !ok {

@@ -32,11 +32,13 @@ type CoderNewData struct {
 	SelectedCoder     string
 	AutomaticApproval bool
 	Return            string // where Cancel goes back to (the page you came from)
-	// Panel marks a create opened from the editor terminal panel's + menu, the
-	// one caller whose create goes back to the editor instead of the coder's
-	// page. It rides the query into the form and back out through the POST,
-	// like Return does; Return alone cannot carry this, every quick nav link
-	// on an editor page sends the same editor return for its Cancel.
+	// Panel marks a create opened from the editor's terminal picker,
+	// the one caller whose create goes back to the editor instead of the
+	// coder's page. It rides the query into the form and back out through the
+	// POST, like Return does; Return alone cannot carry this, every quick nav
+	// link on an editor page sends the same editor return for its Cancel. The
+	// name stays from the terminal panel the editor once had, released links
+	// carry it.
 	Panel bool
 	// Modal marks the render for the create dialog: the form comes back alone,
 	// wears the dialog's body and footer, and carries the marker in its action

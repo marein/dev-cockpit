@@ -41,10 +41,21 @@
   </div>
 </div>
 {{else}}
-<dc-assistant class="dc-work position-relative" data-assistant-coder="{{.CoderID}}" assistant-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" stt-url="{{.SttURL}}"{{if .TTS}} tts{{end}} max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
+{{template "assistant_work.gohtml" .}}
+{{end}}
+{{template "app_close.gohtml" .}}
+{{end}}
+
+{{/* One assistant's surface, the work column of its page and the body of
+     its editor tab alike. As a tab it pulls its own fragment instead of the
+     page's address, its ids carry the assistant, so two tabs side by side
+     keep theirs apart, and its aside waits hidden for the editor's sheet,
+     which the head's eye opens on every width. */}}
+{{define "assistant_work.gohtml"}}
+<dc-assistant class="dc-work position-relative{{if .InTab}} flex-fill{{end}}"{{if .InTab}} tab page-url="{{.TabURL}}"{{end}} data-assistant-coder="{{.CoderID}}" assistant-id="{{.ID}}" coder-label="{{.CoderLabel}}" stream-url="{{.StreamURL}}" post-url="{{.PostURL}}" message-url="{{.MessageURL}}" upload-url="{{.UploadURL}}" stt-url="{{.SttURL}}"{{if .TTS}} tts{{end}} max-bytes="{{.MaxPromptBytes}}" max-file-bytes="{{.MaxUploadBytes}}" draft-url="{{.DraftURL}}" draft-files="{{.DraftFiles}}"{{if .Running}} running{{end}}{{if .Blocked}} blocked{{end}}>
   <div class="dc-work-head" data-assistant-head>
     <span class="dc-term-icon assistant d-lg-none{{if .Running}} working{{end}}"{{with .Running}} data-working-since="{{.}}"{{end}} data-assistant-head-icon aria-hidden="true"><i class="ti ti-sparkles"></i></span>
-    <h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{template "assistant_title.gohtml" .Name}}</h1>
+    {{if .InTab}}<h2 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{template "assistant_title.gohtml" .Name}}</h2>{{else}}<h1 class="dc-work-title flex-fill min-w-0 text-truncate" data-assistant-title>{{template "assistant_title.gohtml" .Name}}</h1>{{end}}
     {{if .TTS}}
     {{/* The speaker opens the voice menu instead of switching on its own: the
          icon alone says whether answers read themselves aloud, so the button
@@ -54,8 +65,8 @@
       <button type="button" class="btn btn-icon btn-ghost-secondary" data-assistant-voice data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" aria-label="Voice" title="Voice"><i class="ti ti-volume-off"></i></button>
       <div class="dropdown-menu dropdown-menu-end p-3 dc-voice-menu">
         <div class="form-check form-switch mb-3">
-          <input class="form-check-input" type="checkbox" role="switch" id="assistant-voice-autoplay" data-assistant-autoplay>
-          <label class="form-check-label" for="assistant-voice-autoplay">Autoplay</label>
+          <input class="form-check-input" type="checkbox" role="switch" id="{{.DOMID}}-voice-autoplay" data-assistant-autoplay>
+          <label class="form-check-label" for="{{.DOMID}}-voice-autoplay">Autoplay</label>
         </div>
         <div class="form-label mb-1">Volume</div>
         <dc-assistant-volume></dc-assistant-volume>
@@ -74,10 +85,8 @@
         {{template "chat_end.gohtml"}}
         {{template "assistant_composer.gohtml" .}}
       </div>
-      {{template "assistant_aside.gohtml" .}}
+      {{if .InTab}}<div hidden data-assistant-aside-home>{{template "assistant_aside.gohtml" .}}</div>{{else}}{{template "assistant_aside.gohtml" .}}{{end}}
     </div>
   </div>
 </dc-assistant>
-{{end}}
-{{template "app_close.gohtml" .}}
 {{end}}

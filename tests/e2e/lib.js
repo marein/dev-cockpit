@@ -93,6 +93,18 @@ async function login(page) {
   await Promise.all([page.waitForURL(/\/projects/, { timeout: 15000 }), page.click('button[type="submit"]')]);
 }
 
+// openPicked opens a row of the editor's terminal or assistant picker the way
+// a hand does: a click or a tap on the row opens its menu, like a container's
+// in the docker sheet, and the menu's entry (Open by default) acts.
+async function openPicked(page, row, { tap = false, item = "Open" } = {}) {
+  if (tap) await page.tap(row);
+  else await page.click(row, { timeout: 10000 });
+  const entry = page.locator(".dc-context-menu .dropdown-item", { hasText: new RegExp(`^${item}$`) }).first();
+  await entry.waitFor({ state: "visible", timeout: 5000 });
+  if (tap) await entry.tap();
+  else await entry.click();
+}
+
 // dismissUpdate closes the update dialog if this instance found a newer release.
 // A runner that only clicks would hit its backdrop, and the failure looks like
 // the form itself is broken. Instances started for a run usually point at a
@@ -686,10 +698,35 @@ async function caretWalk(target, selector, newline = "Enter") {
   return { steps, lines, pasted: written ? "clipboard" : "insertText", hidden };
 }
 
+// stubMicrophone stands a WebAudio tone in for the microphone, so a recording
+// runs in a headless browser with no device, and answerSTT answers the
+// transcription route with a fixed message, so no speech engine ever starts.
+async function stubMicrophone(page) {
+  await page.evaluate(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      const audio = new AudioContext();
+      await audio.resume().catch(() => {});
+      const tone = audio.createOscillator();
+      const out = audio.createMediaStreamDestination();
+      tone.connect(out);
+      tone.start();
+      return out.stream;
+    };
+  });
+}
+
+function answerSTT(route) {
+  return route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ text: "MAGIC spoken words" }),
+  });
+}
+
 module.exports = {
-  caretWalk,
+  caretWalk, stubMicrophone, answerSTT,
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
-  login, createProject, projectPath, deleteProject, dismissUpdate, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
+  login, createProject, projectPath, deleteProject, dismissUpdate, openPicked, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
   iconSpin, spinning, still,
   makeRunner, report, assert, assertNoLogin, recordCopies,

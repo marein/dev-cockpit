@@ -73,7 +73,7 @@
 
   {{range $m := .Members}}
   <div class="attach-footer min-w-0" data-terminal-footer="{{$m.ID}}"{{if ne $m.ID $.Focus}} hidden{{end}}>
-    {{if $m.Coder}}{{template "terminal_footer_coder.gohtml" printf "#coder-files-modal-%s" $m.ID}}{{else}}{{template "terminal_footer_shell.gohtml"}}{{end}}
+    {{if $m.Coder}}{{template "terminal_footer_coder.gohtml" (dict "Files" (printf "#coder-files-modal-%s" $m.ID))}}{{else}}{{template "terminal_footer_shell.gohtml" (dict)}}{{end}}
   </div>
   {{end}}
 </div>

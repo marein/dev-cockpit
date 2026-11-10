@@ -33,7 +33,7 @@
   </div>
 
   <div class="attach-footer min-w-0">
-    {{if .InputURL}}{{template "terminal_footer_shell.gohtml"}}{{else}}{{template "terminal_footer_watch.gohtml" (dict "Coder" false)}}{{end}}
+    {{if .InputURL}}{{template "terminal_footer_shell.gohtml" (dict)}}{{else}}{{template "terminal_footer_watch.gohtml" (dict "Coder" false)}}{{end}}
   </div>
 </div>
 

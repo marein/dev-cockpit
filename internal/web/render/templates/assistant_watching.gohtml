@@ -45,25 +45,25 @@
      link, so the active tab's 2px border runs to its edges and says where the
      tab ends, and a gap would only notch that line. */}}
 {{define "assistant_watching_button.gohtml"}}
-<button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0 position-relative d-xl-none" data-bs-toggle="offcanvas" data-bs-target="#assistant-aside"
+<button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0 position-relative{{if not .InTab}} d-xl-none{{end}}"{{if .InTab}} aria-haspopup="dialog"{{else}} data-bs-toggle="offcanvas" data-bs-target="#{{.DOMID}}-aside"{{end}}
         aria-label="Watching" title="Watching" data-assistant-watching-button>
   <i class="ti ti-eye" aria-hidden="true"></i>
-  <dc-steer-badge class="dc-steer-badge{{if not .WatchingOpen}} d-none{{end}}" count="jobs triggers" aria-hidden="true">{{.WatchingOpen}}</dc-steer-badge>
+  <dc-steer-badge class="dc-steer-badge{{if not .WatchingOpen}} d-none{{end}}" count="jobs triggers" scope="{{.DOMID}}-aside" aria-hidden="true">{{.WatchingOpen}}</dc-steer-badge>
 </button>
 {{end}}
 
 {{define "assistant_watching_tabs.gohtml"}}
 <div class="nav nav-bordered nav-justified mb-2" role="tablist">
-  <button type="button" class="nav-link justify-content-center active" id="assistant-projects-tab" data-bs-toggle="tab" data-bs-target="#assistant-projects"
-          role="tab" aria-controls="assistant-projects" aria-selected="true" data-assistant-projects-tab>
+  <button type="button" class="nav-link justify-content-center active" id="{{.DOMID}}-projects-tab" data-bs-toggle="tab" data-bs-target="#{{.DOMID}}-projects"
+          role="tab" aria-controls="{{.DOMID}}-projects" aria-selected="true" data-assistant-projects-tab>
     <i class="ti ti-folders me-1 d-none d-sm-inline-block" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Projects<dc-steer-badge class="dc-steer-badge{{if not .Projects.Needs}} d-none{{end}}" count="projects" aria-hidden="true">{{.Projects.Needs}}</dc-steer-badge></span>
   </button>
-  <button type="button" class="nav-link justify-content-center" id="assistant-coders-tab" data-bs-toggle="tab" data-bs-target="#assistant-coders"
-          role="tab" aria-controls="assistant-coders" aria-selected="false" data-assistant-coders-tab>
+  <button type="button" class="nav-link justify-content-center" id="{{.DOMID}}-coders-tab" data-bs-toggle="tab" data-bs-target="#{{.DOMID}}-coders"
+          role="tab" aria-controls="{{.DOMID}}-coders" aria-selected="false" data-assistant-coders-tab>
     <i class="ti ti-steering-wheel me-1 d-none d-sm-inline-block" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Coders<dc-steer-badge class="dc-steer-badge{{if not .JobsOpen}} d-none{{end}}" count="jobs" aria-hidden="true">{{.JobsOpen}}</dc-steer-badge></span>
   </button>
-  <button type="button" class="nav-link justify-content-center" id="assistant-triggers-tab" data-bs-toggle="tab" data-bs-target="#assistant-triggers"
-          role="tab" aria-controls="assistant-triggers" aria-selected="false" data-assistant-triggers-tab>
+  <button type="button" class="nav-link justify-content-center" id="{{.DOMID}}-triggers-tab" data-bs-toggle="tab" data-bs-target="#{{.DOMID}}-triggers"
+          role="tab" aria-controls="{{.DOMID}}-triggers" aria-selected="false" data-assistant-triggers-tab>
     <i class="ti ti-bolt me-1 d-none d-sm-inline-block" aria-hidden="true"></i><span class="position-relative" data-assistant-tab-label>Triggers<dc-steer-badge class="dc-steer-badge{{if not .Triggers.Open}} d-none{{end}}" count="triggers" aria-hidden="true">{{.Triggers.Open}}</dc-steer-badge></span>
   </button>
 </div>
@@ -77,7 +77,7 @@
      for. Tabs of equal standing, built alike. Beside the conversation from
      xl up, below xl the sheet the head's eye opens. The memory sheet is the
      layout's, opened from the list column's head. */}}
-<aside class="offcanvas-xl offcanvas-end dc-assistant-aside" tabindex="-1" id="assistant-aside" aria-label="Watching" data-assistant-aside>
+<aside class="{{if not .InTab}}offcanvas-xl offcanvas-end {{end}}dc-assistant-aside" tabindex="-1" id="{{.DOMID}}-aside" aria-label="Watching" data-assistant-aside>
   {{/* The same head the list column and the thread wear, so all three end
        on one line; see the memory sheet in ctx_fragments.gohtml. It is
        the sheet's head alone: from xl up the aside stands beside the
@@ -85,27 +85,27 @@
        the list starts at once. Off by the width (`d-xl-none`, the
        breakpoint of `offcanvas-xl`), never by the offcanvas state, the
        element is the same one in both sizes. */}}
-  <div class="dc-ctx-head d-xl-none">
+  {{if not .InTab}}<div class="dc-ctx-head d-xl-none">
     <h2 class="dc-ctx-title">Watching</h2>
-    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#assistant-aside" aria-label="Close"></button>
-  </div>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#{{.DOMID}}-aside" aria-label="Close"></button>
+  </div>{{end}}
   {{/* One list per tab, and the strip stands outside the body a list
        swaps, so a refresh leaves the chosen tab and every unfolded row
        exactly as they were. */}}
-  <div class="offcanvas-body dc-assistant-aside-body">
+  <div class="offcanvas-body dc-assistant-aside-body{{if .InTab}} p-3{{end}}">
     {{template "assistant_watching_tabs.gohtml" .}}
     <div class="tab-content">
       {{/* A card opens in place of the cards, in the view under them, so
            the cards keep their place while it stands and Back finds them
            as they were. */}}
-      <dc-assistant-list class="tab-pane active dc-assistant-projects" id="assistant-projects" role="tabpanel" aria-labelledby="assistant-projects-tab" list-url="{{.ProjectsListURL}}" watch-url="{{.ProjectsWatchURL}}" view-url="{{.ProjectViewURL}}" diff-url="{{.ProjectDiffURL}}" data-assistant-projects-list>
+      <dc-assistant-list class="tab-pane active dc-assistant-projects" id="{{.DOMID}}-projects" role="tabpanel" aria-labelledby="{{.DOMID}}-projects-tab" list-url="{{.ProjectsListURL}}" watch-url="{{.ProjectsWatchURL}}" view-url="{{.ProjectViewURL}}" diff-url="{{.ProjectDiffURL}}" data-assistant-projects-list>
         {{template "assistant_projects_list.gohtml" .Projects}}
         <div hidden data-assistant-project-view></div>
       </dc-assistant-list>
-      <dc-assistant-list class="tab-pane" id="assistant-coders" role="tabpanel" aria-labelledby="assistant-coders-tab" list-url="{{.JobsListURL}}" follow="terminals" data-assistant-jobs-list>
+      <dc-assistant-list class="tab-pane" id="{{.DOMID}}-coders" role="tabpanel" aria-labelledby="{{.DOMID}}-coders-tab" list-url="{{.JobsListURL}}" follow="terminals" data-assistant-jobs-list>
         {{template "assistant_jobs_list.gohtml" .}}
       </dc-assistant-list>
-      <dc-assistant-list class="tab-pane" id="assistant-triggers" role="tabpanel" aria-labelledby="assistant-triggers-tab" list-url="{{.TriggersListURL}}" data-assistant-triggers-list>
+      <dc-assistant-list class="tab-pane" id="{{.DOMID}}-triggers" role="tabpanel" aria-labelledby="{{.DOMID}}-triggers-tab" list-url="{{.TriggersListURL}}" data-assistant-triggers-list>
         {{/* What makes a trigger stands at the head of the triggers, the
              plus with the word beside it. It is the tab pane's own child,
              so the tab carries it and nothing switches a visibility by
@@ -127,6 +127,6 @@
       </dc-assistant-list>
     </div>
   </div>
-  <div class="dc-ctx-resize d-none d-xl-block" data-ctx-resize="aside" aria-hidden="true"></div>
+  {{if not .InTab}}<div class="dc-ctx-resize d-none d-xl-block" data-ctx-resize="aside" aria-hidden="true"></div>{{end}}
 </aside>
 {{end}}

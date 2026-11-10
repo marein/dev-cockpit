@@ -1,7 +1,10 @@
-{{/* The terminal control footers, shared by the single attach pages and the
+{{/* The terminal control footers, shared by the single attach pages, the
      split view (which renders one footer per member and shows the active
-     pane's one). terminal_footer_coder.gohtml takes the files modal selector
-     as its context (the split view uses per-member modal ids). */}}
+     pane's one) and the editor's terminal tabs. Each takes a dict: Files is
+     the files modal's selector of a coder (the split view and the editor use
+     per-member modal ids), Shortcuts the keyboard shortcuts modal's where it
+     is not the terminal pages' own, and Settings adds the button that opens
+     the terminal settings where no work head carries them. */}}
 
 {{define "terminal_footer_coder.gohtml"}}
     <div class="attach-mobile">
@@ -38,7 +41,7 @@
           <i class="ti ti-clipboard"></i>
         </button>
         <coder-file-upload>
-          <button type="button" class="btn btn-outline-secondary btn-icon btn-sm coder-files-button" data-coder-files-toggle data-bs-toggle="modal" data-bs-target="{{.}}" aria-label="Files" title="Files">
+          <button type="button" class="btn btn-outline-secondary btn-icon btn-sm coder-files-button" data-coder-files-toggle data-bs-toggle="modal" data-bs-target="{{.Files}}" aria-label="Files" title="Files">
             <i class="ti ti-upload coder-files-button-icon"></i>
           </button>
         </coder-file-upload>
@@ -53,6 +56,9 @@
         <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
           <i class="ti ti-refresh"></i>
         </button>
+        {{if .Settings}}<button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-settings aria-label="Terminal settings" title="Terminal settings">
+          <i class="ti ti-settings"></i>
+        </button>{{end}}
       </div>
     </div>
 
@@ -60,13 +66,16 @@
       <button type="button" class="btn btn-ghost-secondary" data-terminal-copy aria-label="Copy" title="Copy from the conversation">
         <i class="ti ti-messages"></i>
       </button>
-      <button type="button" class="btn btn-ghost-secondary coder-files-button" data-bs-toggle="modal" data-bs-target="{{.}}" aria-label="Files" title="Files">
+      <button type="button" class="btn btn-ghost-secondary coder-files-button" data-bs-toggle="modal" data-bs-target="{{.Files}}" aria-label="Files" title="Files">
         <i class="ti ti-upload coder-files-button-icon"></i>
       </button>
       <button type="button" class="btn btn-ghost-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
-      <button type="button" class="btn btn-ghost-secondary" data-bs-toggle="modal" data-bs-target="#terminal-shortcuts-modal" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
+      {{if .Settings}}<button type="button" class="btn btn-ghost-secondary" data-terminal-settings aria-label="Terminal settings" title="Terminal settings">
+        <i class="ti ti-settings"></i>
+      </button>{{end}}
+      <button type="button" class="btn btn-ghost-secondary" data-bs-toggle="modal" data-bs-target="{{or .Shortcuts "#terminal-shortcuts-modal"}}" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
         <i class="ti ti-help"></i>
       </button>
     </div>
@@ -114,6 +123,9 @@
         <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
           <i class="ti ti-refresh"></i>
         </button>
+        {{if .Settings}}<button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-settings aria-label="Terminal settings" title="Terminal settings">
+          <i class="ti ti-settings"></i>
+        </button>{{end}}
       </div>
     </div>
 
@@ -124,7 +136,10 @@
       <button type="button" class="btn btn-ghost-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
-      <button type="button" class="btn btn-ghost-secondary" data-bs-toggle="modal" data-bs-target="#terminal-shortcuts-modal" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
+      {{if .Settings}}<button type="button" class="btn btn-ghost-secondary" data-terminal-settings aria-label="Terminal settings" title="Terminal settings">
+        <i class="ti ti-settings"></i>
+      </button>{{end}}
+      <button type="button" class="btn btn-ghost-secondary" data-bs-toggle="modal" data-bs-target="{{or .Shortcuts "#terminal-shortcuts-modal"}}" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
         <i class="ti ti-help"></i>
       </button>
     </div>
@@ -141,6 +156,9 @@
         <button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
           <i class="ti ti-refresh"></i>
         </button>
+        {{if .Settings}}<button type="button" class="btn btn-outline-secondary btn-icon btn-sm" data-terminal-settings aria-label="Terminal settings" title="Terminal settings">
+          <i class="ti ti-settings"></i>
+        </button>{{end}}
       </div>
     </div>
 
@@ -151,5 +169,8 @@
       <button type="button" class="btn btn-ghost-secondary" data-terminal-refresh aria-label="Refresh stream" title="Refresh stream">
         <i class="ti ti-refresh"></i>
       </button>
+      {{if .Settings}}<button type="button" class="btn btn-ghost-secondary" data-terminal-settings aria-label="Terminal settings" title="Terminal settings">
+        <i class="ti ti-settings"></i>
+      </button>{{end}}
     </div>
 {{end}}

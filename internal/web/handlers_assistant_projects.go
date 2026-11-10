@@ -188,7 +188,7 @@ func (s *Server) projectFileDiff(ctx context.Context, owner, name, list, path st
 	if !listed {
 		return projectDiff{}, http.StatusNotFound, errDiffUnlisted
 	}
-	rows := changedFiles(p.Name, list, read.Files)
+	rows := changedFiles(owner, p.Name, list, read.Files)
 	at := slices.IndexFunc(rows, func(f render.AssistantChangedFile) bool { return f.Path == path })
 	if at < 0 {
 		return projectDiff{}, http.StatusNotFound, errDiffUnlisted
@@ -366,7 +366,7 @@ func (s *Server) assistantProjectView(c *gin.Context, owner string, g *guest) (r
 // and the deletes of a thread and a reply the editor offers. The notes offer
 // no edit, the editor does.
 func (s *Server) projectReviews(c *gin.Context, p project.Project, card render.AssistantProjectCard, owner bool) render.AssistantProjectReviews {
-	r := render.AssistantProjectReviews{Project: p.Name}
+	r := render.AssistantProjectReviews{Owner: card.Owner, Project: p.Name}
 	b, polled, bound := s.forgePolledOf(p)
 	if bound {
 		r.Branch = polled.Watch.Branch
@@ -562,6 +562,7 @@ func (s *Server) assistantProjectCards(owner string, all bool) (render.Assistant
 			}
 		}
 		card := render.AssistantProjectCard{
+			Owner: owner,
 			Name:  g.p.Name,
 			URL:   projectLanding(g.p.Name),
 			Open:  g.open,
@@ -709,14 +710,14 @@ func (s *Server) projectChanges(ctx context.Context, p project.Project, card ren
 	if !card.Git.Read {
 		return nil
 	}
-	changes := &render.AssistantProjectChanges{Project: p.Name, Since: card.Git.Since}
+	changes := &render.AssistantProjectChanges{Owner: card.Owner, Project: p.Name, Since: card.Git.Since}
 	if card.Git.Changed > 0 {
 		uncommitted, err := uncommittedFiles(ctx, git.New(p.Path))
 		switch {
 		case err != nil:
 			changes.UncommittedUnread = true
 		case len(uncommitted.Files) > 0:
-			list := changedFileList(p.Name, render.ChangesUncommitted, uncommitted.Files, more, uncommitted.Truncated)
+			list := changedFileList(card.Owner, p.Name, render.ChangesUncommitted, uncommitted.Files, more, uncommitted.Truncated)
 			changes.Uncommitted = &list
 		}
 	}
@@ -724,7 +725,7 @@ func (s *Server) projectChanges(ctx context.Context, p project.Project, card ren
 		return changes
 	}
 	changes.CompareURL = editorCompareURL(p.Name, "")
-	changes.Files = changedFileList(p.Name, render.ChangesFiles, read.Files, more, read.Truncated)
+	changes.Files = changedFileList(card.Owner, p.Name, render.ChangesFiles, read.Files, more, read.Truncated)
 	commits := slices.Contains(more, render.ChangesCommits)
 	if read.Commits == 0 {
 		changes.LogRead = true
@@ -750,21 +751,22 @@ func (s *Server) projectChanges(ctx context.Context, p project.Project, card ren
 // changedFileList is the list of project named list of the files of its
 // comparison, the largest change first, its rest rendered where more names
 // the list.
-func changedFileList(project, list string, files []git.RevisionChange, more []string, truncated bool) render.AssistantFileList {
-	rows := changedFiles(project, list, files)
+func changedFileList(owner, project, list string, files []git.RevisionChange, more []string, truncated bool) render.AssistantFileList {
+	rows := changedFiles(owner, project, list, files)
 	sort.SliceStable(rows, func(i, j int) bool {
 		return rows[i].Added+rows[i].Removed > rows[j].Added+rows[j].Removed
 	})
-	return render.NewAssistantFileList(project, list, rows, changedFilesShown, slices.Contains(more, list), truncated, changedFileURL(project, list, ""))
+	return render.NewAssistantFileList(owner, project, list, rows, changedFilesShown, slices.Contains(more, list), truncated, changedFileURL(project, list, ""))
 }
 
 // changedFiles are the rows of the list named list of the files of its
 // comparison in git's order, each opening the editor on it as its list
 // compares it.
-func changedFiles(project, list string, files []git.RevisionChange) []render.AssistantChangedFile {
+func changedFiles(owner, project, list string, files []git.RevisionChange) []render.AssistantChangedFile {
 	rows := make([]render.AssistantChangedFile, 0, len(files))
 	for _, f := range files {
 		rows = append(rows, render.AssistantChangedFile{
+			Owner:   owner,
 			List:    list,
 			Path:    f.Path,
 			From:    f.From,

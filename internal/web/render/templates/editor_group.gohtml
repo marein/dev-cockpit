@@ -48,9 +48,12 @@
           <button type="button" class="dropdown-item" data-editor-settings-item>
             <i class="ti ti-adjustments me-2"></i>Editor settings
           </button>
-          <button type="button" class="dropdown-item" data-editor-term-item aria-pressed="false" hidden>
-            <i class="ti ti-terminal-2 me-2"></i>Terminal
+          <button type="button" class="dropdown-item" data-editor-term-open-item>
+            <i class="ti ti-terminal-2 me-2"></i>Open terminal
           </button>
+          {{if not .Editor.Access.Guest}}<button type="button" class="dropdown-item" data-editor-asst-open-item>
+            <i class="ti ti-sparkles me-2"></i>Open assistant
+          </button>{{end}}
           <button type="button" class="dropdown-item" data-editor-docker-item hidden>
             <i class="ti ti-brand-docker me-2"></i>Docker
           </button>
@@ -125,7 +128,7 @@
         {{if not .Editor.Access.Guest}}<span class="mx-1 d-none d-md-inline">·</span>
         <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> forge</span>{{end}}
         <span class="mx-1 d-none d-md-inline">·</span>
-        <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>J</kbd> terminal</span>
+        <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>J</kbd> terminals</span>
         <span class="mx-1 d-none d-md-inline">·</span>
         <span class="d-none d-md-inline"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> docker</span>
       </div>

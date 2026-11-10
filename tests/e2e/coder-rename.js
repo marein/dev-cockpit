@@ -2,7 +2,7 @@ const L = require("./lib");
 const { assert, sleep, BASE } = L;
 
 // Coder rename: a running coder is renamed wherever a shell is (the tab strip
-// menu, a split pane head, a project chip, the editor terminal panel, and a
+// menu, a split pane head, a project chip, the editor's picker row and terminal tab, and a
 // click on the attach page heading). A coder's name lives in its CLI's own
 // session record, so POST /coders/:id/rename types `/rename <name>` into the
 // session as is, with no key before or after it, and the new name comes back
@@ -39,8 +39,8 @@ L.runFeature("CODER-RENAME", async ({ engine, page, run }) => {
     }
     throw new Error(`coder UI not ready, mirror tail: ${text.slice(-200)}`);
   };
-  const pickRename = async (selector) => {
-    await page.click(selector, { button: "right" });
+  const pickRename = async (selector, { left = false } = {}) => {
+    await page.click(selector, left ? {} : { button: "right" });
     const item = page.locator(".dc-context-menu .dropdown-item", { hasText: /^Rename$/ }).first();
     await item.waitFor({ state: "visible", timeout: 5000 });
     await item.click();
@@ -142,7 +142,7 @@ L.runFeature("CODER-RENAME", async ({ engine, page, run }) => {
       assert((await page.locator("[data-name-label]").textContent()).trim() === before, "the OpenCode name moved");
     });
 
-    await run("split pane head and editor terminal panel offer rename for a coder", async () => {
+    await run("split pane head, the editor's picker row and terminal tab offer rename for a coder", async () => {
       shellUrl = await L.createShell(page, project);
       const group = await page.evaluate(async (list) => {
         const token = document.querySelector('meta[name="csrf-token"]').content;
@@ -159,15 +159,32 @@ L.runFeature("CODER-RENAME", async ({ engine, page, run }) => {
         await pickRename(`.attach-split-pane[data-pane-id="${ids.opencode}"] [data-pane-head]`);
         await insideOnly();
       }
-      await page.evaluate((p) => localStorage.setItem(`dc-editor-term-open:${p}`, "1"), project);
+      const loaded = page.waitForResponse((r) => new URL(r.url()).pathname === `/projects/${project}/editor/terminals`, { timeout: 15000 });
       await page.goto(`${BASE}/projects/${project}/editor`, { waitUntil: "domcontentloaded" });
-      const tab = `[data-editor-term-panel] [data-term-tab="${ids.copilot}"]`;
-      await page.waitForSelector(tab, { timeout: 15000 });
+      await loaded;
+      const row = (id) => `[data-editor-sheet-body] [data-term-pick="${id}"]`;
+      const picker = async (id) => {
+        await page.click("[data-editor-term-status]");
+        await page.waitForSelector(row(id), { state: "visible", timeout: 15000 });
+        await sleep(300);
+      };
+      await picker(ids.copilot);
+      await page.click(row(ids.copilot));
+      await page.locator(".dc-context-menu .dropdown-item", { hasText: /^Rename$/ }).first().waitFor({ state: "visible", timeout: 5000 });
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 }).catch(() => {});
+      await sleep(400);
+      const tab = `.editor-tab[data-path="//terminal/${ids.copilot}"]`;
+      await L.openPicked(page, row(ids.copilot));
+      await page.waitForSelector(`${tab}.active`, { timeout: 10000 });
       await page.click(tab, { button: "right" });
       await page.locator(".dc-context-menu .dropdown-item", { hasText: /^Rename$/ }).first().waitFor({ state: "visible", timeout: 5000 });
       await page.keyboard.press("Escape");
       if (ids.opencode) {
-        await pickRename(`[data-editor-term-panel] [data-term-tab="${ids.opencode}"]`);
+        await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 }).catch(() => {});
+        await sleep(400);
+        await picker(ids.opencode);
+        await pickRename(row(ids.opencode), { left: true });
         await insideOnly();
       }
       const posted = renamePosts.filter((u) => u.includes(ids.opencode || "-"));

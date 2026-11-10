@@ -192,6 +192,11 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/assistants/instances/:id", s.handleAssistantInstanceRead)
 	auth.GET("/assistants/models", s.handleAssistantModels)
 	auth.GET("/assistants/models/resolved", s.handleAssistantModelsResolved)
+	// The assistants as the editor lists them, and one of them as an editor
+	// tab shows it. Like every address of the area they are the owner's
+	// alone, no link reaches them.
+	auth.GET("/assistants/editor", s.handleEditorAssistants)
+	auth.GET("/assistants/:id/tab", s.handleAssistantTab)
 	auth.GET("/assistants/:id", s.handleAssistantPage)
 	auth.POST("/assistants/:id", s.handleAssistantAction)
 	auth.GET("/assistants/:id/stream", s.handleAssistantStream)

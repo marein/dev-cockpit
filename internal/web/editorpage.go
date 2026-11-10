@@ -192,12 +192,12 @@ func (s *Server) handleEditorProjects(c *gin.Context) {
 	})
 }
 
-// handleEditorTerminals renders the editor's terminal panel fragment: the
+// handleEditorTerminals renders the editor's terminals fragment: the
 // project's live coders and shells in tab strip order, flat like the quick nav
 // (groups are strip UI). The stream, resize and input routes are the same ones
-// the attach pages use, so the panel is one more client of the same session.
-// A guest's panel carries the link's addresses, no resize, and the input,
-// the files and the inactive coders only where the link grants them.
+// the attach pages use, so a terminal tab is one more client of the same
+// session. A guest's fragment carries the link's addresses, no resize, and the
+// input, the files and the inactive coders only where the link grants them.
 func (s *Server) handleEditorTerminals(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
@@ -236,13 +236,15 @@ func (s *Server) handleEditorTerminals(c *gin.Context) {
 		if t.Kind == "coder" {
 			et.ConversationURL = base + "/conversation"
 			if co, running, err := s.resolveRunning(t.ID); err == nil && acc.Can(share.TerminalInput) {
+				et.FilesData = &render.CoderFilesData{
+					Page:            page,
+					Identifier:      t.ID,
+					MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
+				}
 				if files, err := co.Coder().SessionRepository().ListFiles(running.Identifier); err == nil {
-					et.FilesData = &render.CoderFilesData{
-						Page:            page,
-						Identifier:      t.ID,
-						Files:           files,
-						MaxUploadSizeMB: maxRequestBodyMegabytes(s.cfg.MaxRequestBodySize),
-					}
+					et.FilesData.Files = files
+				} else {
+					et.FilesData.Error = "The files could not be listed."
 				}
 			}
 		}

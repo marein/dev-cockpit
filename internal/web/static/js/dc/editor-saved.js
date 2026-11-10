@@ -44,6 +44,9 @@ export function savedEntries(saved, headRev) {
     if (e && typeof e === "object" && e.type === "compare" && typeof e.left === "string" && typeof e.right === "string") return e;
     if (e && typeof e === "object" && e.type === "revdiff" && typeof e.left === "string" && typeof e.right === "string"
       && typeof e.leftRev === "string" && typeof e.rightRev === "string") return e;
+    if (e && typeof e === "object" && (e.type === "terminal" || e.type === "assistant") && typeof e.id === "string" && e.id) {
+      return { type: e.type, id: e.id };
+    }
     if (e && typeof e === "object" && e.type === "external" && typeof e.path === "string" && e.path) {
       return { type: "external", path: e.path, view: savedView(e.view) };
     }

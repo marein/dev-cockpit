@@ -283,13 +283,13 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 		c.JSON(http.StatusOK, answer)
 		return
 	}
-	// A create that came from the editor terminal panel's + menu goes back
+	// A create that came from the editor's terminal picker goes back
 	// there: the form action carries the return target and the panel marker
 	// through the POST, and the editor page hands the id back to its client as
-	// data-editor-terminal to activate that tab. Only the marker earns the
-	// comeback; every other caller, the quick nav on an editor page included,
-	// lands on the coder's own page like a created shell does, and its editor
-	// return serves the form's Cancel alone.
+	// data-editor-terminal to open that terminal as a tab. Only the marker
+	// earns the comeback; every other caller, the quick nav on an editor page
+	// included, lands on the coder's own page like a created shell does, and
+	// its editor return serves the form's Cancel alone.
 	if ret := s.formReturn(c); c.Query("panel") == "1" && editorReturnPath.MatchString(ret) {
 		s.createLanded(c, ret+"?terminal="+url.QueryEscape(res.Identifier), "", "")
 		return

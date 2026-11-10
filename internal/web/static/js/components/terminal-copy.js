@@ -23,7 +23,14 @@ const TEXT = "text";
 
 class TerminalCopy extends HTMLElement {
   connectedCallback() {
-    if (this.ac) return;
+    if (this.ac) {
+      const place = this.scrolledTo;
+      this.scroller.scrollTop = place;
+      requestAnimationFrame(() => {
+        if (this.isConnected && !this.hidden) this.scroller.scrollTop = place;
+      });
+      return;
+    }
     this.ac = new AbortController();
     const signal = this.ac.signal;
     this.terminalId = this.getAttribute("terminal-id") || "";
@@ -37,7 +44,9 @@ class TerminalCopy extends HTMLElement {
     this.lines = this.querySelector("[data-copy-lines]");
     this.loading = 0;
     this.face = "";
+    this.scrolledTo = 0;
     this.timers = new Set();
+    this.scroller.addEventListener("scroll", () => { this.scrolledTo = this.scroller.scrollTop; }, { signal, passive: true });
     this.applyFontSize(this.storedFontSize());
     if (this.lines) {
       const stored = get(LINES_KEY, "");
@@ -69,12 +78,22 @@ class TerminalCopy extends HTMLElement {
     }, { signal });
   }
 
+  // A move to another place on the page (an editor tab taken to another
+  // group) disconnects and connects again at once, like terminal-attach's:
+  // the view stays as it stands, open or shut, the terminal behind it, and
+  // gets back the place it was scrolled to, which the browser drops with the
+  // box it moved; once more a frame later, as a box can arrive hidden and
+  // show only when its tab comes to the front.
   disconnectedCallback() {
-    this.ac?.abort();
-    this.ac = null;
-    for (const timer of this.timers) clearTimeout(timer);
-    this.timers.clear();
-    this.terminal()?.classList.remove("attach-terminal-behind");
+    const terminal = this.terminal();
+    queueMicrotask(() => {
+      if (this.isConnected) return;
+      this.ac?.abort();
+      this.ac = null;
+      for (const timer of this.timers) clearTimeout(timer);
+      this.timers.clear();
+      terminal?.classList.remove("attach-terminal-behind");
+    });
   }
 
   // A button in a split's footer names its pane, a page with one terminal has

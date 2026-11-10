@@ -7,10 +7,9 @@ import { missedServerEvent, onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
 import { applyFold } from "@dc/fold";
 import { menuJustClosed, openMenu, wireRowMenus } from "@dc/contextmenu";
-import { ensureOk, postForm } from "@dc/http";
 import { inactiveCoderRenameItem, renameCoder, renameShell } from "@dc/rename";
-import { notifyError, notifySuccess } from "@dc/toast";
-import { alsoDropped, releaseCoder, steerCoder, steeredByItem } from "@dc/steer";
+import { notifyError } from "@dc/toast";
+import { releaseCoder, steerCoder, steeredByItem } from "@dc/steer";
 import { narrow, swapBar, tagFilter } from "@dc/tags";
 
 const FILTER_KEY = "dc-project-filter";
@@ -247,6 +246,12 @@ class ProjectList extends HTMLElement {
     if (!deleteProject && form.dataset.ajaxRefresh === undefined) return;
     event.preventDefault();
     event.stopPropagation();
+    const chip = form.closest("[data-chip]");
+    if (form.dataset.inactiveCoder) {
+      const button = form.querySelector("button");
+      await projectActions.deleteInactiveCoder(form.dataset.inactiveCoder, form.dataset.inactiveCoderName || "", (on) => this.markChipBusy(chip, button, on));
+      return;
+    }
     if (form.dataset.confirm) {
       const ok = await confirm({
         title: form.dataset.confirm,
@@ -259,7 +264,6 @@ class ProjectList extends HTMLElement {
       await this.deleteProject(form);
       return;
     }
-    const chip = form.closest("[data-chip]");
     if (chip) await this.actOnChip(chip, form.action, form.querySelector("button"));
   }
 
@@ -379,29 +383,20 @@ class ProjectList extends HTMLElement {
     if (ok) await this.actOnChip(chip, `/coders/${chip.dataset.chipId}/delete`);
   }
 
-  // A chip's Stop or Delete acts in place: the server answers JSON, the toast
-  // says what the flash would have said, and the terminals event draws the
-  // row. The row itself is never replaced, which is what keeps the chip list
-  // unfolded. Until the event lands the chip wears the working ring and its
+  // A chip's Stop or Delete acts in place through @dc/project-actions. The row
+  // itself is never replaced, which is what keeps the chip list unfolded.
+  // Until the terminals event lands the chip wears the working ring and its
   // button is dead, so it does not read as a chip that ignored the click. A
   // refusal shows as a toast and leaves the chip as it was.
   async actOnChip(chip, action, button) {
-    const stop = action.endsWith("/stop");
-    const shell = chip.dataset.chipKind === "shell";
-    const icon = chip.querySelector(".dc-term-icon");
-    if (button) button.disabled = true;
-    icon?.classList.add("working");
-    try {
-      const response = await postForm(action, {});
-      await ensureOk(response, stop ? "Could not stop the coder." : shell ? "Could not delete the shell." : "Could not delete the coder.");
-      const data = await response.json().catch(() => null);
-      const name = (data && data.name) || chip.dataset.chipName || "";
-      notifySuccess(alsoDropped(stop ? `Coder "${name}" stopped.` : shell ? `Shell "${name}" deleted.` : `Coder "${name}" deleted.`, data));
-    } catch (error) {
-      notifyError(error.message);
-      if (button) button.disabled = false;
-      icon?.classList.remove("working");
-    }
+    this.markChipBusy(chip, button, true);
+    const done = await projectActions.actOnSession(action, { shell: chip.dataset.chipKind === "shell", name: chip.dataset.chipName || "" });
+    if (!done) this.markChipBusy(chip, button, false);
+  }
+
+  markChipBusy(chip, button, on) {
+    if (button) button.disabled = on;
+    chip?.querySelector(".dc-term-icon")?.classList.toggle("working", on);
   }
 
   async renameShellChip(chip) {

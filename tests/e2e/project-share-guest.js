@@ -16,7 +16,7 @@ const { assert, BASE, sleep } = L;
 // types answer the plain 404, the usages of an interface's declaration
 // listing its implementations apart while another project's usages answer
 // the plain 404, the
-// terminal panel and the attach pages with every coder and shell of the
+// editor's picker and terminal tabs and the attach pages with every coder and shell of the
 // project live, one started after the link was made included, and one of
 // another project nowhere, the copy view of a shell and of a coder, the
 // project's container in the docker sheet with its logs read only, and the
@@ -32,7 +32,7 @@ const { assert, BASE, sleep } = L;
 // reload and opens in the same tab, its shell joins the strip, and taken off
 // again it answers the plain 404 under the link, its shell's stream ends and
 // the guest's open page moves to the link's first project. No write control
-// stands anywhere (the menus, the git sheet, the comments, the panel, the
+// stands anywhere (the menus, the git sheet, the comments, the picker, the
 // strip, the footers), and every write route refuses a hand built request
 // carrying the guest's own CSRF token, a coder's and a shell's deletion
 // above all, both still running after it, the line comments' with the 403 of
@@ -254,7 +254,7 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       await gp.waitForSelector(".dc-context-menu", { timeout: 4000 });
       noneOf(await menuLabels(gp), ["Copy file", "Paste", "Rename", "Delete", "Revert changes"], "a tab");
       await closeMenu(gp);
-      for (const sel of ["[data-editor-replace-project-item]", "[data-editor-save-all]", "[data-editor-reindex-item]", "[data-editor-term-plus]", "[data-editor-commit-toggle]:not([hidden])"]) {
+      for (const sel of ["[data-editor-replace-project-item]", "[data-editor-save-all]", "[data-editor-reindex-item]", "[data-editor-commit-toggle]:not([hidden])"]) {
         assert(!(await gp.$(sel)), `${sel} stands on the guest's editor`);
       }
     });
@@ -398,22 +398,42 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
     });
 
-    await run("the terminal panel shows the project's terminals live, nothing of another, nothing to change", async () => {
-      await gp.keyboard.press("Control+j");
-      await gp.waitForSelector("[data-term-tab]", { timeout: 10000 });
-      const ids = await gp.$$eval("[data-term-tab]", (els) => els.map((el) => el.getAttribute("data-term-tab")));
-      for (const id of [fx.shell, fx.coder, fx.after]) assert(ids.includes(id), `the panel misses ${id}: ${ids}`);
-      assert(!ids.includes(fx.otherShell), "the panel lists another project's shell");
-      assert(!(await gp.$("[data-term-close], [data-term-resume], terminal-input")), "the panel offers a close, a resume or input");
-      await gp.click(`[data-term-tab="${fx.shell}"]`);
-      await gp.waitForSelector(`[data-term-pane="${fx.shell}"] terminal-attach`, { timeout: 8000 });
-      const attrs = await gp.$eval(`[data-term-pane="${fx.shell}"] terminal-attach`, (el) => ({ resize: el.hasAttribute("resize-url"), readOnly: el.hasAttribute("read-only") }));
-      assert(!attrs.resize && attrs.readOnly, `the panel's terminal is ${JSON.stringify(attrs)}`);
-      await type(page, "shell", fx.shell, `echo panel-live-${fx.tag}`);
-      await waitText(() => mirror(gp, `[data-term-pane="${fx.shell}"]`), `panel-live-${fx.tag}`, "the guest's panel");
-      await gp.click(`[data-term-tab="${fx.shell}"]`, { button: "right" });
-      noneOf(await menuLabels(gp), ["Rename", "Mark read", "Steer", "Release", "Open project", "Stop", "Delete"], "a panel tab");
+    await run("the statusbar's terminal icon opens a picker of the project's terminals live, nothing of another, no New, no stopped coder and no assistant, no sparkles and no Ctrl+I, a row opens a tab that watches", async () => {
+      assert(!(await gp.$("[data-editor-dock], [data-term-chip], [data-term-resume], terminal-input")), "the guest's editor carries a dock, a resume or input");
+      assert(!(await gp.$("[data-editor-asst-status], [data-editor-asst-open-item]")), "the guest's editor carries the assistant sparkles or Open assistant");
+      assert(await gp.evaluate(() => { const r = document.querySelector("[data-editor-term-status]").getBoundingClientRect(); return r.width > 0 && r.bottom <= innerHeight; }), "the guest's statusbar shows no terminal icon");
+      const pick = (id) => `[data-editor-sheet-body] [data-term-pick="${id}"]`;
+      await gp.click("[data-editor-term-status]");
+      await gp.waitForSelector(pick(fx.after), { state: "visible", timeout: 10000 });
+      const ids = await gp.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] [data-term-pick]")].map((el) => el.dataset.termPick));
+      for (const id of [fx.shell, fx.coder, fx.after]) assert(ids.includes(id), `the picker misses ${id}: ${ids}`);
+      assert(!ids.includes(fx.otherShell), "the picker lists another project's shell");
+      const rows = await gp.evaluate(() => [...document.querySelectorAll("[data-editor-sheet-body] .dropdown-item, [data-editor-sheet-body] .dropdown-header")].map((el) => el.textContent.replace(/\s+/g, " ").trim()));
+      noneOf(rows, ["New shell", "New coder", "New assistant", "Stopped coders", "Assistants"], "the guest's picker");
+      await gp.click(pick(fx.shell));
+      await gp.waitForSelector(".dc-context-menu", { timeout: 4000 });
+      noneOf(await menuLabels(gp), ["Rename", "Mark read", "Steer", "Release", "Open project", "Stop", "Delete"], "a picker row");
       await closeMenu(gp);
+      await gp.keyboard.press("Escape");
+      await gp.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 5000 });
+      for (const key of ["Control+i", "Meta+i"]) {
+        await gp.keyboard.press(key);
+        await sleep(400);
+        assert(await gp.evaluate(() => document.querySelector("[data-editor-sheet]").hidden), `${key} opened a picker for the guest`);
+      }
+      await gp.keyboard.press("Control+j");
+      await gp.waitForSelector(pick(fx.shell), { state: "visible", timeout: 8000 });
+      await sleep(300);
+      const view = `.editor-term-box:has([data-terminal-view="${fx.shell}"])`;
+      await L.openPicked(gp, pick(fx.shell));
+      await gp.waitForSelector(`${view} terminal-attach`, { timeout: 8000 });
+      const attrs = await gp.$eval(`${view} terminal-attach`, (el) => ({ resize: el.hasAttribute("resize-url"), readOnly: el.hasAttribute("read-only") }));
+      assert(!attrs.resize && attrs.readOnly, `the guest's terminal tab is ${JSON.stringify(attrs)}`);
+      assert(!(await gp.$(`${view} terminal-input, ${view} [data-terminal-control]`)), "the guest's terminal tab offers input");
+      await type(page, "shell", fx.shell, `echo picked-live-${fx.tag}`);
+      await waitText(() => mirror(gp, view), `picked-live-${fx.tag}`, "the guest's terminal tab");
+      await gp.click(`.editor-tab[data-path="//terminal/${fx.shell}"] .editor-tab-state`);
+      await gp.waitForSelector(`.editor-tab[data-path="//terminal/${fx.shell}"]`, { state: "detached", timeout: 6000 });
     });
 
     await run("the terminal pages show every terminal of the project live, typing and closing nowhere", async () => {

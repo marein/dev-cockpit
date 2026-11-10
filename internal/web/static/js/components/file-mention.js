@@ -247,7 +247,7 @@ class FileMention extends HTMLElement {
     this.list.replaceChildren(...groups);
     const rows = this.rows();
     rows.forEach((row, i) => {
-      row.id = `dc-mention-option-${i}`;
+      row.id = `${this.list.id}-option-${i}`;
       row.querySelectorAll(".editor-palette-repo, .editor-palette-branch, .editor-palette-sub").forEach((part) => markText(part, query));
     });
     const at = marked ? rows.findIndex((row) => row.dataset.projectName === marked) : -1;
@@ -320,7 +320,7 @@ class FileMention extends HTMLElement {
     }
     this.list.replaceChildren(...rows);
     rows.forEach((row, i) => {
-      row.id = `dc-mention-option-${i}`;
+      row.id = `${this.list.id}-option-${i}`;
     });
     const left = current ? this.backTo : "";
     if (current) this.backTo = "";

@@ -27,6 +27,36 @@ export function renameShell(id, current) {
   return rename(`/shells/${id}/rename`, current, `Rename shell "${current}"`, undefined, "Could not rename the shell.");
 }
 
+// renameAssistant asks for an assistant's new name and posts it to its page
+// address. It answers whether the name changed.
+export async function renameAssistant(url, current) {
+  if (open) return false;
+  open = true;
+  try {
+    const result = await fire({
+      title: "Rename this assistant",
+      input: "text",
+      inputValue: current,
+      inputAttributes: { "aria-label": "Name" },
+      showCancelButton: true,
+      confirmButtonText: "Rename",
+      cancelButtonText: "Cancel",
+      reverseButtons: true,
+    });
+    if (!result.isConfirmed) return false;
+    const title = (result.value || "").trim();
+    if (!title || title === current) return false;
+    const response = await postForm(url, { form: "rename", title });
+    await ensureOk(response, "The assistant could not be renamed.");
+    return true;
+  } catch (err) {
+    notifyError(err?.message || "The assistant could not be renamed.");
+    return false;
+  } finally {
+    open = false;
+  }
+}
+
 export function renameCoder(id, current, { mode, label } = {}) {
   if (mode === "manual") return renameInside(current, label);
   return rename(`/coders/${id}/rename`, current, `Rename coder "${current}"`, CODER_NOTE, "Could not rename the coder.");

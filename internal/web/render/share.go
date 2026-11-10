@@ -200,3 +200,9 @@ type GuestAssistantData struct {
 	ProjectDiffURL   string
 	WatchingOpen     int
 }
+
+// InTab is false, a guest's assistant stands on its page alone.
+func (GuestAssistantData) InTab() bool { return false }
+
+// DOMID starts the ids of the guest's page, the owner's page's own.
+func (GuestAssistantData) DOMID() string { return "assistant" }

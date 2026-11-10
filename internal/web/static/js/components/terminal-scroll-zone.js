@@ -162,7 +162,7 @@ import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, p
       if (!this.isActive()) {
         return;
       }
-      const anchor = document.getElementById("terminal-cursor-input");
+      const anchor = this.terminal?.querySelector("#terminal-cursor-input");
       if (!anchor) {
         return;
       }

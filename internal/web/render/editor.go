@@ -33,8 +33,8 @@ type EditorData struct {
 	// Terminal is the session id a panel-marked coder create handed back via
 	// ?terminal=, rendered into the page because the client must not read it
 	// from the URL: a boosted navigation swaps the body before it pushes the
-	// URL, so the editor's init still sees the previous address. The terminal
-	// panel activates that session's tab.
+	// URL, so the editor's init still sees the previous address. The editor
+	// opens that session as a tab.
 	Terminal string
 	// View is the panel the page opens on, "commit" or "compare", rendered
 	// for the same reason the terminal id is: the projects page's git menu
@@ -92,9 +92,9 @@ type EditorProject struct {
 	Tags []project.Tag
 }
 
-// EditorTerminalsData feeds the editor's terminal panel fragment: the live
-// coders and shells of one project in tab strip order, plus the project's
-// inactive coders for the panel's + menu.
+// EditorTerminalsData feeds the editor's terminals fragment: the live coders
+// and shells of one project in tab strip order, plus the project's inactive
+// coders, as the picker's rows and the views of terminal tabs.
 type EditorTerminalsData struct {
 	Sessions  []EditorTerminal
 	Inactive  []EditorInactiveCoder
@@ -102,7 +102,7 @@ type EditorTerminalsData struct {
 	Access    Access
 }
 
-// EditorInactiveCoder is one resumable coder in the panel's + menu.
+// EditorInactiveCoder is one resumable coder of the picker and its tab.
 type EditorInactiveCoder struct {
 	ID       string
 	Name     string
@@ -112,8 +112,8 @@ type EditorInactiveCoder struct {
 	HasNews  bool
 }
 
-// EditorTerminal is one session in the editor's terminal panel: the tab entry
-// and the pane the client mounts a terminal island into.
+// EditorTerminal is one session of the editor's terminals: the picker's row
+// and the view a terminal tab mounts its island into.
 type EditorTerminal struct {
 	ID        string
 	Name      string

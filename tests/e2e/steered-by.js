@@ -7,8 +7,8 @@ const { guestPage } = require("./project-share-guest");
 // Who steers a coder: the purple steered mark names the assistant holding the
 // job, wherever the cockpit draws it, for the owner alone. The icon's tooltip
 // names the assistant after the coder, in the tab strip, the phone's sheet, the
-// editor's terminal panel, the project chips and the attach pages. The row
-// menus of a steered coder (strip, pane head, chip, editor panel tab, the
+// editor's picker and terminal tab, the project chips and the attach pages. The row
+// menus of a steered coder (strip, pane head, chip, editor picker row and tab, the
 // phone row's three dots) carry an entry of the sparkles and the assistant's
 // name beside Release, opening the thread, its icon sized, aligned and
 // coloured like the menu's other icons. No page shows the words "Steered by",
@@ -171,6 +171,7 @@ async function entryFits(page, title, id) {
 
 async function menuAt(page, selector, open = "right") {
   if (open === "tap") await page.tap(selector);
+  else if (open === "click") await page.click(selector);
   else await page.click(selector, { button: "right" });
   await page.waitForSelector(".dc-context-menu", { timeout: 5000 });
   return menuLabels(page);
@@ -326,7 +327,7 @@ L.runFeature("steered-by", async ({ engine, browser, page, run, mobilePage, bag 
       ]);
     });
 
-    await run("the project chip and the editor's terminal tab name it in tooltip and menu", async () => {
+    await run("the project chip, the editor's picker row and terminal tab name it in tooltip and menu", async () => {
       await visit(page, `${BASE}/projects`);
       const chipIcon = `#project-${PROJECT} [data-chip-id="${fx.coder}"] .dc-term-icon`;
       await page.waitForSelector(chipIcon, { timeout: 10000 });
@@ -340,19 +341,31 @@ L.runFeature("steered-by", async ({ engine, browser, page, run, mobilePage, bag 
 
       await visit(page, `${BASE}/projects/${PROJECT}/editor`);
       await page.waitForSelector(".cm-editor, .editor-textarea", { state: "attached", timeout: 15000 });
-      if (await page.evaluate(() => document.querySelector("[data-editor-term-panel]").hidden)) {
-        await page.evaluate(() => document.querySelector("[data-editor-term-item]").click());
-      }
-      const editorTab = `[data-editor-term-panel] [data-term-tab="${fx.coder}"]`;
-      await page.waitForSelector(editorTab, { state: "visible", timeout: 10000 });
-      const onTab = await titleOf(page, `${editorTab} .dc-term-icon`);
-      assert(onTab.steered && onTab.title === `Claude, steered by ${LONG}` && onTab.url === `/assistants/${fx.a}`, `the panel's icon reads ${JSON.stringify(onTab)}`);
-      const tabMenu = await menuAt(page, editorTab);
+      const pickRow = `[data-editor-sheet-body] [data-term-pick="${fx.coder}"]`;
+      const read = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/editor/terminals"), { timeout: 10000 }).catch(() => null);
+      await page.click("[data-editor-term-status]");
+      await read;
+      await sleep(150);
+      await page.waitForSelector(pickRow, { state: "visible", timeout: 10000 });
+      const onRowIcon = await titleOf(page, `${pickRow} .dc-term-icon`);
+      assert(onRowIcon.steered && onRowIcon.title === `Claude, steered by ${LONG}` && onRowIcon.url === `/assistants/${fx.a}`, `the picker row's icon reads ${JSON.stringify(onRowIcon)}`);
+      const rowMenu = await menuAt(page, pickRow, "click");
       await entryFits(page, LONG, fx.a);
       assert(await wordless(page), "the editor shows Steered by");
       await closeMenu(page);
-      assert(tabMenu.includes(LONG) && tabMenu.includes("Release"), `the panel tab's menu reads ${tabMenu}`);
-      await page.evaluate(() => document.querySelector("[data-editor-term-item]").click());
+      assert(rowMenu.includes(LONG) && rowMenu.includes("Release"), `the picker row's menu reads ${rowMenu}`);
+      await sleep(400);
+      const editorTab = `.editor-tab[data-path="//terminal/${fx.coder}"]`;
+      await L.openPicked(page, pickRow);
+      await page.waitForSelector(`${editorTab}.active`, { timeout: 10000 });
+      const onTab = await titleOf(page, `${editorTab} .dc-term-icon`);
+      assert(onTab.steered && onTab.title === `Claude, steered by ${LONG}` && onTab.url === `/assistants/${fx.a}`, `the terminal tab's icon reads ${JSON.stringify(onTab)}`);
+      const tabMenu = await menuAt(page, editorTab);
+      await entryFits(page, LONG, fx.a);
+      await closeMenu(page);
+      assert(tabMenu.includes(LONG) && tabMenu.includes("Release"), `the terminal tab's menu reads ${tabMenu}`);
+      await page.click(`${editorTab} .editor-tab-state`);
+      await page.waitForSelector(editorTab, { state: "detached", timeout: 6000 });
     });
 
     await run("on a phone the head gives the coder's name its width, and a tap on the mark opens the entry", async () => {

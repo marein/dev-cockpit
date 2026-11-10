@@ -45,7 +45,9 @@ type FoldLabel struct {
 // working copy, what the forge poller holds of its branch and the
 // assistant's jobs in it.
 type AssistantProjectCard struct {
-	Name string
+	// Owner is the assistant whose aside shows the card.
+	Owner string
+	Name  string
 	// URL leads to the project, empty for a guest whose link does not grant it.
 	URL  string
 	Open bool
@@ -156,11 +158,19 @@ func (c AssistantProjectCard) OlderLabel() FoldLabel {
 	return FoldLabel{Shut: "Show " + plural(c.Older, "older coder"), Open: "Show fewer coders"}
 }
 
-// FoldID names the fold of the card's older jobs. A project's name is a
-// directory name and may hold what an id selector cannot, so it is hashed.
+// FoldID names the fold of the card's older jobs.
 func (c AssistantProjectCard) FoldID() string {
-	sum := sha256.Sum256([]byte(c.Name))
-	return "assistant-project-" + hex.EncodeToString(sum[:8]) + "-older"
+	return "assistant-project-" + asideKey(c.Owner, c.Name) + "-older"
+}
+
+// asideKey stands for a project, a list or a file in the ids of one
+// assistant's aside. A name may hold what an id selector cannot, so it is
+// hashed, and the assistant goes in with it: several assistants stand side by
+// side as editor tabs, each with its aside, and Bootstrap finds a fold or a
+// tab by its id in the whole document.
+func asideKey(owner, name string) string {
+	sum := sha256.Sum256([]byte(owner + "\x00" + name))
+	return hex.EncodeToString(sum[:8])
 }
 
 // AssistantProjectForge is what the forge poller read of the branch a card's
@@ -319,6 +329,11 @@ func (v AssistantProjectView) Shows() string {
 	return SectionReviews
 }
 
+// PaneID starts the ids of the two sections and their switch.
+func (v AssistantProjectView) PaneID() string {
+	return "assistant-project-" + asideKey(v.Card.Owner, v.Card.Name)
+}
+
 // Segmented says Changes stands beside Reviews, so a switch picks between
 // them.
 func (v AssistantProjectView) Segmented() bool {
@@ -333,6 +348,7 @@ func (v AssistantProjectView) Segmented() bool {
 // its first rows. CompareURL opens the editor's compare on the pair, empty for
 // a guest whose link does not grant the project.
 type AssistantProjectChanges struct {
+	Owner             string
 	Project           string
 	Since             AssistantProjectSince
 	Uncommitted       *AssistantFileList
@@ -354,14 +370,12 @@ const (
 
 // CommitsFold names the fold of the commits past the first ones.
 func (c AssistantProjectChanges) CommitsFold() string {
-	return changesFold(c.Project, ChangesCommits)
+	return changesFold(c.Owner, c.Project, ChangesCommits)
 }
 
-// changesFold names the fold of a list's rows past the first ones, see
-// FoldID.
-func changesFold(project, list string) string {
-	sum := sha256.Sum256([]byte(project))
-	return "assistant-project-" + hex.EncodeToString(sum[:8]) + "-" + list
+// changesFold names the fold of a list's rows past the first ones.
+func changesFold(owner, project, list string) string {
+	return "assistant-project-" + asideKey(owner, project) + "-" + list
 }
 
 // OlderCommitsLabel is what the fold of the commits past the first ones
@@ -374,6 +388,7 @@ func (c AssistantProjectChanges) OlderCommitsLabel() FoldLabel {
 // its name, cut to its first rows. URL opens the editor on the whole list
 // where git cut it, empty for a guest whose link does not grant the project.
 type AssistantFileList struct {
+	Owner   string
 	Project string
 	List    string
 	AssistantRows[AssistantChangedFile]
@@ -382,7 +397,7 @@ type AssistantFileList struct {
 
 // Fold names the fold of the rows past the first ones.
 func (l AssistantFileList) Fold() string {
-	return changesFold(l.Project, l.List)
+	return changesFold(l.Owner, l.Project, l.List)
 }
 
 // Count is how many files the list holds, MoreLabel is what the fold of
@@ -423,7 +438,7 @@ func NewAssistantRows[T any](rows []T, total, shown int, unfolded, truncated boo
 
 // NewAssistantFileList is the list of project named list, files cut to the
 // first shown, each row's bar scaled to the largest change among them all.
-func NewAssistantFileList(project, list string, files []AssistantChangedFile, shown int, unfolded, truncated bool, url string) AssistantFileList {
+func NewAssistantFileList(owner, project, list string, files []AssistantChangedFile, shown int, unfolded, truncated bool, url string) AssistantFileList {
 	largest := 0
 	for _, f := range files {
 		largest = max(largest, f.Added+f.Removed)
@@ -434,7 +449,7 @@ func NewAssistantFileList(project, list string, files []AssistantChangedFile, sh
 			files[i].RemovedBar = files[i].Removed * 100 / largest
 		}
 	}
-	return AssistantFileList{Project: project, List: list, AssistantRows: NewAssistantRows(files, len(files), shown, unfolded, truncated), URL: url}
+	return AssistantFileList{Owner: owner, Project: project, List: list, AssistantRows: NewAssistantRows(files, len(files), shown, unfolded, truncated), URL: url}
 }
 
 // The lines a file shows in place of a diff it does not draw.
@@ -460,6 +475,7 @@ func DiffNoteBytes(kib int) string {
 // change in the list they take. URL opens the editor on the file as its list
 // compares it, empty for a guest whose link does not grant the project.
 type AssistantChangedFile struct {
+	Owner      string
 	List       string
 	Path       string
 	From       string
@@ -520,10 +536,9 @@ func (f AssistantChangedFile) Renamed() bool {
 }
 
 // Fold names the fold of the file's diff, the same over a refresh of the
-// list and apart from the same file's in the other list, see FoldID.
+// list and apart from the same file's in the other list.
 func (f AssistantChangedFile) Fold() string {
-	sum := sha256.Sum256([]byte(f.Path))
-	return "assistant-diff-" + f.List + "-" + hex.EncodeToString(sum[:8])
+	return "assistant-diff-" + f.List + "-" + asideKey(f.Owner, f.Path)
 }
 
 // DiffNote is the line the file shows in place of its diff where its row
@@ -565,6 +580,7 @@ func (c AssistantCommit) When() string {
 // where the editor's line comments take a local thread's writes and a new
 // project comment, empty for a guest.
 type AssistantProjectReviews struct {
+	Owner              string
 	Project            string
 	Branch             string
 	Open               []AssistantThread
@@ -630,10 +646,9 @@ func (r AssistantProjectReviews) Count() int {
 	return len(r.Open)
 }
 
-// ResolvedFold names the fold of the resolved threads, see FoldID.
+// ResolvedFold names the fold of the resolved threads.
 func (r AssistantProjectReviews) ResolvedFold() string {
-	sum := sha256.Sum256([]byte(r.Project))
-	return "assistant-project-" + hex.EncodeToString(sum[:8]) + "-resolved"
+	return "assistant-project-" + asideKey(r.Owner, r.Project) + "-resolved"
 }
 
 // UnpublishedLine counts the line comments and the project comments a

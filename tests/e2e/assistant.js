@@ -360,31 +360,6 @@ async function attach(page, files) {
   );
 }
 
-// stubMicrophone stands a WebAudio tone in for the microphone, so a recording
-// runs in a headless browser with no device, and answerSTT answers the
-// transcription route with a fixed message, so no speech engine ever starts.
-async function stubMicrophone(page) {
-  await page.evaluate(() => {
-    navigator.mediaDevices.getUserMedia = async () => {
-      const audio = new AudioContext();
-      await audio.resume().catch(() => {});
-      const tone = audio.createOscillator();
-      const out = audio.createMediaStreamDestination();
-      tone.connect(out);
-      tone.start();
-      return out.stream;
-    };
-  });
-}
-
-function answerSTT(route) {
-  return route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ text: "MAGIC spoken words" }),
-  });
-}
-
 // startCoder and postForm are what the jobs checks need: a coder to steer and
 // the conversation's own dispatch route, the same one the page's forms and
 // the assistant's commands post to.
@@ -1601,8 +1576,8 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     await openConversation(page, id);
     assert((await face()).includes("ti-microphone"), `a cleared draft shows ${await face()}`);
 
-    await stubMicrophone(page);
-    await page.route("**/stt", answerSTT);
+    await L.stubMicrophone(page);
+    await page.route("**/stt", L.answerSTT);
     try {
       let before = await userCount();
 
@@ -1735,8 +1710,8 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
     await idle(mp);
     await mp.fill("[data-assistant-input]", "");
     await mp.waitForSelector('[data-assistant-send][aria-label="Hold to record"]', { timeout: 8000 });
-    await stubMicrophone(mp);
-    await mp.route("**/stt", answerSTT);
+    await L.stubMicrophone(mp);
+    await mp.route("**/stt", L.answerSTT);
     const cdp = await mp.context().newCDPSession(mp);
     const touch = (type, touchPoints) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
     const hintText = () => mp.locator("[data-assistant-talk-hint-text]").textContent();

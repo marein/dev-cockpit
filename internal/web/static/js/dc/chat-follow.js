@@ -23,11 +23,14 @@ const SCROLL_KEYS = new Set([...UP_KEYS, "ArrowDown", "PageDown", "End", " "]);
 // there: an overlay scrollbar, an autoscroll or a selection send nothing but
 // scrolls. Every change of size is answered by the observer, which runs after
 // the layout and before the paint of the same frame, so a follower never sees
-// the end below the edge.
+// the end below the edge. A key with the focus on the page itself steers only
+// where hears says yes: of several conversations side by side, the one in
+// front.
 export class ChatFollow {
-  constructor(scroller, { button = null, signal }) {
+  constructor(scroller, { button = null, hears = () => true, signal }) {
     this.scroller = scroller;
     this.button = button;
+    this.hears = hears;
     this.pinned = true;
     this.readerLeft = false;
     this.ownTop = null;
@@ -224,7 +227,7 @@ export class ChatFollow {
   onKeydown(event) {
     if (!SCROLL_KEYS.has(event.key) || event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
-    if (target !== document.body && !this.scroller.contains(target)) return;
+    if (target === document.body ? !this.hears() : !this.scroller.contains(target)) return;
     if (target.isContentEditable || target.closest?.("input, textarea, select")) return;
     this.steer();
     const up = UP_KEYS.has(event.key) || (event.key === " " && event.shiftKey);

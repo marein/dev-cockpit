@@ -381,6 +381,20 @@ func (s *Service) UnreadTargets() map[string]bool {
 	return out
 }
 
+// UnreadFailed returns the ids of every target whose unread notification
+// reports a failure, so a mark of the target can wear red while it is unread.
+func (s *Service) UnreadFailed() map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]bool{}
+	for _, n := range s.load() {
+		if !n.Read && n.Failed {
+			out[n.TargetID] = true
+		}
+	}
+	return out
+}
+
 // MarkRead marks one notification read and reports the new unread count.
 func (s *Service) MarkRead(id string) int {
 	return s.mark(func(n *Notification) bool { return n.ID == id })

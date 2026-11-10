@@ -112,14 +112,18 @@ function composerHoldsUnsavedWords(surface, fresh) {
   return input.value !== freshInput.value;
 }
 
-// One assistant's surface: the work column of its page. It
-// scrolls its own [data-assistant-scroll] region under the head, the page
-// never scrolls for it.
+// One assistant's surface: the work column of its page, or with the tab
+// attribute the body of an editor tab. It scrolls its own
+// [data-assistant-scroll] region under the head, the page never scrolls for
+// it. As a tab it pulls its page-url instead of the address, leaves the
+// stepping between assistants to the editor's tab keys and takes Alt Alt only
+// while the editor marks it active.
 class Assistant extends HTMLElement {
   connectedCallback() {
     if (this.ac) return;
     this.ac = new AbortController();
     const signal = this.ac.signal;
+    this.tab = this.hasAttribute("tab");
     this.scroller = this.querySelector("[data-assistant-scroll]");
     this.postUrl = this.getAttribute("post-url");
     this.streamUrl = this.getAttribute("stream-url");
@@ -150,7 +154,7 @@ class Assistant extends HTMLElement {
 
     this.running = this.hasAttribute("running");
     this.pending = null;
-    this.follow = this.scroller ? new ChatFollow(this.scroller, { button: this.querySelector("[data-chat-end]"), signal }) : null;
+    this.follow = this.scroller ? new ChatFollow(this.scroller, { button: this.querySelector("[data-chat-end]"), hears: () => this.hearsKeys(), signal }) : null;
 
     this.form?.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -245,14 +249,19 @@ class Assistant extends HTMLElement {
     // strip's gesture on this area's own list. Capture phase like the strip's,
     // so it works with the cursor in the composer too.
     this.pendingIndex = null;
-    document.addEventListener("keydown", (event) => this.onStepKeydown(event), { signal, capture: true });
+    if (!this.tab) document.addEventListener("keydown", (event) => this.onStepKeydown(event), { signal, capture: true });
+    // As a tab the swipe walks the editor's tabs, so it goes up to the editor
+    // as assistant-swipe, the way a terminal tab's goes as terminal-swipe.
     if (this.scroller) {
       const coarse = window.matchMedia("(pointer: coarse)");
-      this.swipeNav = new SwipeNav({ frame: this.scroller, host: this, stops: () => this.swipeStops(), ignoreQuery: true });
+      if (!this.tab) this.swipeNav = new SwipeNav({ frame: this.scroller, host: this, stops: () => this.swipeStops(), ignoreQuery: true });
       watchSwipe(this.scroller, {
         signal,
         startable: (target) => coarse.matches && !swipeBlockedAt(target, this.scroller),
-        onSwipe: (detail) => this.swipeNav?.onSwipe(detail),
+        onSwipe: (detail) => {
+          if (this.tab) this.dispatchEvent(new CustomEvent("assistant-swipe", { bubbles: true, detail }));
+          else this.swipeNav?.onSwipe(detail);
+        },
       });
     }
 
@@ -266,13 +275,19 @@ class Assistant extends HTMLElement {
     });
     this.stream.open();
     this.onInput();
-    this.takeFocus();
+    if (!this.tab) this.takeFocus();
     // The earlier messages load as the whole transcript, a page of its own;
     // the message the reader was looking at keeps its place in the viewport
     // across it, carried in the fragment and the session store.
     this.addEventListener("click", (event) => {
       const all = event.target.closest("[data-assistant-all]");
       if (!all) return;
+      if (this.tab) {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.showAll(all.getAttribute("href").split("#")[0]);
+        return;
+      }
       const place = this.readingPlace();
       if (!place) return;
       event.preventDefault();
@@ -311,7 +326,52 @@ class Assistant extends HTMLElement {
       this.follow.adopt(carried, (place) => this.anchorTo(place.id, place.offset));
       return;
     }
-    if (!this.landOnHash()) this.follow.toEnd();
+    if (this.tab || !this.landOnHash()) this.follow.toEnd();
+  }
+
+  pullUrl() {
+    return this.getAttribute("page-url") || window.location.pathname + window.location.search;
+  }
+
+  // Alt Alt and the keys of the document belong to the page's one surface,
+  // and of the tabs to the one the editor marks active.
+  hearsKeys() {
+    return !this.tab || this.hasAttribute("active");
+  }
+
+  // swapIn puts a fresh render of this assistant in its place. The aside
+  // comes along, it holds what the reader put where, and so does the reading
+  // place and the editor's mark.
+  async swapIn(fresh) {
+    const app = this.closest(".dc-app");
+    const next = document.adoptNode(fresh);
+    // Read before the aside moves: the thread beside it widens once it is
+    // gone, and the place would be read off a reflowed thread.
+    next.carried = this.follow?.carry(this.readingPlace());
+    const aside = this.querySelector("[data-assistant-aside]");
+    if (aside) next.querySelector("[data-assistant-aside]")?.replaceWith(aside);
+    next.toggleAttribute("active", this.hasAttribute("active"));
+    const swipeNav = this.swipeNav;
+    this.swipeNav = null;
+    this.replaceWith(next);
+    next.pendingIndex = this.pendingIndex;
+    if (next.swipeNav) next.swipeNav.adopt(swipeNav);
+    else swipeNav?.destroy();
+    if (app) await window.app?.loadElements?.(app);
+    return next;
+  }
+
+  // A tab has no address of its own to navigate to, so the earlier messages
+  // come in place, and the tab keeps pulling the whole transcript from then on.
+  async showAll(url) {
+    try {
+      const html = await getText(url, { headers: { "X-DC-Pull": "1" } });
+      const fresh = new DOMParser().parseFromString(html, "text/html").querySelector("dc-assistant");
+      if (!fresh || fresh.getAttribute("assistant-id") !== this.getAttribute("assistant-id") || !this.isConnected) return;
+      await this.swapIn(fresh);
+    } catch (error) {
+      notifyError(error.message || "The earlier messages could not be loaded.");
+    }
   }
 
   readingPlace() {
@@ -356,7 +416,7 @@ class Assistant extends HTMLElement {
   async confirmRunning() {
     if (!this.running || this.pending || this.pendingMessageId) return;
     try {
-      const html = await getText(window.location.pathname + window.location.search, { headers: { "X-DC-Pull": "1" } });
+      const html = await getText(this.pullUrl(), { headers: { "X-DC-Pull": "1" } });
       if (!this.running || this.pending || this.pendingMessageId || !this.isConnected) return;
       const fresh = new DOMParser().parseFromString(html, "text/html").querySelector("dc-assistant");
       if (!fresh || fresh.getAttribute("assistant-id") !== this.getAttribute("assistant-id") || fresh.hasAttribute("running")) return;
@@ -377,30 +437,22 @@ class Assistant extends HTMLElement {
     this.syncAgain = false;
     let next = null;
     try {
-      const html = await getText(window.location.pathname + window.location.search, { headers: { "X-DC-Pull": "1" } });
+      const html = await getText(this.pullUrl(), { headers: { "X-DC-Pull": "1" } });
       const doc = new DOMParser().parseFromString(html, "text/html");
       const fresh = doc.querySelector("dc-assistant");
       if (!fresh || fresh.getAttribute("assistant-id") !== this.getAttribute("assistant-id")) return;
+      // The name comes from the first message once its turn ends, which moves
+      // no message of the thread.
+      const title = this.querySelector("[data-assistant-title]");
+      const name = fresh.querySelector("[data-assistant-title]")?.textContent;
+      if (title && name && title.textContent !== name) title.textContent = name;
       const moved = lastMessage(fresh) !== lastMessage(this) || lacksMessage(this, fresh) || fresh.hasAttribute("blocked") !== this.hasAttribute("blocked");
       if (!moved || composerHoldsUnsavedWords(this, fresh) || this.running) return;
-      const app = this.closest(".dc-app");
-      next = document.adoptNode(fresh);
-      // Read before the aside moves: the thread beside it widens once it is
-      // gone, and the place would be read off a reflowed thread.
-      next.carried = this.follow?.carry(this.readingPlace());
       // The aside holds what the reader put where: the open tab, an unfolded
       // row, where it is scrolled. Its two lists refresh themselves on this
       // same event, so the one that stands comes along instead of being
       // rebuilt under the hand that opened it.
-      const aside = this.querySelector("[data-assistant-aside]");
-      if (aside) next.querySelector("[data-assistant-aside]")?.replaceWith(aside);
-      const swipeNav = this.swipeNav;
-      this.swipeNav = null;
-      this.replaceWith(next);
-      next.pendingIndex = this.pendingIndex;
-      if (next.swipeNav) next.swipeNav.adopt(swipeNav);
-      else swipeNav?.destroy();
-      if (app) await window.app?.loadElements?.(app);
+      next = await this.swapIn(fresh);
     } catch (error) {
       void error;
     } finally {
@@ -463,7 +515,7 @@ class Assistant extends HTMLElement {
   }
 
   onTalkTapKeydown(event) {
-    if (event.key !== "Alt" || event.repeat || event.ctrlKey || event.metaKey || event.shiftKey) {
+    if (!this.hearsKeys() || event.key !== "Alt" || event.repeat || event.ctrlKey || event.metaKey || event.shiftKey) {
       this.talkTap.reset();
       return;
     }
@@ -471,6 +523,7 @@ class Assistant extends HTMLElement {
   }
 
   onTalkTapKeyup(event) {
+    if (!this.hearsKeys()) return;
     const fired = this.talkTap.keyup(event.key);
     // Firefox on Windows hands a bare Alt keyup to its menu bar, which would
     // swallow the second tap and park the focus outside the page. The
@@ -507,7 +560,16 @@ class Assistant extends HTMLElement {
     return true;
   }
 
+  // A tab moved into another group of the editor leaves the document for a
+  // moment, and it keeps its stream and what it holds across that: the
+  // teardown waits a microtask and runs only when the element stayed away.
   disconnectedCallback() {
+    queueMicrotask(() => {
+      if (!this.isConnected) this.teardown();
+    });
+  }
+
+  teardown() {
     window.clearTimeout(this.draftTimer);
     window.clearTimeout(this.hintTimer);
     window.clearTimeout(this.lockTimer);

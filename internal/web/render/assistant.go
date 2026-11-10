@@ -202,6 +202,31 @@ type AssistantData struct {
 	// assistant's chat turns and its checks run on. Nil where the composer is
 	// off, a blocked assistant has no coder to list models for.
 	Models *AssistantModels
+	// TabURL is where the surface pulls itself again when it stands as an
+	// editor tab, empty on its own page, which pulls its own address.
+	TabURL string
+}
+
+// InTab says the surface stands as an editor tab: its aside waits for the
+// editor's sheet instead of standing beside the thread.
+func (d AssistantData) InTab() bool { return d.TabURL != "" }
+
+// DOMID starts every id the surface carries. Several assistants stand side by
+// side as editor tabs in one document, so a tab's ids carry its assistant.
+func (d AssistantData) DOMID() string {
+	if d.InTab() {
+		return "assistant-" + d.ID
+	}
+	return "assistant"
+}
+
+// EditorAssistantsData is what the editor lists of the assistants: a row of
+// its picker for each. Failed names the ones whose unread news reports a
+// failure, their icon wears red. Coders are what a new one may start on.
+type EditorAssistantsData struct {
+	Cards  []AssistantCard
+	Failed map[string]bool
+	Coders []AssistantCoderOption
 }
 
 // AssistantCard is one row of the assistant list: what it is called, what it

@@ -440,3 +440,18 @@ func TestEveryInboxHookReachesTheListenerWithItsWriteTime(t *testing.T) {
 		t.Fatalf("only Stop and Notification are news, each under its terminal, got %v", targetsWithNews)
 	}
 }
+
+// A failed entry marks its target red while it is unread, and only then: a
+// read one and one that did not fail mark nothing.
+func TestUnreadFailedNamesTargetsWhoseUnreadNewsFailed(t *testing.T) {
+	s := testService(t)
+	s.AddResolved("broke", TargetInfo{Title: "Compose failed.", Failed: true})
+	s.AddResolved("fine", TargetInfo{Title: "Compose finished."})
+	s.AddResolved("seen", TargetInfo{Title: "Compose failed.", Failed: true})
+	s.MarkTargetRead("seen")
+
+	failed := s.UnreadFailed()
+	if !failed["broke"] || failed["fine"] || failed["seen"] || len(failed) != 1 {
+		t.Fatalf("want only the unread failure, got %v", failed)
+	}
+}

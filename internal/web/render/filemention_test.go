@@ -33,14 +33,15 @@ func TestMentionProjectRowsAreTheSwitchersRowsAsOptions(t *testing.T) {
 }
 
 // The popup ships hidden with the list it fills and the one file row it
-// clones, and names the box it serves.
+// clones, and names the box it serves. The list's id starts with the
+// surface's, two assistant tabs side by side keep theirs apart.
 func TestMentionPopupShell(t *testing.T) {
-	out := renderNamed(t, "file_mention.gohtml", nil)
+	out := renderNamed(t, "file_mention.gohtml", "assistant-a1")
 	for _, want := range []string{
 		`<dc-file-mention input="[data-assistant-input]"`,
 		`projects-url="/mention/projects" files-url="/mention/files"`,
 		`data-mention-panel hidden>`,
-		`role="listbox" id="dc-mention-list"`,
+		`role="listbox" id="assistant-a1-mention-list"`,
 		`<template data-mention-file-template>`,
 	} {
 		if !strings.Contains(out, want) {

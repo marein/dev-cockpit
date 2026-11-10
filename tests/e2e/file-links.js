@@ -24,8 +24,9 @@ const { assert, sleep, BASE } = L;
 // about once the cursor left it, so typing asks nothing, one on a row whose
 // text a program keeps replacing once the row stood still for 1.5s. A word
 // without a letter, a time, a version or a size, is never asked about. Inside
-// the editor's terminal panel a link opens in place, also for a project named
-// like p(1), which the server escapes otherwise than the page.
+// a terminal tab of the editor a link opens in place and the terminal tab
+// stays, also for a project named like p(1), which the server escapes
+// otherwise than the page.
 // Every check prints its own lines behind a fresh mark (m<n>m) and waits for
 // them, the shell gets its commands through the input route, so a line
 // arrives in one piece. The files are not Go, so opening the editor starts no
@@ -634,28 +635,33 @@ L.runFeature("FILE-LINKS", async ({ engine, page, run, mobilePage }) => {
     return `echo median ${waits[Math.floor(waits.length / 2)]}ms, max ${waits.at(-1)}ms over ${waits.length} keys`;
   });
 
-  // The panel's terminal must still be the very node it was: a page load
+  // The tab's terminal must still be the very node it was: a page load
   // would replace it.
   const opensInPlace = async (name, id) => {
     await page.goto(`${BASE}/projects/${encodeURIComponent(name)}/editor?file=${encodeURIComponent(FILE)}`, { waitUntil: "domcontentloaded" });
     await L.waitEditorCursor(page, { path: FILE });
-    const scope = `[data-term-pane="${id}"]`;
-    if (!(await page.isVisible(scope))) await page.keyboard.press("Control+j");
+    const scope = `.editor-term-box:has([data-terminal-view="${id}"])`;
+    const tab = `.editor-tab[data-path="//terminal/${id}"]`;
+    if (!(await page.isVisible(scope))) {
+      await page.click("[data-editor-term-status]");
+      await L.openPicked(page, `[data-editor-sheet-body] [data-term-pick="${id}"]`);
+    }
     await page.waitForSelector(`${scope} terminal-attach .xterm-screen canvas`, { state: "visible", timeout: 15000 });
     const url = `${BASE}/shells/${id}`;
     const { m, sh } = mark();
     await shell(page, `clear; printf '%s %s\\n' ${sh} 'pin notes.txt:1'`, url);
     await waitLine(page, m, scope);
-    await page.evaluate((s) => { window.__panelTerm = document.querySelector(`${s} terminal-attach`); }, scope);
+    await page.evaluate((s) => { window.__tabTerm = document.querySelector(`${s} terminal-attach`); }, scope);
     const at = await cellOf(page, m, "notes.txt", { scope });
-    assert(await linkShown(page, at, scope), "the panel's path shows no link");
+    assert(await linkShown(page, at, scope), "the terminal tab's path shows no link");
     await page.mouse.click(at.x, at.y);
     await L.waitEditorCursor(page, { path: "notes.txt", line: 1, col: 1 });
-    assert(await page.evaluate((s) => document.querySelector(`${s} terminal-attach`) === window.__panelTerm, scope), "the page was loaded again, the panel's terminal is another one");
+    assert(await page.evaluate((s) => document.querySelector(`${s} terminal-attach`) === window.__tabTerm, scope), "the page was loaded again, the tab's terminal is another one");
+    assert(await page.$(tab), "the file link closed the terminal tab");
     assert(page.url().includes(`/projects/${encodeURIComponent(name)}/editor`) || page.url().includes(`/projects/${name}/editor`), `the page moved to ${page.url()}`);
   };
 
-  await run("editor panel: a file link opens in place, the panel's terminal stays, for a project named like p(1) too", async () => {
+  await run("editor terminal tab: a file link opens in place, the terminal tab stays, for a project named like p(1) too", async () => {
     await opensInPlace(project, shellId);
     escapedShellUrl = await L.createShell(page, escaped);
     await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });

@@ -6,14 +6,14 @@ const { assert, sleep, BASE } = L;
 // through the project palette and after a reload. The pieces: the tree column's
 // width (dc-editor-tree-width:<project>) and fold (dc-editor-tree-folded:<project>),
 // the tree's scroll position (dc-editor-tree-scroll:<project>), which view the
-// tree column shows (dc-editor-view:<project>, commit or compare), the terminal
-// panel's height (dc-editor-term-height:<project>, open state and active tab were
-// per project before), the filter and the scroll of the commit and compare
+// tree column shows (dc-editor-view:<project>, commit or compare), a terminal
+// opened from the picker as a tab beside the files (its entry in
+// dc-editor-tabs:<project>), the filter and the scroll of the commit and compare
 // lists while their view stands (dc-editor-commit-list:<project>,
 // dc-editor-revdiff-list:<project>, dropped when the view closes), and on
 // every tab the cursor and the scroll position
 // (`view` on the entry in dc-editor-tabs:<project>, as line and column).
-// Width, fold and height also write the bare key, which is what a project this
+// Width and fold also write the bare key, which is what a project this
 // device never opened starts with: the second project here inherits the first
 // one's width and stands unfolded like it, while its own fold afterwards stays
 // its own and becomes the start of a third project.
@@ -88,7 +88,6 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       return { w: Math.round(r.width), h: Math.round(r.height), display: getComputedStyle(el).display };
     };
     const tree = document.querySelector("[data-editor-tree]");
-    const panel = document.querySelector("[data-editor-term-panel]");
     const scroller = document.querySelector("[data-editor-surface] .cm-scroller");
     return {
       col: box(".editor-tree-col"),
@@ -97,8 +96,7 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       treeScroll: Math.round(tree.scrollTop),
       treeHidden: tree.hidden,
       commitOn: !document.querySelector("[data-editor-commit]").hidden,
-      termOpen: !panel.hidden && panel.getBoundingClientRect().height > 0,
-      termHeight: Math.round(panel.getBoundingClientRect().height),
+      termTab: [...document.querySelectorAll('[data-editor-tabs] .editor-tab[data-path^="//terminal/"]')].map((el) => el.dataset.path).join(" "),
       tabs: [...document.querySelectorAll("[data-editor-tabs] .editor-tab")].map((el) => el.dataset.path),
       activeTab: document.querySelector("[data-editor-tabs] .editor-tab.active")?.dataset.path || "",
       pos: document.querySelector("[data-editor-pos]").textContent.trim(),
@@ -144,7 +142,7 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       assert(changes && changes.repo, "the first project never became a repository");
     }
 
-    await run("one project takes a layout: width, tree scroll, terminal panel with height, commit view, cursors", async () => {
+    await run("one project takes a layout: width, tree scroll, a terminal tab from the picker, commit view, cursors", async () => {
       await openEditor(a);
       const before = await layout();
       assert(before.col && before.col.w > 0 && !before.folded, `no tree column to lay out: ${JSON.stringify(before.col)}`);
@@ -172,22 +170,14 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       assert(scrolled.treeScroll > 100, `the tree did not scroll: ${scrolled.treeScroll}`);
       saved.treeScroll = scrolled.treeScroll;
 
-      await page.click("[data-editor-surface] .cm-scroller");
-      await page.keyboard.press("Control+j");
-      await page.waitForSelector("[data-editor-term-panel] [data-term-tab]", { timeout: 15000 });
-      await page.waitForSelector("[data-editor-term-panel] .editor-term-pane.active terminal-attach[embedded] .xterm-screen canvas", { timeout: 15000 });
+      const shellId = new URL(shellUrl).pathname.split("/").pop();
+      await page.click("[data-editor-term-status]");
+      await L.openPicked(page, `[data-editor-sheet-body] [data-term-pick="${shellId}"]`);
+      await page.waitForSelector(`.editor-term-box:has([data-terminal-view="${shellId}"]) terminal-attach[embedded] .xterm-screen canvas`, { timeout: 15000 });
       await sleep(500);
       const opened = await layout();
-      assert(opened.termOpen, "Ctrl+J did not open the terminal panel");
-      const splitter = await page.locator("[data-editor-term-splitter]").boundingBox();
-      await page.mouse.move(splitter.x + splitter.width / 2, splitter.y + splitter.height / 2);
-      await page.mouse.down();
-      await page.mouse.move(splitter.x + splitter.width / 2, splitter.y - 120, { steps: 8 });
-      await page.mouse.up();
-      await sleep(400);
-      const grown = await layout();
-      assert(grown.termHeight > opened.termHeight + 80, `the panel did not grow: ${opened.termHeight} -> ${grown.termHeight}`);
-      saved.termHeight = grown.termHeight;
+      assert(opened.termTab === `//terminal/${shellId}`, `the picker's row did not open the terminal as a tab: ${opened.termTab}`);
+      saved.termTab = opened.termTab;
 
       await page.click(tabSel(longFile));
       await page.waitForSelector(`${tabSel(longFile)}.active`, { timeout: 8000 });
@@ -234,17 +224,16 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
         device: localStorage.getItem("dc-editor-tree-width"),
         scroll: localStorage.getItem(`dc-editor-tree-scroll:${p}`),
         view: localStorage.getItem(`dc-editor-view:${p}`),
-        height: localStorage.getItem(`dc-editor-term-height:${p}`),
         tabs: JSON.parse(localStorage.getItem(`dc-editor-tabs:${p}`) || "null"),
       }), a);
       assert(near(parseInt(stored.width, 10), saved.width) && stored.device === stored.width, `width not stored per project plus device: ${JSON.stringify(stored)}`);
       assert(parseInt(stored.scroll, 10) === saved.treeScroll, `tree scroll not stored: ${stored.scroll}`);
       assert(stored.view === "commit", `view not stored: ${stored.view}`);
-      assert(near(parseInt(stored.height, 10), saved.termHeight), `panel height not stored: ${stored.height}`);
+      assert((stored.tabs.open || []).some((e) => e && e.type === "terminal" && `//terminal/${e.id}` === saved.termTab), `the terminal tab is not stored: ${JSON.stringify(stored.tabs.open)}`);
       const longEntry = (stored.tabs.open || []).find((e) => e && e.path === longFile);
       assert(longEntry && longEntry.view && longEntry.view.head.line === parseInt(saved.longPos, 10) && longEntry.view.scrollTop === saved.longScroll,
         `the long file's view is not on its tab entry: ${JSON.stringify(longEntry)}`);
-      return `width ${saved.width}, tree at ${saved.treeScroll}, panel ${saved.termHeight}, ${saved.longPos} scrolled ${saved.longScroll}`;
+      return `width ${saved.width}, tree at ${saved.treeScroll}, ${saved.termTab}, ${saved.longPos} scrolled ${saved.longScroll}`;
     });
 
     await run("a second project inherits the width and the fold and nothing else", async () => {
@@ -253,7 +242,7 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       assert(near(other.col.w, saved.width), `the width did not carry over as the device's last: ${other.col.w} vs ${saved.width}`);
       assert(!other.folded, "the second project opened folded");
       assert(!other.commitOn && !other.treeHidden, "the commit view followed into a project without a repository");
-      assert(!other.termOpen, "the terminal panel opened in a project that never had it");
+      assert(!other.termTab, `a terminal tab followed into a project that never had it: ${other.termTab}`);
       assert(other.tabs.length === 0, `tabs followed: ${other.tabs.join(", ")}`);
       assert(other.treeScroll === 0, `the tree scroll followed: ${other.treeScroll}`);
       await page.click("[data-editor-drawer-toggle]");
@@ -278,8 +267,7 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       }));
       assert(list.filter === "f" && list.count === "60 of 60", `the commit list's filter did not come back: ${JSON.stringify(list)}`);
       assert(near(list.scroll, 200), `the commit list's scroll did not come back: ${JSON.stringify(list)}`);
-      assert(back.termOpen, "the terminal panel did not come back open");
-      assert(near(back.termHeight, saved.termHeight, 8), `panel height: ${back.termHeight} vs ${saved.termHeight}`);
+      assert(back.termTab === saved.termTab, `the terminal tab did not come back: ${back.termTab}`);
       assert(back.activeTab === noteFile, `active tab: ${back.activeTab}`);
       assert(back.pos === "5:4", `the note's cursor: ${back.pos}`);
       await page.click(tabSel(longFile));
@@ -294,7 +282,7 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       assert(!tree.commitOn && !tree.treeHidden, "the commit view did not close");
       assert(tree.treeScroll === saved.treeScroll, `the tree scroll after the commit view: ${tree.treeScroll} vs ${saved.treeScroll}`);
       assert(await page.evaluate((p) => localStorage.getItem(`dc-editor-commit-list:${p}`), a) === null, "closing the commit view kept its list state");
-      return `panel ${long.termHeight}, ${long.pos} scrolled ${long.cmScroll}, tree at ${tree.treeScroll}`;
+      return `${long.termTab}, ${long.pos} scrolled ${long.cmScroll}, tree at ${tree.treeScroll}`;
     });
 
     await run("a reload brings the same layout back", async () => {
@@ -305,11 +293,11 @@ L.runFeature("EDITOR-LAYOUT", async ({ engine, page, run }) => {
       assert(near(again.col.w, saved.width), `width: ${again.col.w} vs ${saved.width}`);
       assert(!again.commitOn && !again.treeHidden, "the closed commit view came back open");
       assert(again.treeScroll === saved.treeScroll, `tree scroll: ${again.treeScroll} vs ${saved.treeScroll}`);
-      assert(again.termOpen && near(again.termHeight, saved.termHeight, 8), `panel: open ${again.termOpen} at ${again.termHeight} vs ${saved.termHeight}`);
+      assert(again.termTab === saved.termTab, `the terminal tab did not come back: ${again.termTab}`);
       assert(again.activeTab === longFile, `active tab: ${again.activeTab}`);
       assert(again.pos === saved.longPos, `cursor: ${again.pos} vs ${saved.longPos}`);
       assert(near(again.cmScroll, saved.longScroll), `scroll: ${again.cmScroll} vs ${saved.longScroll}`);
-      return `${again.pos} scrolled ${again.cmScroll}, tree at ${again.treeScroll}, panel ${again.termHeight}`;
+      return `${again.pos} scrolled ${again.cmScroll}, tree at ${again.treeScroll}, ${again.termTab}`;
     });
 
     // The view in the address is applied once the git status has answered, not

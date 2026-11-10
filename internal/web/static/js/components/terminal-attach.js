@@ -33,8 +33,10 @@ function initTerminalAttach(host) {
     && host.closest(".attach-split-pane") && !host.hasAttribute("active")) {
     return () => {};
   }
+  const view = host.closest("[data-terminal-view]");
   const syncFooters = () => {
     for (const footer of document.querySelectorAll("[data-terminal-footer]")) {
+      if (footer.closest("[data-terminal-view]")) continue;
       footer.toggleAttribute("hidden", footer.getAttribute("data-terminal-footer") !== terminalId);
     }
     for (const badge of document.querySelectorAll("[data-terminal-badge]")) {
@@ -94,7 +96,7 @@ function initTerminalAttach(host) {
     if (interactiveInput) term.focus();
     followCursor();
   });
-  listen(host.closest(".attach-split-pane") || host, "pointerdown", (event) => {
+  listen(view || host.closest(".attach-split-pane") || host, "pointerdown", (event) => {
     const fromHead = event.target instanceof Element
       && event.target.closest("[data-pane-head]") && !event.target.closest("[data-pane-close]");
     const wasActive = host.hasAttribute("active");
@@ -135,7 +137,8 @@ function initTerminalAttach(host) {
   // takes focus. Pointer-precise (desktop) clients type straight into the
   // terminal: xterm encodes every keystroke, paste and composed accent into the
   // exact terminal byte stream, which we forward through the controls module.
-  const interactiveInput = !readOnly && (embedded || !window.matchMedia("(pointer: coarse)").matches);
+  const interactiveInput = !readOnly && (!window.matchMedia("(pointer: coarse)").matches
+    || (embedded && window.matchMedia("(any-pointer: fine), not all and (any-pointer: coarse)").matches));
   const term = new Terminal({
     allowTransparency: true,
     disableStdin: !interactiveInput,
@@ -610,7 +613,7 @@ function initTerminalAttach(host) {
       }
       const cellWidth = screen.clientWidth / term.cols;
       const cellHeight = screen.clientHeight / term.rows;
-      const footer = document.querySelector(".attach-footer");
+      const footer = view?.querySelector(".attach-footer") || document.querySelector(".attach-footer");
       cursorInput.style.width = cellWidth + "px";
       cursorInput.style.height = cellHeight + "px";
       cursorInput.style.left = term.buffer.active.cursorX * cellWidth + "px";
@@ -760,7 +763,7 @@ function initTerminalAttach(host) {
   };
   let fontSizeOverride = settingValue(fontSizeSetting, DEFAULT_FONT_SIZE);
   // Every terminal fits the box it is given, a solo page, a split pane, the
-  // editor's panel and a phone alike, and nothing is ever drawn outside that
+  // editor's tab and a phone alike, and nothing is ever drawn outside that
   // box. Text that has scrolled away is reached in the copy view, on real
   // text, instead of by making the pane taller than the window somebody has.
   let lastClientCols = 0;
@@ -801,6 +804,7 @@ function initTerminalAttach(host) {
       }
     }
     await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+    if (signal.aborted) throw new Error("The terminal left the page.");
   };
 
   const resolveClientSize = async () => {
@@ -1186,7 +1190,7 @@ function initTerminalAttach(host) {
     widthObserver.disconnect();
     if (resizeTimer !== null) window.clearTimeout(resizeTimer);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-    term.dispose();
+    window.setTimeout(() => term.dispose());
   };
 }
 
@@ -1198,9 +1202,12 @@ class TerminalAttach extends HTMLElement {
   }
 
   disconnectedCallback() {
-    this.teardown?.();
-    this.teardown = null;
-    this.inited = false;
+    queueMicrotask(() => {
+      if (this.isConnected) return;
+      this.teardown?.();
+      this.teardown = null;
+      this.inited = false;
+    });
   }
 }
 

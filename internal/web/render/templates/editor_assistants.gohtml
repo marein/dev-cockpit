@@ -1,0 +1,19 @@
+{{/* The assistants as the editor lists them, in the order their own list is
+     sorted into: a row of the picker each, which a tab reads its name and
+     icon off too. The icon is the list column's, a failure that is not read
+     yet wears red. The owner's alone. */}}
+{{define "editor_assistants.gohtml"}}
+<div data-editor-assistant-list>
+  {{range .Cards}}
+  <div data-assistant-entry="{{.ID}}" data-assistant-name="{{template "assistant_title.gohtml" .Title}}" data-assistant-label="{{.CoderLabel}}" data-assistant-url="{{.URL}}">
+    <span class="dc-term-icon assistant{{if .Running}} working{{end}}{{if .News}} news{{end}}{{if index $.Failed .ID}} text-danger{{end}}"{{with .Running}} data-working-since="{{.}}"{{end}} data-notify-target="{{.ID}}" aria-hidden="true"><i class="ti ti-sparkles"></i>{{template "news_dot.gohtml"}}</span>
+  </div>
+  {{end}}
+</div>
+<div data-editor-assistant-new>
+  {{$several := gt (len .Coders) 1}}
+  {{range .Coders}}
+  <div data-assistant-new-coder="{{.ID}}" data-assistant-new-label="New assistant{{if $several}} with {{.Label}}{{end}}"></div>
+  {{end}}
+</div>
+{{end}}

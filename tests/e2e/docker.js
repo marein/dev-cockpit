@@ -897,23 +897,17 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     return `${all.length} rows, "logs" kept the stack line, "web" dropped it, Enter drilled in and back`;
   });
 
-  await run("Ctrl+Shift+D toggles the docker view, the statusbar terminal icon the panel", async () => {
+  await run("Ctrl+Shift+D toggles the docker view, the statusbar terminal icon opens the terminal picker", async () => {
     await page.keyboard.press("Control+Shift+D");
     await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 4000 });
     await page.keyboard.press("Control+Shift+D");
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 4000 });
-    assert(await page.locator("[data-editor-term-status]:not([hidden])").count() === 1, "statusbar terminal icon missing");
+    assert(await page.locator("[data-editor-term-status]:visible").count() === 1, "statusbar terminal icon missing");
     await page.click("[data-editor-term-status]");
-    await page.waitForFunction(() => {
-      const panel = document.querySelector("[data-editor-term-panel]");
-      return panel && !panel.hidden;
-    }, null, { timeout: 8000 });
-    assert((await page.locator("[data-editor-term-status]").getAttribute("aria-pressed")) === "true", "terminal icon not pressed while open");
-    await page.click("[data-editor-term-status]");
-    await page.waitForFunction(() => {
-      const panel = document.querySelector("[data-editor-term-panel]");
-      return panel && panel.hidden;
-    }, null, { timeout: 4000 });
+    await page.waitForFunction(() => !document.querySelector("[data-editor-sheet]").hidden
+      && document.querySelector("[data-editor-sheet-title]").textContent.startsWith("Terminals"), null, { timeout: 8000 });
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 4000 });
   });
 
   await run("a reconnect pulls the docker state into the editor", async () => {
@@ -948,16 +942,16 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
   });
 
   // The same entries, the other surface: on the projects page a logs action
-  // leaves for the terminal, in the editor it stays. The editor owns terminals
-  // of its own, so the shell it starts becomes a tab of its panel and the file
-  // being edited never goes away.
+  // leaves for the terminal, in the editor it stays. The editor holds
+  // terminals as tabs, so the shell it starts opens as a tab beside the file
+  // being edited, which never goes away.
   await run("the editor's docker sheet opens the logs as a terminal tab and stays in the editor", async () => {
     await page.goto(`${BASE}/projects/${NAME}/editor`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);
     await page.waitForSelector(".cm-editor, .editor-textarea", { state: "attached", timeout: 15000 });
     await page.waitForSelector("[data-editor-docker-status]:not([hidden])", { timeout: 15000 });
     const before = page.url();
-    const tabs = () => page.locator("[data-editor-term-panel] [data-term-tab]").count();
+    const tabs = () => page.locator('[data-editor-tabs] .editor-tab[data-path^="//terminal/"]').count();
     const had = await tabs();
     await page.click("[data-editor-docker-status]");
     await page.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 8000 });
@@ -966,27 +960,22 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await cell.click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
     await menuItem(page, "Logs").click();
-    await page.waitForFunction((n) => document.querySelectorAll("[data-editor-term-panel] [data-term-tab]").length > n, had, { timeout: 20000 });
+    await page.waitForFunction((n) => document.querySelectorAll('[data-editor-tabs] .editor-tab[data-path^="//terminal/"]').length > n, had, { timeout: 20000 });
     await sleep(1200);
     const seen = await page.evaluate(() => ({
       url: location.pathname,
       editor: Boolean(document.querySelector("dc-editor")),
       sheet: document.querySelector("[data-editor-sheet]")?.hidden ?? true,
-      tabs: [...document.querySelectorAll("[data-editor-term-panel] [data-term-tab]")].map((t) => t.textContent.replace(/\s+/g, " ").trim()),
-      active: document.querySelector("[data-editor-term-panel] [data-term-tab].active")?.getAttribute("data-term-tab") || "",
-      attached: document.querySelectorAll("[data-editor-term-panel] terminal-attach").length,
+      tabs: [...document.querySelectorAll('[data-editor-tabs] .editor-tab[data-path^="//terminal/"]')].map((t) => t.textContent.replace(/\s+/g, " ").trim()),
+      active: (document.querySelector('.editor-group-focused [data-editor-tabs] .editor-tab.active[data-path^="//terminal/"]')?.dataset.path || "").replace("//terminal/", ""),
+      attached: document.querySelectorAll(".editor-term-box:not([hidden]) terminal-attach").length,
     }));
     assert(seen.url === new URL(before).pathname, `the editor navigated away: ${seen.url}`);
     assert(seen.editor, "the editor surface is gone");
     assert(seen.sheet, "the docker sheet stayed open over the editor");
-    assert(seen.tabs.length > had, `the logs did not become a panel tab: ${JSON.stringify(seen.tabs)}`);
+    assert(seen.tabs.length > had, `the logs did not become a terminal tab: ${JSON.stringify(seen.tabs)}`);
     assert(seen.tabs.some((t) => /web logs/.test(t)), `no tab carries the container's logs: ${JSON.stringify(seen.tabs)}`);
     assert(seen.active && seen.attached > 0, `the new tab is not the active terminal: ${JSON.stringify(seen)}`);
-    // The panel opened for this check, so it is put back the way it stood.
-    await page.evaluate((project) => {
-      localStorage.removeItem(`dc-editor-term-open:${project}`);
-      localStorage.removeItem(`dc-editor-term-active:${project}`);
-    }, NAME);
     await L.deleteShell(page, `${BASE}/shells/${seen.active}`).catch(() => {});
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
     await dismissUpdate(page);

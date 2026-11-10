@@ -104,6 +104,14 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 		s.renderError(c, http.StatusNotFound, "Assistant not found", "There is no such assistant.")
 		return
 	}
+	data := s.assistantSurface(c, current)
+	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
+	c.HTML(http.StatusOK, "assistant_page.gohtml", data)
+}
+
+// assistantSurface builds what one assistant's surface renders, on its page
+// and as an editor tab alike.
+func (s *Server) assistantSurface(c *gin.Context, current assistant.Instance) render.AssistantData {
 	// Which coder a new assistant starts on follows the one opened last, so
 	// the plus button offers what this host actually uses. The page pulls
 	// itself again on every assistant event, in background windows too
@@ -120,7 +128,6 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 		title = data.Name + " - Assistant"
 	}
 	data.Page = s.page(c, title, "assistants")
-	data.Ctx = s.assistantCtxData(c, data.Path, "assistant-ctx-new")
 	data.Triggers = s.assistantTriggersData(render.Page{CSRFToken: s.csrfToken(c)}, current.ID, false)
 	data.ProjectsListURL, data.ProjectsWatchURL, data.ProjectViewURL, data.ProjectDiffURL = assistantProjectsURLs("", current.ID)
 	// A pull keeps the aside it stands beside, so it reads no working copy.
@@ -132,7 +139,7 @@ func (s *Server) handleAssistantPage(c *gin.Context) {
 	// work, because the aside holds both and the button is the only thing a
 	// phone sees of it.
 	data.WatchingOpen = data.JobsOpen + data.Triggers.Open
-	c.HTML(http.StatusOK, "assistant_page.gohtml", data)
+	return data
 }
 
 // assistantCtxData builds the list column for the page at path: the page's

@@ -163,7 +163,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "Links",
-					Desc:  `A click or a tap on a link a program prints, such as the file names in a coder's tool lines, opens it. A file inside a project opens in that project's editor, a web address in a new tab, anything else stays closed. A path of an existing file of the terminal's project links too, relative to its root or absolute, in the terminal, the copy view and the conversation, and <code>:line</code>, <code>:line:column</code> or a range <code>:line-line</code> after it places the cursor, on the first line of a range. A name without a dot or a slash, such as <code>Makefile</code>, links when a file of exactly that name stands in the project root. In the terminal and the copy view it links also when the terminal wraps it onto the next row, or a program at its margin, unless a row names a file on its own, and in the terminal a new word on the row the cursor stands on links once the cursor leaves it, one on a row whose text a program keeps replacing in place, a clock or a counter, once the row stood still for 1.5 seconds. A word without a letter, such as a time, a version or a size, never links. Inside the editor's terminal panel a file of its project opens in place. <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Shift</kbd> opens a file in a new tab.`,
+					Desc:  `A click or a tap on a link a program prints, such as the file names in a coder's tool lines, opens it. A file inside a project opens in that project's editor, a web address in a new tab, anything else stays closed. A path of an existing file of the terminal's project links too, relative to its root or absolute, in the terminal, the copy view and the conversation, and <code>:line</code>, <code>:line:column</code> or a range <code>:line-line</code> after it places the cursor, on the first line of a range. A name without a dot or a slash, such as <code>Makefile</code>, links when a file of exactly that name stands in the project root. In the terminal and the copy view it links also when the terminal wraps it onto the next row, or a program at its margin, unless a row names a file on its own, and in the terminal a new word on the row the cursor stands on links once the cursor leaves it, one on a row whose text a program keeps replacing in place, a clock or a counter, once the row stood still for 1.5 seconds. A word without a letter, such as a time, a version or a size, never links. In an editor terminal tab a project file opens as a tab, in another group if there is one. <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Shift</kbd> opens a file in a new tab.`,
 				},
 				{
 					Title:    "Send files to a coder",
@@ -357,7 +357,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Swipe to the next file",
 					Tag:      "Touch",
 					TagClass: "bg-blue-lt",
-					Desc:     `Swipe left or right on the text to go to the next or the previous open file, in the order the list shows, wrapping at both ends, and a pill names the file you would land on. It works while <em>Wrap long lines</em> is on; with wrapping off the text itself scrolls sideways and the gesture belongs to the code. Up and down stays scrolling either way, and while text is selected the swipe steps aside.`,
+					Desc:     `Swipe left or right on the text to go to the next or the previous open file, in the order the list shows, wrapping at both ends, and a pill names the file you would land on. It works while <em>Wrap long lines</em> is on; with wrapping off the text itself scrolls sideways and the gesture belongs to the code. Up and down stays scrolling either way, and while text is selected the swipe steps aside. Terminal and assistant tabs swipe the same way.`,
 				},
 				{
 					Title: "Move files",
@@ -422,14 +422,27 @@ func DocsTopics() []DocsTopic {
 					Desc:  `<em>Editor settings</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i> sets tab width, indentation, font size, line wrapping, whether unchanged parts of a diff are folded, and how a diff looks: side by side, inline, or automatic, which picks by the window width. All of it stays on this device. A file covered by a project's .editorconfig takes its indentation from there and the control only shows it.`,
 				},
 				{
-					Title: "Terminal panel",
+					Title: "Terminal picker",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "J"}}},
-					Desc:  `<em>Terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the terminal icon <i class="ti ti-terminal-2 align-text-bottom" aria-hidden="true"></i> in the statusbar, or the shortcut opens the project's coders and shells below the code. Tabs switch between them, <i class="ti ti-plus align-text-bottom" aria-hidden="true"></i> starts a new one or resumes a stopped coder, and the keys, the copy view, the refresh and the file upload work like on the terminal pages. Open or closed, the active tab and the height are remembered per project. Desktop only.`,
+					Desc:  `<em>Open terminal</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the terminal icon <i class="ti ti-terminal-2 align-text-bottom" aria-hidden="true"></i> in the statusbar or the shortcut. Lists <em>New shell</em>, <em>New coder</em>, the project's coders and shells, then stopped coders. With a mouse the first row is selected, on touch none. A row opens its menu: <em>Open</em> shows its tab, a new one in the focused group, <em>Resume</em> restarts a stopped coder, <em>Delete</em> removes it, the terminal's actions follow.`,
+				},
+				{
+					Title: "Assistant picker",
+					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "I"}}},
+					Desc:  `<em>Open assistant</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the sparkles <i class="ti ti-sparkles align-text-bottom" aria-hidden="true"></i> in the statusbar or the shortcut. Lists <em>New assistant</em> and the assistants, works like the terminal picker, with <em>Share</em> and <em>Delete</em>.`,
+				},
+				{
+					Title: "Terminals as tabs",
+					Desc:  `Works like the terminal page, the settings <i class="ti ti-settings align-text-bottom" aria-hidden="true"></i> sit in the footer. Closing the tab leaves the terminal running. <kbd>Ctrl</kbd>+<kbd>Tab</kbd>, <kbd>Ctrl</kbd>+<kbd>J</kbd>, <kbd>Ctrl</kbd>+<kbd>I</kbd> and the editor's <kbd>Ctrl</kbd>+<kbd>Shift</kbd> keys except line comments stay with the editor, every other key goes to the terminal, <kbd>Tab</kbd> included.`,
+				},
+				{
+					Title: "Assistants as tabs",
+					Desc:  `Works like the assistant page, the eye <i class="ti ti-eye align-text-bottom" aria-hidden="true"></i> opens its projects, coders and triggers. A link to a file, an assistant, or a coder or shell of this project opens as a tab, in another group if there is one, a stopped coder resumes. One of another project opens its page. A shared link shows no assistant in the editor.`,
 				},
 				{
 					Title: "Docker view",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "D"}}},
-					Desc:  `<em>Docker</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the docker icon <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> in the statusbar counting the project's running containers, or the shortcut opens what the project's compose menu offers: its addresses, the stack logs, the compose commands and the output of the last run, and below them every container. On a desktop a container's shell and logs open in the terminal panel instead of taking the page.`,
+					Desc:  `<em>Docker</em> in the menu <i class="ti ti-dots-vertical align-text-bottom" aria-hidden="true"></i>, the docker icon <i class="ti ti-brand-docker align-text-bottom" aria-hidden="true"></i> in the statusbar counting the project's running containers, or the shortcut opens what the project's compose menu offers: its addresses, the stack logs, the compose commands and the output of the last run, and below them every container. A container's shell and logs open as terminal tabs.`,
 				},
 			},
 		},

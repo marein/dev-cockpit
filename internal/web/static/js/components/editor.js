@@ -5,15 +5,16 @@
 // still works.
 import { notifyError, notifySuccess } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
-import { focusRow, followPointer, labelNodes, menuJustClosed, openMenu, openedByKeyboard, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
-import { available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
-import { applyFold } from "@dc/fold";
+import { focusRow, labelNodes, menuJustClosed, openMenu, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
+import { CLOSED_EVENT as DIALOG_CLOSED, available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
 import { copyPending, copyText, el, escapeHtml, isModEnter, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
 import { matchesTokens, rankTokens } from "@dc/filter";
 import { appPath, csrfHeaders, ensureOk, getJSON, getText, postForm, postJSON } from "@dc/http";
-import { renameCoder, renameShell } from "@dc/rename";
+import { renameAssistant, renameCoder, renameShell } from "@dc/rename";
+import * as assistantActions from "@dc/assistant-actions";
+import { deleteInactiveCoder } from "@dc/project-actions";
 import { alsoDropped, releaseCoder, steerCoder, steeredByItem } from "@dc/steer";
 import { isDark } from "@dc/theme";
 import * as dockerApi from "@dc/docker";
@@ -38,6 +39,7 @@ import * as projectSort from "@dc/project-sort";
 import { paletteGroups } from "@dc/project-palette";
 import { singleFlight } from "@dc/single-flight";
 import * as store from "@dc/store";
+import { openFormModal } from "dc-form-modal";
 
 const MAX_SAVED_TREE_DIRS = 200;
 // How long the palette's draft waits after the last keystroke. Short, because
@@ -55,12 +57,9 @@ const DIFF_REV = "HEAD";
 const TREE_WIDTH_KEY = "dc-editor-tree-width";
 const TREE_SCROLL_KEY = "dc-editor-tree-scroll";
 const VIEW_KEY = "dc-editor-view";
-const TERM_OPEN_KEY = "dc-editor-term-open";
-const TERM_HEIGHT_KEY = "dc-editor-term-height";
-const TERM_ACTIVE_KEY = "dc-editor-term-active";
 // Whether the tree column is folded away on a wide screen. Per project, like
-// the column's width and the terminal panel's height; the bare key is what this
-// device set last and what a project opened here for the first time starts with.
+// the column's width; the bare key is what this device set last and what a
+// project opened here for the first time starts with.
 const TREE_FOLD_KEY = "dc-editor-tree-folded";
 // Whether the commit view groups its list by folder. Per device for the same
 // reason, and for every project alike.
@@ -183,6 +182,15 @@ async function init(root) {
   const dockerStatusBtn = root.querySelector("[data-editor-docker-status]");
   const dockerStatusText = root.querySelector("[data-editor-docker-status-text]");
   const termStatusBtn = root.querySelector("[data-editor-term-status]");
+  const asstStatusBtn = root.querySelector("[data-editor-asst-status]");
+  let asstEntries = new Map();
+  let asstNew = [];
+  let asstKnown = false;
+  let asstSeq = 0;
+  let asstFirstDone = null;
+  const asstFirst = new Promise((resolve) => { asstFirstDone = resolve; });
+  const openAsstTabs = () => tabs.filter((t) => t.assistant);
+  let asideOwnerId = "";
   const commitEl = root.querySelector("[data-editor-commit]");
   const commitToggleBtn = root.querySelector("[data-editor-commit-toggle]");
   const commitCloseBtn = root.querySelector("[data-editor-commit-close]");
@@ -255,8 +263,8 @@ async function init(root) {
   const pointerMedia = window.matchMedia("(hover: hover) and (pointer: fine)");
   const termPointerMedia = window.matchMedia("(any-pointer: fine), not all and (any-pointer: coarse)");
   const wideMedia = window.matchMedia("(min-width: 992px)");
-  // The terminal panel and the tab groups need the room and the mouse of a
-  // desktop, elsewhere they stay out of the way.
+  // The tab groups need the room and the mouse of a desktop, elsewhere they
+  // stay out of the way.
   const onDesktop = () => termPointerMedia.matches && !mobileMedia.matches;
 
   // editor is the focused group's, everything that acts on the file in front
@@ -393,6 +401,13 @@ async function init(root) {
   const activeTab = () => activeTabOf(group);
   const groupTabs = (g) => tabs.filter((t) => t.group === g);
   const inFront = (tab) => tab.group.activePath === tab.path;
+  const termTabPath = (id) => `//terminal/${id}`;
+  const termTabOf = (id) => tabByPath(termTabPath(id));
+  const asstTabPath = (id) => `//assistant/${id}`;
+  const asstTabOf = (id) => tabByPath(asstTabPath(id));
+  const viewTab = (t) => !!(t && (t.terminal || t.assistant));
+  const boxOf = (t) => t.terminal?.box || t.assistant?.box || null;
+  const viewIcon = (t) => t.terminal?.icon || t.assistant?.icon || null;
   // Where only the focused group shows, its strip carries the tabs of every
   // group, so none of them is out of reach; the width is the view, the groups
   // stay what they are.
@@ -423,6 +438,35 @@ async function init(root) {
       }, 4000);
     }
   }
+
+  // The texts of the statusbar step back together where its entries would
+  // not fit whole, and on a phone always; the icons and the cursor position
+  // stay, and what a text says stands in its entry's tooltip or sheet too.
+  // A change of any entry or of the width measures again, once a frame.
+  const statusbarEl = root.querySelector("[data-editor-statusbar]");
+  let statusbarFrame = 0;
+  function fitStatusbar() {
+    statusbarFrame = 0;
+    const texts = statusbarEl.querySelectorAll("[data-statusbar-text]");
+    let tight = mobileMedia.matches;
+    if (!tight) {
+      for (const el of texts) el.classList.remove("d-none");
+      tight = statusbarEl.scrollWidth > statusbarEl.clientWidth + 1;
+    }
+    for (const el of texts) el.classList.toggle("d-none", tight);
+  }
+  const queueStatusbarFit = () => {
+    if (!statusbarFrame) statusbarFrame = requestAnimationFrame(fitStatusbar);
+  };
+  const statusbarResize = new ResizeObserver(queueStatusbarFit);
+  statusbarResize.observe(statusbarEl);
+  const statusbarChange = new MutationObserver(queueStatusbarFit);
+  statusbarChange.observe(statusbarEl, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["hidden"] });
+  signal.addEventListener("abort", () => {
+    cancelAnimationFrame(statusbarFrame);
+    statusbarResize.disconnect();
+    statusbarChange.disconnect();
+  });
 
   function onCursor(g, line, col) {
     g.cursor = { line, col };
@@ -468,6 +512,7 @@ async function init(root) {
       return;
     }
     lspIndexLabel.textContent = state.preparing ? `Preparing ${state.label}…` : `Indexing ${state.label}…`;
+    lspIndexEl.title = lspIndexLabel.textContent;
     const pct = !state.preparing && typeof state.percentage === "number" ? state.percentage : -1;
     lspIndexBar.classList.toggle("progress-bar-indeterminate", pct < 0);
     lspIndexBar.style.width = pct >= 0 ? `${Math.max(2, Math.min(100, pct))}%` : "";
@@ -762,13 +807,14 @@ async function init(root) {
 
   function afterFocusChanged() {
     const tab = activeTab();
+    markAsstActive();
     posEl.textContent = `${group.cursor.line}:${group.cursor.col}`;
     posEl.hidden = !tab || !!tab.kind;
     updateActionStates();
     syncSwipeZone();
     syncIndentControl();
     syncReadOnly();
-    if (tab && !tab.compare && !tab.external) markTreeSelection(tab.path);
+    if (tab && !tab.compare && !tab.external && !viewTab(tab)) markTreeSelection(tab.path);
     if (mobileMedia.matches) renderTabs();
     if (tabsRestored) writeTabs();
   }
@@ -862,6 +908,7 @@ async function init(root) {
     else if (wasShown && !tab.kind) from.editor.captureDoc(tab);
     if (tab.handle) target.editor.adoptDoc(tab.handle, from.editor);
     tab.group = target;
+    placeViewBox(tab);
     placeInOrder(tab, before);
     if (wasShown) {
       from.activePath = null;
@@ -894,6 +941,7 @@ async function init(root) {
       tab.group = group;
     }
     tabs.push(tab);
+    placeViewBox(tab);
   }
 
   function groupMenuItems(tab) {
@@ -978,6 +1026,11 @@ async function init(root) {
       btn.appendChild(lockEl);
       btn.title = `${readOnlySource(tab)} · read only`;
     }
+    if (viewTab(tab)) {
+      btn.classList.add("editor-tab-terminal");
+      btn.title = tab.terminal ? termTabTitle(tab) : asstTabTitle(tab);
+      if (viewIcon(tab)) btn.appendChild(viewIcon(tab));
+    }
     const nameEl = document.createElement("span");
     nameEl.className = "editor-tab-name";
     nameEl.textContent = tab.name;
@@ -986,7 +1039,7 @@ async function init(root) {
     // the name leaves, which on a tab is next to nothing. Where a file
     // comes from is therefore the statusbar's job for a file outside the
     // project, see syncReadOnly.
-    if (tabs.some((t) => t !== tab && t.name === tab.name)) {
+    if (!viewTab(tab) && tabs.some((t) => t !== tab && !viewTab(t) && t.name === tab.name)) {
       const hintEl = document.createElement("span");
       hintEl.className = "editor-tab-hint";
       hintEl.textContent = tab.external ? readOnlyHint(tab) : parentDir(tab.path) || "/";
@@ -1091,10 +1144,12 @@ async function init(root) {
   function renderTabs() {
     eachGroup((g) => {
       g.tabsEl.replaceChildren(...stripTabs(g).map(tabElement));
+      if (g.tabsEl.querySelector(".editor-tab-terminal")) syncAnimations(g.tabsEl);
       g.tabsEl.querySelector(".editor-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
     syncFilesItem();
     if (sheetKind === "files") renderFilesSheet();
+    markAsstActive();
   }
 
   // ---- the menu and the sheets behind it -------------------------------------
@@ -1127,9 +1182,9 @@ async function init(root) {
   // menu's, which is where the movement itself lives.
   const SHEET_ROW = ".dropdown-item, .editor-sheet-open";
   const sheetRows = () => rowsOf(sheetBodyEl, SHEET_ROW);
-  const FILTERED_SHEETS = new Set(["files", "structure", "docker", "git", "comments", "history", "forge-jobs"]);
+  const FILTERED_SHEETS = new Set(["files", "structure", "docker", "git", "comments", "history", "forge-jobs", "terminals", "assistants"]);
   // Which sheets a row does not close, see the click handler far below.
-  const STANDING_SHEETS = new Set(["settings", "docker", "git", "comments", "history", "forge", "forge-jobs", "forge-log"]);
+  const STANDING_SHEETS = new Set(["settings", "term-settings", "docker", "git", "comments", "history", "forge", "forge-jobs", "forge-log", "terminals", "assistants"]);
   let sheetQuery = "";
   let sheetMarked = null;
   const sheetRowText = (row) => (row.textContent || "").replace(/\s+/g, " ").trim();
@@ -1352,6 +1407,7 @@ async function init(root) {
     sheetBodyEl.replaceChildren();
     resetSheetFilter(kind);
     sheetEl.hidden = false;
+    sheetBodyEl.scrollTop = 0;
   }
 
   function closeSheet() {
@@ -1386,6 +1442,7 @@ async function init(root) {
       mark.title = GIT_MARKS[kind].label;
       open.appendChild(mark);
     }
+    if (viewIcon(tab)) open.appendChild(viewIcon(tab).cloneNode(true));
     const col = document.createElement("span");
     col.className = "d-flex flex-column min-w-0";
     const nameEl = document.createElement("span");
@@ -1394,9 +1451,7 @@ async function init(root) {
     if (kind) nameEl.classList.add(GIT_MARKS[kind].cls);
     const dirEl = document.createElement("span");
     dirEl.className = "editor-sheet-dir text-truncate";
-    dirEl.textContent = tab.compare && tab.compare.readOnly
-      ? `${tab.compare.leftLabel} ⇄ ${tab.compare.rightLabel}`
-      : tab.compare ? tab.compare.left : tab.external ? readOnlyHint(tab) : parentDir(tab.path) || "/";
+    dirEl.textContent = tabDetail(tab);
     col.append(nameEl, dirEl);
     open.appendChild(col);
     if (tab.dirty) {
@@ -1427,6 +1482,12 @@ async function init(root) {
     });
     row.append(open, grip, close);
     return row;
+  }
+
+  function tabDetail(tab) {
+    return tab.terminal ? tab.terminal.label : tab.assistant ? asstDetail(tab) : tab.compare && tab.compare.readOnly
+      ? `${tab.compare.leftLabel} ⇄ ${tab.compare.rightLabel}`
+      : tab.compare ? tab.compare.left : tab.external ? readOnlyHint(tab) : parentDir(tab.path) || "/";
   }
 
   function renderFilesSheet() {
@@ -1654,14 +1715,7 @@ async function init(root) {
           sub: container.portsLabel,
           onClick: (event) => {
             const info = { ...container, cli: data.cli };
-            const menu = dockerApi.containerMenuItems(info, can("compose") ? { onShell: dockerShellFromEditor } : { readOnly: true });
-            // A row reached with the keyboard clicks at no point at all, so the
-            // row itself is the anchor then; at 0,0 the menu would sit in the
-            // screen corner and read as not opening.
-            const rect = event.currentTarget.getBoundingClientRect();
-            const x = event.clientX || rect.left;
-            const y = event.clientY || rect.bottom + 4;
-            openMenu({ x: Math.round(x), y: Math.round(y), items: menu, signal });
+            openRowMenu(event, dockerApi.containerMenuItems(info, can("compose") ? { onShell: dockerShellFromEditor } : { readOnly: true }));
           },
         });
         cell.dataset.dockerContainer = "";
@@ -1677,8 +1731,17 @@ async function init(root) {
     }
   }
 
-  // The stack's logs are a terminal like a container's, so they land in the
-  // editor's own panel on a desktop and on the shell page otherwise.
+  // The menu of a sheet's row, opened by a click, a tap or Enter on the row.
+  // A row reached with the keyboard clicks at no point at all, so the row
+  // itself is the anchor then; at 0,0 the menu would sit in the screen corner
+  // and read as not opening.
+  function openRowMenu(event, items) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    openMenu({ x: Math.round(event.clientX || rect.left), y: Math.round(event.clientY || rect.bottom + 4), items, signal });
+  }
+
+  // The stack's logs are a terminal like a container's, so they open as a tab
+  // of the editor.
   async function composeLogsFromEditor(stack, filter) {
     const data = await dockerApi.composeLogs(name, stack.label, stack.label || name, filter);
     if (!data) return;
@@ -1692,14 +1755,9 @@ async function init(root) {
   }
 
   async function openShellFromEditor(data) {
-    if (onDesktop()) {
-      closeSheet();
-      termActiveId = data.id;
-      if (!termOpen) await openTermPanel({ focus: true });
-      else await loadTerminals({ focus: true });
-      return;
-    }
-    if (data.url) dockerApi.navigate(data.url);
+    closeSheet();
+    await loadTerminals();
+    await openTermTab(data.id);
   }
 
   function openDockerSheet() {
@@ -1748,7 +1806,7 @@ async function init(root) {
       syncReadOnly();
       // A file from outside the project stands in no tree of ours, and its
       // path must not become the folder a new file is created in.
-      if (tab && !tab.compare && !tab.external) markTreeSelection(tab.path);
+      if (tab && !tab.compare && !tab.external && !viewTab(tab)) markTreeSelection(tab.path);
     }
     persistTabs();
   }
@@ -1759,8 +1817,15 @@ async function init(root) {
     const prev = activeTabOf(g);
     if (prev && prev.compare) g.editor.captureCompare(prev);
     else if (prev && !prev.kind) g.editor.captureDoc(prev);
+    else if (prev && boxOf(prev)) hideViewBox(prev);
     g.activePath = tab.path;
-    if (tab.kind) {
+    if (viewTab(tab)) {
+      g.editor.setVisible(false);
+      g.editor.exitDiff();
+      g.viewerEl.hidden = true;
+      if (tab.terminal) void showTermBox(tab);
+      else void showAsstBox(tab);
+    } else if (tab.kind) {
       g.editor.setVisible(false);
       g.editor.exitDiff();
       renderViewer(tab);
@@ -1791,7 +1856,9 @@ async function init(root) {
   function focusFront(g) {
     if (!pointerMedia.matches || g !== group) return;
     const tab = activeTabOf(g);
-    if (tab && !tab.kind && !tab.compare) g.editor.focus();
+    if (tab && tab.terminal) focusTerm(tab);
+    else if (tab && tab.assistant) focusAsst(tab);
+    else if (tab && !tab.kind && !tab.compare) g.editor.focus();
     else if (document.activeElement?.closest(".cm-editor")) document.activeElement.blur();
   }
 
@@ -1801,8 +1868,16 @@ async function init(root) {
   };
 
   function settleFocus() {
-    if (focusLost()) focusFront(group);
+    if (!focusLost()) return;
+    if (sheetKind) focusSheetTop();
+    else focusFront(group);
   }
+
+  // A dialog asked from a sheet's row menu hands the focus back to a row that
+  // a repaint replaced meanwhile, so the sheet takes it.
+  document.addEventListener(DIALOG_CLOSED, () => setTimeout(() => {
+    if (sheetKind) settleFocus();
+  }), { signal });
 
   let focusBack = null;
   let typedIn = null;
@@ -1832,10 +1907,12 @@ async function init(root) {
     const next = i < 0
       ? (direction > 0 ? 0 : order.length - 1)
       : (i + direction + order.length) % order.length;
-    activateTab(order[next].path, focusLost() || !!document.activeElement.closest(".cm-editor"));
+    activateTab(order[next].path, focusLost() || !!document.activeElement.closest(".cm-editor, .editor-term-box, .editor-assistant-box"));
   }
 
   function showEmpty(g) {
+    const prev = activeTabOf(g);
+    if (prev && boxOf(prev)) hideViewBox(prev);
     g.activePath = null;
     g.editor.exitDiff();
     g.editor.setVisible(false);
@@ -1913,6 +1990,8 @@ async function init(root) {
     const siblings = groupTabs(g);
     const i = siblings.indexOf(tab);
     tabs.splice(tabs.indexOf(tab), 1);
+    if (tab.terminal) dropTermTab(tab);
+    if (tab.assistant) dropAsstTab(tab);
     if (lsp && !tab.kind && !tab.compare && !tab.revision) lsp.closeDocument(tab.path);
     if (tab.dirty && !tab.kind && !tab.compare && !tab.external && commentsFor(path).length) void loadComments();
     if (g.activePath === path) {
@@ -1960,6 +2039,8 @@ async function init(root) {
     // can do. A file from outside the project keeps its path on top of
     // that: it is the one thing about it worth taking away, and every
     // other entry here acts on a file this project owns.
+    if (tab.terminal) return [...closing, ...termTabMenuItems(tab)];
+    if (tab.assistant) return [...closing, ...asstTabMenuItems(tab)];
     if (tab.compare) return closing;
     if (tab.external) {
       return [...closing, { divider: true }, copyPathItem("Copy path", tab.revision ? tab.revision.path : tab.path)];
@@ -2087,6 +2168,8 @@ async function init(root) {
   }
 
   function tabEntry(t) {
+    if (t.terminal) return { type: "terminal", id: t.terminal.id };
+    if (t.assistant) return { type: "assistant", id: t.assistant.id };
     const scroll = tabScroll(t);
     const expanded = tabExpanded(t);
     if (t.compare && t.compare.readOnly) {
@@ -2150,6 +2233,8 @@ async function init(root) {
   }
 
   function restoredTab(entry, g) {
+    if (entry.type === "terminal") return restoredTermTab(entry.id, g);
+    if (entry.type === "assistant") return restoredAsstTab(entry.id, g);
     if (entry.type === "compare") return compareTabFor(entry.left, entry.right, g);
     if (entry.type === "revdiff") {
       return revdiffTabFor({
@@ -4567,17 +4652,7 @@ async function init(root) {
       label: commit.summary || commit.short,
       subNodes: [chipsEl, factsEl],
       title: commit.summary || commit.short,
-      onClick: (event) => {
-        // A row reached with the keyboard clicks at no point at all, so the
-        // row itself is the anchor then, like the docker sheet's cells.
-        const rect = event.currentTarget.getBoundingClientRect();
-        openMenu({
-          x: Math.round(event.clientX || rect.left),
-          y: Math.round(event.clientY || rect.bottom + 4),
-          items: commitMenuItems(commit, path, paintChips),
-          signal,
-        });
-      },
+      onClick: (event) => openRowMenu(event, commitMenuItems(commit, path, paintChips)),
     });
     cell.dataset.gitCommit = commit.sha;
     const col = document.createElement("div");
@@ -6479,15 +6554,7 @@ async function init(root) {
   function commentCol(comment) {
     const cell = authorHead(sheetActionRow({
       ...commentRow(comment),
-      onClick: (event) => {
-        const rect = event.currentTarget.getBoundingClientRect();
-        openMenu({
-          x: Math.round(event.clientX || rect.left),
-          y: Math.round(event.clientY || rect.bottom + 4),
-          items: commentCellMenuItems(comment),
-          signal,
-        });
-      },
+      onClick: (event) => openRowMenu(event, commentCellMenuItems(comment)),
     }), comment);
     return el("div", { class: "col-12 col-lg-6" }, cell);
   }
@@ -7712,7 +7779,7 @@ async function init(root) {
 
   function wirePaste() {
     root.addEventListener("paste", (e) => {
-      if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
+      if (e.target instanceof Element && e.target.closest(".editor-term-box, .editor-assistant-box, [data-assistant-aside]")) return;
       const clip = e.clipboardData;
       if (!clip) return;
       const entries = transferEntries(clip.items);
@@ -9960,7 +10027,7 @@ async function init(root) {
   function syncSwipeZone() {
     if (!group) return;
     const tab = activeTab();
-    const on = !!editorSettings.line_wrap && !!tab && !tab.compare
+    const on = !!editorSettings.line_wrap && !!tab && !tab.compare && !viewTab(tab)
       && !editor.hasSelection() && !editor.hasFocus();
     eachGroup((g) => g.surfaceEl.classList.toggle("editor-swipe-zone", on && g === group));
   }
@@ -9983,6 +10050,7 @@ async function init(root) {
       go: (stop) => activateTab(stop.id),
     });
     g.ac.signal.addEventListener("abort", () => nav.destroy());
+    g.swipeNav = nav;
     const stopFling = () => {
       if (flingFrame) cancelAnimationFrame(flingFrame);
       flingFrame = 0;
@@ -10284,7 +10352,8 @@ async function init(root) {
   gitStatusBtn.addEventListener("click", () => openGitSheet(), { signal });
   forgeItem?.addEventListener("click", openForgeSheet, { signal });
   forgeStatusBtn?.addEventListener("click", openForgeSheet, { signal });
-  termStatusBtn.addEventListener("click", toggleTermPanel, { signal });
+  termStatusBtn.addEventListener("click", openTermPicker, { signal });
+  asstStatusBtn?.addEventListener("click", openAsstPicker, { signal });
   sheetCloseBtn.addEventListener("click", closeSheet, { signal });
   sheetEl.addEventListener("click", (e) => {
     if (e.target === sheetEl) closeSheet();
@@ -10319,10 +10388,10 @@ async function init(root) {
   // and gets out of the way so the answer is visible. STANDING_SHEETS are the
   // ones whose rows do not say that: the settings are selects and a switch, not
   // one-shot actions, and a row of the docker, git, comments or history sheet
-  // opens a menu or starts a run the sheet itself then shows. Closing under an
-  // open menu is what takes the list away from the menu that was just asked for,
-  // and the menu hangs on the body, so the click never even reads as one
-  // outside the sheet.
+  // or of a picker opens a menu or starts a run the sheet itself then shows.
+  // Closing under an open menu is what takes the list away from the menu that
+  // was just asked for, and the menu hangs on the body, so the click never even
+  // reads as one outside the sheet.
   sheetBodyEl.addEventListener("click", (e) => {
     // A row whose handler opened another sheet is detached by the time this
     // bubbles; closing then would close what just replaced it, which is how
@@ -10484,112 +10553,44 @@ async function init(root) {
   });
   onServerEvent("projects", () => void refreshProjects(), { signal });
 
-  const termPanelEl = root.querySelector("[data-editor-term-panel]");
-  const termSplitterEl = root.querySelector("[data-editor-term-splitter]");
-  const termTabsHostEl = root.querySelector("[data-editor-term-tabs-host]");
-  const termBodyEl = root.querySelector("[data-editor-term-body]");
-  const termEmptyEl = root.querySelector("[data-editor-term-empty]");
-  const termItem = root.querySelector("[data-editor-term-item]");
-  const termHideBtn = root.querySelector("[data-editor-term-hide]");
-  const termPlusBtn = root.querySelector("[data-editor-term-plus]");
-  const termNewBtns = [root.querySelector("[data-editor-term-new]"), root.querySelector("[data-editor-term-new-empty]")];
-  const termFootsHostEl = root.querySelector("[data-editor-term-foots-host]");
   const termModalsHostEl = root.querySelector("[data-editor-term-modals-host]");
-  const termResumeHostEl = root.querySelector("[data-editor-term-resume-host]");
-  const termOpenKey = `${TERM_OPEN_KEY}:${name}`;
-  const termActiveKey = `${TERM_ACTIVE_KEY}:${name}`;
-  let termOpen = store.get(termOpenKey, "") === "1";
-  let termLoaded = false;
-  let termActiveId = store.get(termActiveKey, "") || null;
   let termSeq = 0;
-  let termFocusPending = false;
-  let termDragging = false;
-  let termRefreshHeld = false;
-  let termSuppressClick = false;
-  let termFocusOwner = false;
-  let termResumeExpanded = false;
-  let termMenuOpen = false;
-  let termMenuIndex = -1;
-  const termPanesEl = () => termBodyEl.querySelector("[data-editor-term-panes]");
-  const termPaneFor = (id) => (id ? termBodyEl.querySelector(`[data-term-pane="${CSS.escape(id)}"]`) : null);
-  const termTabFor = (id) => (id ? termTabsHostEl.querySelector(`[data-term-tab="${CSS.escape(id)}"]`) : null);
-  const termIds = () => [...termBodyEl.querySelectorAll("[data-term-pane]")].map((el) => el.getAttribute("data-term-pane"));
-  const termTabIds = () => [...termTabsHostEl.querySelectorAll("[data-term-tab]")].map((el) => el.getAttribute("data-term-tab"));
+  let termSessions = new Map();
+  let termViews = new Map();
+  let termStoppedViews = new Map();
+  let termKnown = false;
+  let termFirstDone = null;
+  const termFirst = new Promise((resolve) => { termFirstDone = resolve; });
+  const openTermTabs = () => tabs.filter((t) => t.terminal);
 
-  function revealTermTab(tab) {
-    if (!tab) return;
-    const strip = tab.closest("[data-editor-term-tabs]");
-    if (!strip || strip.clientWidth === 0) return;
-    const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
-    if (left < strip.scrollLeft || left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) {
-      strip.scrollLeft = left - (strip.clientWidth - tab.offsetWidth) / 2;
-    }
-  }
-
-  function paintTermTabs() {
-    for (const tab of termTabsHostEl.querySelectorAll("[data-term-tab]")) {
-      const on = tab.getAttribute("data-term-tab") === termActiveId;
-      tab.classList.toggle("active", on);
-      tab.setAttribute("aria-selected", on ? "true" : "false");
-    }
-    revealTermTab(termTabFor(termActiveId));
-    for (const pane of termBodyEl.querySelectorAll("[data-term-pane]")) {
-      pane.classList.toggle("active", pane.getAttribute("data-term-pane") === termActiveId);
-    }
-    termEmptyEl.hidden = termIds().length > 0;
-  }
-
-  const termStripResize = new ResizeObserver(() => revealTermTab(termTabFor(termActiveId)));
-  termStripResize.observe(termTabsHostEl);
-
-  async function mountTermIsland(pane) {
-    for (const other of document.querySelectorAll("terminal-attach[active]")) other.removeAttribute("active");
-    const id = pane.getAttribute("data-term-pane");
+  async function mountTermIsland(stage, id) {
     const attach = document.createElement("terminal-attach");
     attach.className = "attach-terminal editor-term-island min-w-0 w-100 position-relative";
     attach.setAttribute("terminal-id", id);
     attach.setAttribute("embedded", "");
-    attach.setAttribute("stream-url", pane.getAttribute("data-stream-url") || "");
-    if (pane.getAttribute("data-resize-url")) attach.setAttribute("resize-url", pane.getAttribute("data-resize-url"));
-    if (!pane.getAttribute("data-input-url")) attach.setAttribute("read-only", "");
-    if (pane.hasAttribute("data-scroll-history")) attach.setAttribute("scroll-history", "");
+    attach.setAttribute("stream-url", stage.getAttribute("data-stream-url") || "");
+    if (stage.getAttribute("data-resize-url")) attach.setAttribute("resize-url", stage.getAttribute("data-resize-url"));
+    if (!stage.getAttribute("data-input-url")) attach.setAttribute("read-only", "");
+    if (stage.hasAttribute("data-scroll-history")) attach.setAttribute("scroll-history", "");
+    if (!termPointerMedia.matches) {
+      const zone = document.createElement("terminal-scroll-zone");
+      zone.setAttribute("active", "");
+      zone.setAttribute("aria-hidden", "false");
+      attach.appendChild(zone);
+    }
     const input = document.createElement("terminal-input");
     input.setAttribute("terminal-id", id);
-    input.setAttribute("input-url", pane.getAttribute("data-input-url") || "");
-    if (pane.hasAttribute("data-scroll-history")) input.setAttribute("scroll-history", "");
-    pane.prepend(...(pane.getAttribute("data-input-url") ? [attach, input] : [attach]));
-    await window.app?.loadElements?.(pane);
-    const upload = termFootsHostEl.querySelector(`[data-term-foot="${CSS.escape(id)}"] coder-file-upload`);
+    input.setAttribute("input-url", stage.getAttribute("data-input-url") || "");
+    if (stage.hasAttribute("data-scroll-history")) input.setAttribute("scroll-history", "");
+    stage.prepend(...(stage.getAttribute("data-input-url") ? [attach, input] : [attach]));
+    await window.app?.loadElements?.(stage);
+    const upload = root.querySelector(`[data-terminal-footer="${CSS.escape(id)}"] coder-file-upload`);
     if (upload) {
       const parent = upload.parentElement;
       const next = upload.nextSibling;
       upload.remove();
       parent.insertBefore(upload, next);
     }
-  }
-
-  function markTermRead(id) {
-    const icon = termTabFor(id)?.querySelector(".dc-term-icon");
-    if (!icon || !icon.classList.contains("news") || guest) return;
-    icon.classList.remove("news");
-    void postForm("/notifications/read", { target: id });
-  }
-
-  // A terminal that has no pane is not a terminal this page can activate, and
-  // half applying that leaves the strip with nothing marked and stores the dead
-  // id as the project's active one. The URL's ?terminal= is where such an id
-  // comes from: the session it names may be gone by the time the page is
-  // reloaded. So the pane decides first, and this either activates or does
-  // nothing; who is active then stays whatever the fragment settled on.
-  async function activateTermPane(id, { focus = true } = {}) {
-    const pane = termPaneFor(id);
-    if (!pane) return;
-    termActiveId = id;
-    store.set(termActiveKey, id || "");
-    paintTermTabs();
-    if (!pane.querySelector("terminal-attach")) await mountTermIsland(pane);
-    document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id, focus } }));
-    markTermRead(id);
   }
 
   function syncTermKeyed(container, fresh, attr) {
@@ -10605,160 +10606,26 @@ async function init(root) {
     for (const el of wanted.values()) container.appendChild(el);
   }
 
-  function reconcileTerminals(doc, { focus = false } = {}) {
-    const freshTabs = doc.querySelector("[data-editor-term-tabs]");
-    const freshPanes = doc.querySelector("[data-editor-term-panes]");
-    if (!freshTabs || !freshPanes) return;
-    let panes = termPanesEl();
-    if (!panes) {
-      panes = document.createElement("div");
-      panes.className = "editor-term-panes";
-      panes.setAttribute("data-editor-term-panes", "");
-      termBodyEl.appendChild(panes);
-    }
-    syncTermKeyed(panes, freshPanes, "data-term-pane");
-    const freshFoots = doc.querySelector("[data-editor-term-foots]");
-    if (freshFoots) {
-      syncTermKeyed(termFootsHostEl, freshFoots, "data-term-foot");
-      void window.app?.loadElements?.(termFootsHostEl);
-    }
-    const freshModals = doc.querySelector("[data-editor-term-modals]");
-    if (freshModals) syncTermKeyed(termModalsHostEl, freshModals, "data-term-modal");
-    const freshResume = doc.querySelector("[data-editor-term-resume]");
-    if (freshResume && termResumeHostEl) {
-      termResumeHostEl.replaceChildren(...freshResume.childNodes);
-      foldTermResume();
-    }
-    termTabsHostEl.replaceChildren(freshTabs);
-    syncAnimations(termTabsHostEl);
-    const ids = termIds();
-    if (!termActiveId || !ids.includes(termActiveId)) termActiveId = ids[0] || null;
-    if (termOpen && termActiveId) void activateTermPane(termActiveId, { focus });
-    else {
-      paintTermTabs();
-      if (termOpen && focus) termPanelEl.focus({ preventScroll: true });
-    }
-  }
-
-  async function loadTerminals({ focus = false } = {}) {
-    if (focus) termFocusPending = true;
-    if (termDragging) {
-      termRefreshHeld = true;
-      return;
-    }
+  async function loadTerminals() {
     const seq = ++termSeq;
     let text;
     try {
       text = await getText(`${base}/terminals`, { signal });
     } catch (err) {
       void err;
+      if (signal.aborted) return;
       if (seq === termSeq) {
-        termFocusPending = false;
         status("Terminals could not be loaded.", "error");
+        termFirstDone();
       }
       return;
     }
     if (seq !== termSeq) return;
-    const wantFocus = termFocusPending;
-    termFocusPending = false;
-    reconcileTerminals(new DOMParser().parseFromString(text, "text/html"), { focus: wantFocus });
-  }
-
-  function paintTermPanel() {
-    const applies = onDesktop();
-    const shown = termOpen && applies;
-    termItem.hidden = !applies;
-    termItem.setAttribute("aria-pressed", shown ? "true" : "false");
-    termStatusBtn.hidden = !applies;
-    termStatusBtn.setAttribute("aria-pressed", shown ? "true" : "false");
-    termPanelEl.hidden = !shown;
-    measureAll();
-  }
-
-  async function openTermPanel({ focus = true } = {}) {
-    if (!onDesktop()) return;
-    termOpen = true;
-    store.set(termOpenKey, "1");
-    paintTermPanel();
-    if (!termLoaded) {
-      termLoaded = true;
-      await loadTerminals({ focus });
-      return;
-    }
-    if (termActiveId) await activateTermPane(termActiveId, { focus });
-    else if (focus) termPanelEl.focus({ preventScroll: true });
-  }
-
-  function closeTermPanel() {
-    if (!termOpen) return;
-    termOpen = false;
-    store.set(termOpenKey, "");
-    paintTermPanel();
-    editor.focus();
-  }
-
-  function toggleTermPanel() {
-    if (termOpen) closeTermPanel();
-    else void openTermPanel();
-  }
-
-  function applyTermHeight(px) {
-    if (px > 0) termPanelEl.style.setProperty("--editor-term-height", `${px}px`);
-    else termPanelEl.style.removeProperty("--editor-term-height");
-  }
-
-  function wireTermSplitter() {
-    applyTermHeight(parseInt(readLayout(TERM_HEIGHT_KEY), 10) || 0);
-    let dragging = false;
-    let height = 0;
-    let timer = 0;
-    const saveHeight = () => {
-      timer = 0;
-      if (height > 0) writeLayout(TERM_HEIGHT_KEY, String(height));
-    };
-    const endDrag = () => {
-      if (!dragging) return;
-      dragging = false;
-      termSplitterEl.classList.remove("active");
-      if (timer) window.clearTimeout(timer);
-      saveHeight();
-      measureAll();
-    };
-    termSplitterEl.addEventListener("mousedown", (e) => e.preventDefault(), { signal });
-    termSplitterEl.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      height = 0;
-      termSplitterEl.classList.add("active");
-      termSplitterEl.setPointerCapture(e.pointerId);
-    }, { signal });
-    termSplitterEl.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      if (e.buttons === 0) {
-        endDrag();
-        return;
-      }
-      const rect = termPanelEl.getBoundingClientRect();
-      const colRect = paneColEl.getBoundingClientRect();
-      height = Math.round(Math.min(Math.max(rect.bottom - e.clientY, 96), colRect.height * 0.75));
-      applyTermHeight(height);
-      if (!timer) timer = window.setTimeout(saveHeight, LAYOUT_SAVE_MS);
-    }, { signal });
-    termSplitterEl.addEventListener("pointerup", endDrag, { signal });
-    termSplitterEl.addEventListener("pointercancel", endDrag, { signal });
-    termSplitterEl.addEventListener("lostpointercapture", endDrag, { signal });
-  }
-
-  async function createTermShell() {
-    const res = await postForm("/shells/new", { project: root.dataset.editorProjectPath || "" });
-    const landed = new URL(res.url, window.location.origin).pathname;
-    const match = landed.match(/^\/shells\/(?!new$)([^/]+)$/);
-    if (!res.ok || !match) {
-      notifyError("The shell could not be created.");
-      return;
-    }
-    termActiveId = match[1];
-    if (!termOpen) await openTermPanel();
-    else await loadTerminals({ focus: true });
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    readTermDoc(doc);
+    syncTermTabs();
+    if (sheetKind === "terminals") renderTermPicker();
+    termFirstDone();
   }
 
   async function closeTermSession(id, kind, sessionName, purge = false) {
@@ -10772,12 +10639,6 @@ async function init(root) {
       confirmText: coder && !drop ? "Stop" : "Delete",
     });
     if (!ok) return;
-    const wasActive = id === termActiveId;
-    if (wasActive) {
-      const ids = termTabIds();
-      const i = ids.indexOf(id);
-      termActiveId = ids[i + 1] || ids[i - 1] || null;
-    }
     window.dispatchEvent(new CustomEvent("dc:terminal-closing", { detail: { id } }));
     const action = drop ? `/coders/${id}/delete` : coder ? `/coders/${id}/stop` : `/shells/${id}/delete`;
     const res = await postForm(action, {});
@@ -10788,23 +10649,22 @@ async function init(root) {
     const data = await res.json().catch(() => null);
     notifySuccess(alsoDropped(drop ? `Coder "${sessionName}" deleted.`
       : coder ? `Coder "${sessionName}" stopped.` : `Shell "${sessionName}" deleted.`, data));
-    await loadTerminals({ focus: wasActive });
-    if (wasActive && !termActiveId) editor.focus();
+    await loadTerminals();
   }
 
-  function termMenuItems(tab) {
-    const id = tab.getAttribute("data-term-tab");
-    const kind = tab.getAttribute("data-term-kind");
-    const sessionName = tab.getAttribute("data-term-name") || "";
-    const url = tab.getAttribute("data-term-url") || "";
+  function termMenuItems(session, icon = session.querySelector(".dc-term-icon")) {
+    const id = session.getAttribute("data-term-session");
+    const kind = session.getAttribute("data-term-kind");
+    const sessionName = session.getAttribute("data-term-name") || "";
+    const url = session.getAttribute("data-term-url") || "";
     const coder = kind === "coder";
     const items = [
       { label: "Open terminal page", icon: "ti-external-link", href: url },
     ];
-    if ((!coder || tab.hasAttribute("data-term-renames")) && can("terminals")) {
-      items.push({ label: "Rename", icon: "ti-pencil", action: () => void (coder ? renameCoder(id, sessionName, { mode: tab.getAttribute("data-term-renames"), label: tab.getAttribute("data-term-coder-label") }) : renameShell(id, sessionName)) });
+    if ((!coder || session.hasAttribute("data-term-renames")) && can("terminals")) {
+      items.push({ label: "Rename", icon: "ti-pencil", action: () => void (coder ? renameCoder(id, sessionName, { mode: session.getAttribute("data-term-renames"), label: session.getAttribute("data-term-coder-label") }) : renameShell(id, sessionName)) });
     }
-    if (tab.querySelector(".dc-term-icon.news") && !guest) {
+    if (icon?.classList.contains("news") && !guest) {
       items.push({
         label: "Mark read",
         icon: "ti-eye-check",
@@ -10812,7 +10672,7 @@ async function init(root) {
       });
     }
     if (coder && !guest) {
-      items.push(steeredByItem(tab), tab.hasAttribute("data-term-steered")
+      items.push(steeredByItem(session), session.hasAttribute("data-term-steered")
         ? {
           label: "Release",
           icon: "ti-steering-wheel-off",
@@ -10826,7 +10686,7 @@ async function init(root) {
           action: () => void steerCoder({
             terminal: id,
             name: sessionName,
-            prefill: tab.getAttribute("data-term-steer-prefill") || "",
+            prefill: session.getAttribute("data-term-steer-prefill") || "",
           }).then(() => loadTerminals()),
         });
     }
@@ -10851,287 +10711,621 @@ async function init(root) {
     return items;
   }
 
-  function stepTermTab(direction) {
-    const ids = termTabIds();
-    if (ids.length < 2) return;
-    const i = ids.indexOf(termActiveId);
-    void activateTermPane(ids[(i + direction + ids.length) % ids.length]);
+  function readTermDoc(doc) {
+    const keyed = (selector, attr, clone) => new Map([...doc.querySelectorAll(selector)]
+      .map((node) => [node.getAttribute(attr), clone ? node.cloneNode(true) : node]));
+    termSessions = keyed("[data-editor-term-sessions] [data-term-session]", "data-term-session", true);
+    termViews = keyed("[data-editor-term-views] [data-terminal-view]", "data-terminal-view", false);
+    termStoppedViews = keyed("[data-editor-term-stopped] [data-term-stopped]", "data-term-stopped", false);
+    termKnown = true;
+    const freshModals = doc.querySelector("[data-editor-term-modals]");
+    if (freshModals) syncTermKeyed(termModalsHostEl, freshModals, "data-term-modal");
   }
 
-  function openTermNewMenu() {
-    if (!termPlusBtn || !window.bootstrap?.Dropdown) return;
-    window.bootstrap.Dropdown.getOrCreateInstance(termPlusBtn).show();
-    termPlusBtn.blur();
+  function termTabTitle(tab) {
+    const t = tab.terminal;
+    return [tab.name, t.icon?.getAttribute("title") || t.label, t.state === "stopped" ? "stopped" : ""].filter(Boolean).join(" · ");
   }
 
-  function closeTermNewMenu() {
-    if (termPlusBtn) window.bootstrap?.Dropdown.getInstance(termPlusBtn)?.hide();
-  }
-
-  function termMenuRows() {
-    const menu = termPlusBtn?.closest(".dropdown")?.querySelector(".editor-term-new-menu");
-    if (!menu) return [];
-    return Array.from(menu.querySelectorAll(".dropdown-item")).filter((row) => row.offsetParent);
-  }
-
-  function paintTermMenuSelection() {
-    const menu = termPlusBtn?.closest(".dropdown")?.querySelector(".editor-term-new-menu");
-    if (!menu) return;
-    const rows = termMenuRows();
-    for (const row of menu.querySelectorAll(".dropdown-item.selected")) {
-      row.classList.remove("selected");
-      row.removeAttribute("aria-current");
+  function buildTermTab(id, g = group) {
+    const box = document.createElement("div");
+    box.className = "editor-term-box position-absolute top-0 start-0 w-100 h-100 d-flex flex-column min-w-0";
+    box.hidden = true;
+    const tab = {
+      path: termTabPath(id),
+      name: "Terminal",
+      kind: "terminal",
+      group: g,
+      dirty: false,
+      terminal: { id, state: "", label: "", icon: null, session: null, view: null, box, mounting: false, wantFocus: false },
+    };
+    if (!applyTermState(tab)) return null;
+    if (!tab.terminal.state) {
+      box.innerHTML = '<div class="d-flex align-items-center justify-content-center flex-fill"><span class="spinner-border text-secondary" role="status"></span></div>';
     }
-    if (!termMenuOpen || termMenuIndex < 0 || !rows.length) return;
-    termMenuIndex = Math.min(termMenuIndex, rows.length - 1);
-    const selected = rows[termMenuIndex];
-    selected.classList.add("selected");
-    selected.setAttribute("aria-current", "true");
-    const top = selected.offsetTop;
-    const bottom = top + selected.offsetHeight;
-    if (top < menu.scrollTop) menu.scrollTop = top;
-    else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight;
+    return tab;
   }
 
-  function moveTermMenuSelection(delta) {
-    const rows = termMenuRows();
-    if (!rows.length) return;
-    if (termMenuIndex < 0) termMenuIndex = delta > 0 ? 0 : rows.length - 1;
-    else termMenuIndex = (termMenuIndex + delta + rows.length) % rows.length;
-    paintTermMenuSelection();
+  function applyTermState(tab) {
+    const t = tab.terminal;
+    const session = termSessions.get(t.id) || null;
+    const stopped = session ? null : termStoppedViews.get(t.id);
+    if (!session && !stopped) return !termKnown;
+    const from = session || stopped;
+    tab.name = from.getAttribute("data-term-name") || tab.name;
+    t.label = from.getAttribute("data-term-label") || "";
+    t.session = session;
+    t.icon = from.querySelector(".dc-term-icon")?.cloneNode(true) || null;
+    const state = session ? "live" : "stopped";
+    if (state === t.state && (state === "stopped" || t.view)) return true;
+    t.state = state;
+    if (session) {
+      const view = termViews.get(t.id);
+      t.view = view ? document.adoptNode(view) : null;
+      termViews.delete(t.id);
+      t.box.replaceChildren(...(t.view ? [t.view] : []));
+      if (t.view) void window.app?.loadElements?.(t.view);
+    } else {
+      t.view = null;
+      t.box.replaceChildren(document.adoptNode(stopped.cloneNode(true)));
+    }
+    if (tabs.includes(tab) && inFront(tab)) void showTermBox(tab);
+    return true;
   }
 
-  function markTermMenuRow(index) {
-    if (index === termMenuIndex) return;
-    termMenuIndex = index;
-    paintTermMenuSelection();
+  function syncTermTabs() {
+    const open = openTermTabs();
+    if (!open.length) return;
+    for (const tab of open) {
+      if (!applyTermState(tab)) void closeTab(tab.path, true);
+    }
+    renderTabs();
   }
 
-  function commitTermMenuSelection() {
-    const selected = termMenuRows()[termMenuIndex];
-    if (!selected) return;
-    selected.click();
-    if (termMenuOpen) paintTermMenuSelection();
+  function hideViewBox(tab) {
+    const box = boxOf(tab);
+    if (box.contains(document.activeElement)) document.activeElement.blur();
+    box.hidden = true;
+    if (tab.assistant) markAsstActive();
   }
 
-  function foldTermResume() {
-    const group = termResumeHostEl?.querySelector("[data-term-resume-fold]");
-    if (!group) return;
-    applyFold(group, {
-      limit: 3,
-      expanded: termResumeExpanded,
-      toggleAttr: "data-term-resume-toggle",
-      toggleClass: "dropdown-item text-center text-secondary small py-1",
-      signal,
-      onToggle: (event, next) => {
-        event.preventDefault();
-        event.stopPropagation();
-        termResumeExpanded = next;
-        foldTermResume();
-      },
-    });
+  function placeViewBox(tab) {
+    const box = boxOf(tab);
+    if (!box) return;
+    if (box.parentElement !== tab.group.surfaceEl) tab.group.surfaceEl.appendChild(box);
+    box.hidden = !inFront(tab);
   }
 
-  async function resumeTermCoder(action, id) {
+  function dropTermTab(tab) {
+    tab.terminal.box.remove();
+  }
+
+  async function showTermBox(tab) {
+    const t = tab.terminal;
+    t.box.hidden = false;
+    markTermTabRead(tab);
+    const stage = t.view?.querySelector("[data-term-stage]");
+    if (!stage) return;
+    if (!stage.querySelector("terminal-attach")) {
+      if (t.mounting) return;
+      t.mounting = true;
+      await mountTermIsland(stage, t.id);
+      t.mounting = false;
+      if (!tabs.includes(tab) || !inFront(tab)) return;
+    }
+    const focus = t.wantFocus;
+    t.wantFocus = false;
+    if (tab.group === group) document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id: t.id, focus } }));
+  }
+
+  function focusTerm(tab) {
+    const t = tab.terminal;
+    t.wantFocus = true;
+    if (t.mounting || !t.view?.querySelector("terminal-attach")) return;
+    t.wantFocus = false;
+    document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id: t.id, focus: true } }));
+  }
+
+  function markTermTabRead(tab) {
+    const icon = tab.terminal.icon;
+    if (guest || !icon?.classList.contains("news")) return;
+    icon.classList.remove("news");
+    void postForm("/notifications/read", { target: tab.terminal.id });
+  }
+
+  async function openTermTab(id, { focus = true, quiet = false } = {}) {
+    closeDrawer();
+    if (!termTabOf(id)) {
+      const known = () => termSessions.has(id) || (!guest && termStoppedViews.has(id));
+      if (!known()) await loadTerminals();
+      if (!termTabOf(id)) {
+        if (!known()) {
+          if (!quiet) notifyError("The terminal is not running any more.");
+          return;
+        }
+        addTab(buildTermTab(id));
+      }
+    }
+    activateTab(termTabOf(id).path, focus);
+  }
+
+  async function restoredTermTab(id, g) {
+    await termFirst;
+    return buildTermTab(id, g);
+  }
+
+  const resumeAction = (id) => termStoppedViews.get(id)?.querySelector("form[data-term-resume]")?.getAttribute("action") || "";
+
+  function resumeItem(id) {
+    const action = resumeAction(id);
+    return action && { label: "Resume", icon: "ti-player-play", action: () => void resumeTermTab(id, action) };
+  }
+
+  function deleteStoppedItem(id) {
+    const name = termStoppedViews.get(id)?.getAttribute("data-term-name") || "";
+    return !guest && {
+      label: "Delete",
+      icon: "ti-trash",
+      danger: true,
+      action: () => void deleteInactiveCoder(id, name).then((gone) => gone && loadTerminals()),
+    };
+  }
+
+  function termTabMenuItems(tab) {
+    const t = tab.terminal;
+    if (t.state === "live" && t.session) return [{ divider: true }, ...termMenuItems(t.session, t.icon)];
+    if (t.state !== "stopped" || guest) return [];
+    return [{ divider: true }, resumeItem(t.id), { divider: true }, deleteStoppedItem(t.id)];
+  }
+
+  async function createShell() {
+    const res = await postForm("/shells/new", { project: root.dataset.editorProjectPath || "" });
+    const landed = new URL(res.url, window.location.origin).pathname;
+    const match = landed.match(/^\/shells\/(?!new$)([^/]+)$/);
+    if (!res.ok || !match) {
+      notifyError("The shell could not be created.");
+      return null;
+    }
+    return match[1];
+  }
+
+  async function newTermTabShell() {
+    const id = await createShell();
+    if (!id) return;
+    await loadTerminals();
+    await openTermTab(id);
+  }
+
+  function newTermTabCoder() {
+    const url = `/coders/new?project=${encodeURIComponent(name)}&return=${encodeURIComponent(`/projects/${encodeURIComponent(name)}/editor`)}&panel=1`;
+    if (!openFormModal(url)) window.app?.navigate?.(url);
+  }
+
+  async function resumeTermTab(id, action) {
     status("Resuming the coder…");
     const res = await postForm(action, {});
     if (!res.ok) {
       notifyError("The coder could not be resumed.");
       return;
     }
-    if (id) termActiveId = id;
-    await loadTerminals({ focus: true });
+    status("");
+    await loadTerminals();
+    await openTermTab(id);
   }
 
-  async function persistTermOrder() {
-    const ids = termTabIds();
+  function openTermPicker() {
+    openSheet("terminals", "Terminals");
+    renderTermPicker();
+    focusSheetTop();
+    void loadTerminals();
+  }
+
+  function renderTermPicker() {
+    repaintSheet(sheetBodyEl, paintTermPicker);
+  }
+
+  function openAsstPicker() {
+    if (guest) return;
+    openSheet("assistants", "Assistants");
+    renderAsstPicker();
+    focusSheetTop();
+    void loadAssistants();
+  }
+
+  function renderAsstPicker() {
+    repaintSheet(sheetBodyEl, paintAsstPicker);
+  }
+
+  // A picker's entry is a row like a container of the docker sheet: a click,
+  // a tap or Enter opens what it can do, Open first. The row carries the id,
+  // data-term-pick or data-asst-pick.
+  function pickerRow(icon, label, sub, pick, id) {
+    const row = sheetActionRow({ icon: "", label, sub, onClick: (event) => openRowMenu(event, pickMenuItems(row)) });
+    if (icon) row.querySelector(":scope > i")?.replaceWith(icon.cloneNode(true));
+    row.dataset[pick] = id;
+    return row;
+  }
+
+  const pickerDivider = () => Object.assign(document.createElement("div"), { className: "dropdown-divider" });
+
+  function paintTermPicker() {
+    const rows = [];
+    if (!guest) {
+      rows.push(sheetActionRow({
+        icon: "ti-terminal-2",
+        label: "New shell",
+        onClick: () => {
+          closeSheet();
+          void newTermTabShell();
+        },
+      }), sheetActionRow({
+        icon: "ti-robot",
+        label: "New coder",
+        onClick: () => {
+          closeSheet();
+          newTermTabCoder();
+        },
+      }), pickerDivider());
+    }
+    const sessions = [];
+    for (const [id, session] of termSessions) {
+      const sub = [session.getAttribute("data-term-label"), termTabOf(id) ? "open" : ""].filter(Boolean).join(" · ");
+      sessions.push(pickerRow(termTabOf(id)?.terminal.icon || session.querySelector(".dc-term-icon"), session.getAttribute("data-term-name") || "", sub, "termPick", id));
+    }
+    if (!sessions.length) {
+      const none = sheetActionRow({ icon: "ti-terminal-2", label: termKnown ? "No terminal running." : "Loading…", disabled: true });
+      none.dataset.editorSheetHead = "";
+      sessions.push(none);
+    }
+    rows.push(...sessions);
+    if (!guest) {
+      const stopped = [...termStoppedViews];
+      if (stopped.length) {
+        rows.push(pickerDivider(), sheetHead("Stopped coders"));
+        for (const [id, view] of stopped) {
+          rows.push(pickerRow(view.querySelector(".dc-term-icon"), view.getAttribute("data-term-name") || "", termTabOf(id) ? "stopped · open" : "stopped", "termPick", id));
+        }
+      }
+    }
+    sheetBodyEl.replaceChildren(...rows);
+    syncAnimations(sheetBodyEl);
+  }
+
+  function paintAsstPicker() {
+    const rows = [];
+    for (const option of asstNew) {
+      rows.push(sheetActionRow({
+        icon: "ti-sparkles",
+        label: option.label,
+        onClick: () => {
+          closeSheet();
+          void newAsstTab(option.coder);
+        },
+      }));
+    }
+    if (asstNew.length) rows.push(pickerDivider());
+    const entries = [];
+    for (const [id, entry] of asstEntries) {
+      const sub = [entry.getAttribute("data-assistant-label"), asstTabOf(id) ? "open" : ""].filter(Boolean).join(" · ");
+      entries.push(pickerRow(asstTabOf(id)?.assistant.icon || entry.querySelector(".dc-term-icon"), entry.getAttribute("data-assistant-name") || "", sub, "asstPick", id));
+    }
+    if (!entries.length) {
+      const none = sheetActionRow({ icon: "ti-sparkles", label: asstKnown ? "No assistant yet." : "Loading…", disabled: true });
+      none.dataset.editorSheetHead = "";
+      entries.push(none);
+    }
+    rows.push(...entries);
+    sheetBodyEl.replaceChildren(...rows);
+    syncAnimations(sheetBodyEl);
+  }
+
+  // ---- assistants as tabs ----------------------------------------------------
+
+  // The owner's assistants as /assistants/editor lists them, which the picker
+  // reads its rows and a tab its name and icon off. A guest reaches no
+  // assistant in the editor, nothing of this runs for one.
+  const loadAssistants = singleFlight(async () => {
+    if (guest) {
+      asstFirstDone();
+      return;
+    }
+    const seq = ++asstSeq;
+    let text;
     try {
-      await ensureOk(await postJSON("/terminal-tabs/order", { ids }), "Could not save the tab order.");
+      text = await getText("/assistants/editor", { signal });
     } catch (err) {
-      notifyError(err.message);
-      void loadTerminals();
+      void err;
+      if (signal.aborted) return;
+      if (seq === asstSeq) {
+        status("Assistants could not be loaded.", "error");
+        asstFirstDone();
+      }
+      return;
+    }
+    if (seq !== asstSeq) return;
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    asstEntries = new Map([...doc.querySelectorAll("[data-editor-assistant-list] [data-assistant-entry]")].map((entry) => [entry.getAttribute("data-assistant-entry"), entry.cloneNode(true)]));
+    asstNew = [...doc.querySelectorAll("[data-editor-assistant-new] [data-assistant-new-coder]")]
+      .map((option) => ({ coder: option.getAttribute("data-assistant-new-coder"), label: option.getAttribute("data-assistant-new-label") || "New assistant" }));
+    asstKnown = true;
+    syncAsstTabs();
+    if (sheetKind === "assistants") renderAsstPicker();
+    asstFirstDone();
+  });
+
+  // The assistant in front of the focused group is the one Alt Alt and the
+  // document's keys reach.
+  function markAsstActive() {
+    const front = activeTab();
+    for (const tab of openAsstTabs()) {
+      tab.assistant.box.querySelector("dc-assistant")?.toggleAttribute("active", tab === front && !tab.assistant.box.hidden);
     }
   }
 
-  function wireTermTabDrag() {
-    let drag = null;
-    const contentX = (strip, clientX) => clientX - strip.getBoundingClientRect().left + strip.scrollLeft;
-    const updateDrag = () => {
-      if (!drag || !drag.active) return;
-      const dx = contentX(drag.strip, drag.lastClientX) - drag.startContentX;
-      const draggedCenter = drag.centers[drag.fromIndex] + dx;
-      let toIndex = 0;
-      for (let i = 0; i < drag.centers.length; i += 1) {
-        if (i !== drag.fromIndex && drag.centers[i] < draggedCenter) toIndex += 1;
-      }
-      drag.toIndex = toIndex;
-      drag.tab.style.transform = `translateX(${dx}px)`;
-      drag.tabs.forEach((tab, i) => {
-        if (tab === drag.tab) return;
-        let shift = 0;
-        if (i > drag.fromIndex && i <= drag.toIndex) shift = -drag.width;
-        else if (i < drag.fromIndex && i >= drag.toIndex) shift = drag.width;
-        tab.style.transform = shift ? `translateX(${shift}px)` : "";
-      });
+  function asstTabTitle(tab) {
+    return [tab.name, "Assistant", tab.assistant.label].filter(Boolean).join(" · ");
+  }
+
+  function asstDetail(tab) {
+    return ["Assistant", tab.assistant.label].filter(Boolean).join(" · ");
+  }
+
+  function buildAsstTab(id, g = group) {
+    const box = document.createElement("div");
+    box.className = "editor-assistant-box position-absolute top-0 start-0 w-100 h-100 d-flex flex-column min-w-0";
+    box.hidden = true;
+    box.innerHTML = '<div class="d-flex align-items-center justify-content-center flex-fill"><span class="spinner-border text-secondary" role="status"></span></div>';
+    const tab = {
+      path: asstTabPath(id),
+      name: "Assistant",
+      kind: "assistant",
+      group: g,
+      dirty: false,
+      assistant: { id, label: "", icon: null, box, loading: false, wantFocus: false },
     };
-    const tickEdgeScroll = () => {
-      if (!drag || !drag.active) return;
-      const rect = drag.strip.getBoundingClientRect();
-      let delta = 0;
-      if (drag.lastClientX < rect.left + 32) delta = -12;
-      else if (drag.lastClientX > rect.right - 32) delta = 12;
-      if (delta) {
-        const max = drag.strip.scrollWidth - drag.strip.clientWidth;
-        const next = Math.max(0, Math.min(drag.strip.scrollLeft + delta, max));
-        if (next !== drag.strip.scrollLeft) {
-          drag.strip.scrollLeft = next;
-          updateDrag();
-        }
-      }
-      drag.raf = window.requestAnimationFrame(tickEdgeScroll);
-    };
-    const flushHeld = () => {
-      if (!termRefreshHeld) return;
-      termRefreshHeld = false;
-      void loadTerminals();
-    };
-    const clearDrag = () => {
-      if (!drag) return;
-      if (drag.active) {
-        window.cancelAnimationFrame(drag.raf);
-        drag.strip.classList.remove("editor-term-tabs-dragging");
-        drag.tab.classList.remove("editor-term-tab-dragging");
-        for (const tab of drag.tabs) tab.style.transform = "";
-        termDragging = false;
-      }
-      drag = null;
-    };
-    termTabsHostEl.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 || e.pointerType === "touch" || drag) return;
-      const tab = e.target.closest("[data-term-tab]");
-      if (!tab || e.target.closest("[data-term-close]")) return;
-      const strip = tab.closest("[data-editor-term-tabs]");
-      if (!strip) return;
-      drag = {
-        tab,
-        strip,
-        pointerId: e.pointerId,
-        startClientX: e.clientX,
-        startClientY: e.clientY,
-        lastClientX: e.clientX,
-        active: false,
-        raf: 0,
-      };
-      try {
-        tab.setPointerCapture(e.pointerId);
-      } catch (err) {
-        void err;
-      }
-    }, { signal });
-    termTabsHostEl.addEventListener("pointermove", (e) => {
-      if (!drag || e.pointerId !== drag.pointerId) return;
-      if (!drag.active) {
-        if (!(e.buttons & 1)) {
-          drag = null;
-          return;
-        }
-        if (Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY) < 6) return;
-        drag.active = true;
-        termDragging = true;
-        drag.tabs = [...drag.strip.querySelectorAll("[data-term-tab]")];
-        drag.fromIndex = drag.tabs.indexOf(drag.tab);
-        drag.toIndex = drag.fromIndex;
-        drag.width = drag.tab.getBoundingClientRect().width;
-        const left = drag.strip.getBoundingClientRect().left;
-        drag.centers = drag.tabs.map((el) => {
-          const rect = el.getBoundingClientRect();
-          return rect.left + rect.width / 2 - left + drag.strip.scrollLeft;
-        });
-        drag.startContentX = contentX(drag.strip, e.clientX);
-        drag.strip.classList.add("editor-term-tabs-dragging");
-        drag.tab.classList.add("editor-term-tab-dragging");
-        drag.raf = window.requestAnimationFrame(tickEdgeScroll);
-      }
-      e.preventDefault();
-      drag.lastClientX = e.clientX;
-      updateDrag();
-    }, { signal });
-    termTabsHostEl.addEventListener("pointerup", (e) => {
-      if (!drag || e.pointerId !== drag.pointerId) return;
-      const done = drag;
-      clearDrag();
-      if (!done.active) return;
-      termSuppressClick = true;
-      if (done.toIndex === done.fromIndex) {
-        flushHeld();
+    return applyAsstState(tab) ? tab : null;
+  }
+
+  function applyAsstState(tab) {
+    const a = tab.assistant;
+    const entry = asstEntries.get(a.id);
+    if (!entry) return !asstKnown;
+    tab.name = entry.getAttribute("data-assistant-name") || tab.name;
+    a.label = entry.getAttribute("data-assistant-label") || "";
+    a.icon = entry.querySelector(".dc-term-icon")?.cloneNode(true) || null;
+    return true;
+  }
+
+  function syncAsstTabs() {
+    const open = openAsstTabs();
+    if (!open.length) return;
+    for (const tab of open) {
+      if (!applyAsstState(tab)) void closeTab(tab.path, true);
+    }
+    renderTabs();
+  }
+
+  async function showAsstBox(tab) {
+    const a = tab.assistant;
+    a.box.hidden = false;
+    markAsstActive();
+    if (!a.box.querySelector("dc-assistant")) await mountAsst(tab);
+    else document.dispatchEvent(new CustomEvent("dc:assistant-shown"));
+  }
+
+  // The tab's body is the assistant page's own surface, pulled once when the
+  // tab first shows. Connecting it marks its news read the way the page does
+  // while it is on screen in a focused window.
+  async function mountAsst(tab) {
+    const a = tab.assistant;
+    if (a.loading) return;
+    a.loading = true;
+    let html = "";
+    try {
+      html = await getText(`/assistants/${encodeURIComponent(a.id)}/tab`, { signal });
+    } catch (err) {
+      a.loading = false;
+      if (signal.aborted || !tabs.includes(tab)) return;
+      if (err.status === 404) {
+        void closeTab(tab.path, true);
         return;
       }
-      const others = done.tabs.filter((tab) => tab !== done.tab);
-      done.strip.insertBefore(done.tab, others[done.toIndex] || null);
-      void persistTermOrder().finally(flushHeld);
-    }, { signal });
-    termTabsHostEl.addEventListener("pointercancel", () => {
-      clearDrag();
-      flushHeld();
-    }, { signal });
+      a.box.replaceChildren(Object.assign(document.createElement("div"), { className: "text-secondary small p-3", textContent: "The assistant could not be loaded." }));
+      notifyError("The assistant could not be loaded.");
+      return;
+    }
+    a.loading = false;
+    if (!tabs.includes(tab)) return;
+    const fresh = new DOMParser().parseFromString(html, "text/html").querySelector("dc-assistant");
+    if (!fresh) return;
+    a.box.replaceChildren(document.adoptNode(fresh));
+    markAsstActive();
+    await window.app?.loadElements?.(a.box);
+    if (a.wantFocus && tabs.includes(tab) && tab === activeTab()) focusAsst(tab);
   }
 
-  termTabsHostEl.addEventListener("click", (e) => {
-    if (termSuppressClick) {
-      termSuppressClick = false;
+  function focusAsst(tab) {
+    const a = tab.assistant;
+    const input = a.box.querySelector("dc-assistant [data-assistant-input]");
+    a.wantFocus = !input;
+    if (input && !input.disabled) input.focus({ preventScroll: true });
+  }
+
+  function dropAsstTab(tab) {
+    tab.assistant.box.remove();
+    if (sheetKind === "watching" && asideOwnerId === tab.assistant.id) closeSheet();
+  }
+
+  async function openAsstTab(id, { focus = true } = {}) {
+    closeDrawer();
+    if (!asstTabOf(id)) {
+      if (!asstEntries.has(id)) await loadAssistants();
+      if (!asstTabOf(id)) {
+        if (!asstEntries.has(id)) {
+          notifyError("The assistant is gone.");
+          return;
+        }
+        addTab(buildAsstTab(id));
+      }
+    }
+    activateTab(asstTabOf(id).path, focus);
+  }
+
+  async function restoredAsstTab(id, g) {
+    if (guest) return null;
+    await asstFirst;
+    return buildAsstTab(id, g);
+  }
+
+  async function newAsstTab(coder) {
+    let id = "";
+    try {
+      const res = await postForm("/assistants/new", { form: "new", coder: coder || "" });
+      await ensureOk(res, "The assistant could not be started.");
+      id = (await res.json().catch(() => ({}))).id || "";
+    } catch (err) {
+      notifyError(err.message || "The assistant could not be started.");
       return;
     }
-    const tab = e.target.closest("[data-term-tab]");
-    if (!tab) return;
-    if (e.target.closest("[data-term-close]")) {
-      void closeTermSession(tab.getAttribute("data-term-tab"), tab.getAttribute("data-term-kind"), tab.getAttribute("data-term-name") || "");
-      return;
+    if (!id) return;
+    await loadAssistants();
+    await openAsstTab(id);
+  }
+
+  function asstMenuItems(id, entry, icon) {
+    const name = entry?.getAttribute("data-assistant-name") || "";
+    const url = entry?.getAttribute("data-assistant-url") || `/assistants/${encodeURIComponent(id)}`;
+    const items = [{ label: "Open assistant page", icon: "ti-external-link", href: url }];
+    if (icon?.classList.contains("news")) {
+      items.push({ label: "Mark read", icon: "ti-eye-check", action: () => void postForm("/notifications/read", { target: id }) });
     }
-    if (menuJustClosed()) return;
-    void activateTermPane(tab.getAttribute("data-term-tab"));
+    items.push(
+      { label: "Rename", icon: "ti-pencil", action: () => void renameAssistant(url, name).then((renamed) => renamed && loadAssistants()) },
+      assistantActions.shareItem(id),
+      { divider: true },
+      { label: "Delete", icon: "ti-trash", danger: true, action: () => void assistantActions.deleteAssistant(url, name).then((gone) => gone && loadAssistants()) },
+    );
+    return items;
+  }
+
+  function asstTabMenuItems(tab) {
+    const a = tab.assistant;
+    return [{ divider: true }, ...asstMenuItems(a.id, asstEntries.get(a.id), a.icon)];
+  }
+
+  // What an assistant tab watches, its aside, opens in the editor's own sheet
+  // on every width; the tab's hidden home takes it back when the sheet
+  // closes. A hand off from it reaches the composer of its tab.
+  root.addEventListener("click", (e) => {
+    const button = e.target.closest(".editor-assistant-box [data-assistant-watching-button]");
+    const host = button?.closest("dc-assistant");
+    const aside = host?.querySelector("[data-assistant-aside]");
+    if (!aside) return;
+    openSheet("watching", "Watching");
+    asideOwnerId = host.getAttribute("assistant-id") || "";
+    adoptIntoSheet(aside);
+    focusSheetTop();
   }, { signal });
-  termTabsHostEl.addEventListener("wheel", (e) => {
-    const strip = e.target.closest("[data-editor-term-tabs]");
-    if (strip && !e.deltaX && e.deltaY) {
-      strip.scrollLeft += e.deltaY;
-      e.preventDefault();
-    }
-  }, { passive: false, signal });
-  wireRowMenus(termTabsHostEl, "[data-term-tab]", (row, x, y) => {
-    openMenu({ x, y, items: termMenuItems(row), signal });
-    return true;
+  sheetBodyEl.addEventListener("dc-assistant-handoff", (e) => {
+    const tab = sheetKind === "watching" ? asstTabOf(asideOwnerId) : null;
+    const host = tab?.assistant.box.querySelector("dc-assistant");
+    if (!host) return;
+    const forwarded = new CustomEvent("dc-assistant-handoff", { cancelable: true, detail: e.detail });
+    if (host.dispatchEvent(forwarded)) return;
+    e.preventDefault();
+    closeSheet();
+    activateTab(tab.path);
   }, { signal });
-  termItem.addEventListener("click", toggleTermPanel, { signal });
-  termHideBtn.addEventListener("click", closeTermPanel, { signal });
-  for (const btn of termNewBtns) btn?.addEventListener("click", () => void createTermShell(), { signal });
-  termResumeHostEl?.addEventListener("submit", (e) => {
+  function besideAssistant() {
+    if (sheetKind === "watching") closeSheet();
+    if (viewTab(activeTab())) focusGroup(screenGroups().find((g) => g !== group) || group);
+  }
+  // A link in an assistant tab or its aside to a coder, a shell or an
+  // assistant this editor holds opens it as a tab, beside the assistant where
+  // there is another group, and the assistant tab stays open; a stopped coder
+  // is resumed into it, as the terminal picker does. A file link of this
+  // project takes dc:open-file already, every other link goes its way.
+  document.addEventListener("click", (e) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || !(e.target instanceof Element)) return;
+    const a = e.target.closest("a[href]");
+    if (!a || a.hasAttribute("target") || a.hasAttribute("download") || a.hasAttribute("data-file-link")) return;
+    if (!a.closest(".editor-assistant-box, [data-assistant-aside]")) return;
+    const url = new URL(a.href, location.href);
+    const match = url.origin === location.origin && !url.search && url.pathname.match(/^\/(coders|shells|assistants)\/([^/]+)$/);
+    if (!match) return;
+    const id = decodeURIComponent(match[2]);
+    const known = match[1] === "assistants" ? asstEntries.has(id) : termSessions.has(id) || termStoppedViews.has(id);
+    if (!known) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    besideAssistant();
+    if (match[1] === "assistants") void openAsstTab(id);
+    else if (termSessions.has(id)) void openTermTab(id);
+    else void resumeTermTab(id, resumeAction(id));
+  }, { capture: true, signal });
+  // The resume of a stopped coder of this project in an assistant tab or its
+  // aside (a job's, a trigger's, a project card's row) brings it back as a
+  // tab the same way, instead of the page leaving the editor for the coder's.
+  // A coder of another project keeps its own page.
+  root.addEventListener("submit", (e) => {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || !form.closest(".editor-assistant-box, [data-assistant-aside]")) return;
+    const match = new URL(form.getAttribute("action") || "", location.href).pathname.match(/^\/coders\/([^/]+)\/resume$/);
+    const id = match ? decodeURIComponent(match[1]) : "";
+    if (!termStoppedViews.has(id) && !termSessions.has(id)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    besideAssistant();
+    void resumeTermTab(id, form.getAttribute("action") || "");
+  }, { signal });
+  root.querySelector("[data-editor-term-open-item]")?.addEventListener("click", openTermPicker, { signal });
+  root.querySelector("[data-editor-asst-open-item]")?.addEventListener("click", openAsstPicker, { signal });
+  function pickMenuItems(row) {
+    const asst = row.dataset.asstPick || "";
+    const id = asst || row.dataset.termPick || "";
+    const session = asst ? null : termSessions.get(id);
+    const open = {
+      label: "Open",
+      icon: "ti-app-window",
+      action: () => {
+        closeSheet();
+        void (asst ? openAsstTab(id) : openTermTab(id));
+      },
+    };
+    const entry = asstEntries.get(id);
+    if (asst) return [open, { divider: true }, ...asstMenuItems(id, entry, row.querySelector(".dc-term-icon"))];
+    if (session) return [open, { divider: true }, ...termMenuItems(session, row.querySelector(".dc-term-icon"))];
+    const action = resumeAction(id);
+    return [open, action && {
+      label: "Resume",
+      icon: "ti-player-play",
+      action: () => {
+        closeSheet();
+        void resumeTermTab(id, action);
+      },
+    }, { divider: true }, deleteStoppedItem(id)];
+  }
+  const tabSwipe = (e) => {
+    [...groupsById.values()].find((g) => g.el.contains(e.target))?.swipeNav?.onSwipe(e.detail || {});
+  };
+  groupsEl.addEventListener("terminal-swipe", tabSwipe, { signal });
+  groupsEl.addEventListener("assistant-swipe", tabSwipe, { signal });
+  groupsEl.addEventListener("submit", (e) => {
     const form = e.target.closest("form[data-term-resume]");
     if (!form) return;
     e.preventDefault();
     e.stopPropagation();
     const id = form.querySelector("[data-resume-id]")?.getAttribute("data-resume-id") || "";
-    void resumeTermCoder(form.getAttribute("action") || "", id);
+    void resumeTermTab(id, form.getAttribute("action") || "");
   }, { signal });
-  const termPlusDrop = termPlusBtn?.closest(".dropdown");
-  termPlusDrop?.addEventListener("shown.bs.dropdown", () => {
-    termMenuOpen = true;
-    termMenuIndex = openedByKeyboard() ? 0 : -1;
-    paintTermMenuSelection();
+  const termSettingsMenuEl = root.querySelector("[data-editor-term-settings-menu]");
+  root.addEventListener("click", (e) => {
+    if (!e.target.closest("[data-terminal-settings]")) return;
+    openSheet("term-settings", "Terminal settings");
+    adoptIntoSheet(termSettingsMenuEl);
+    focusSheetTop();
   }, { signal });
-  termPlusDrop?.addEventListener("hidden.bs.dropdown", () => {
-    termMenuOpen = false;
-    paintTermMenuSelection();
-  }, { signal });
-  const termNewMenu = termPlusDrop?.querySelector(".editor-term-new-menu");
-  if (termNewMenu) {
-    followPointer(termNewMenu, {
-      signal,
-      enter: (row) => markTermMenuRow(termMenuRows().indexOf(row)),
-      leave: () => markTermMenuRow(-1),
-    });
-  }
   onServerEvent("terminals", (event) => {
-    if (!termLoaded) return;
     const project = event.detail && event.detail.project;
     if (project && project !== name) return;
     void loadTerminals();
@@ -11139,18 +11333,28 @@ async function init(root) {
   onServerEvent("docker", () => {
     void loadDocker();
   }, { signal });
-  document.addEventListener("pointerdown", (e) => {
-    if (e.target instanceof Element) termFocusOwner = !!e.target.closest("[data-editor-term-panel]");
-  }, { capture: true, signal });
-  document.addEventListener("focusin", (e) => {
-    if (e.target instanceof Element) termFocusOwner = !!e.target.closest("[data-editor-term-panel]");
-  }, { signal });
+  if (!guest) {
+    onServerEvent("assistant", () => void loadAssistants(), { signal });
+    onServerEvent("notifications", () => void loadAssistants(), { signal });
+  }
+  // Ahead of xterm, which takes every key its focused terminal gets, and of
+  // CodeMirror, so the pickers open from inside a terminal tab and the code
+  // too. Ctrl+I is the terminal's Tab character, the Tab key still sends it.
+  const PICKER_KEYS = guest ? { j: "terminals" } : { j: "terminals", i: "assistants" };
   document.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "j") {
-      if (!onDesktop()) return;
+    const picker = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && PICKER_KEYS[e.key.toLowerCase()];
+    if (picker) {
       e.preventDefault();
       e.stopPropagation();
-      toggleTermPanel();
+      if (e.repeat) return;
+      if (sheetKind === picker) {
+        closeSheet();
+        return;
+      }
+      closeQuickOpen();
+      closePalette();
+      if (picker === "terminals") openTermPicker();
+      else openAsstPicker();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "d") {
@@ -11159,63 +11363,16 @@ async function init(root) {
       e.stopPropagation();
       if (sheetKind === "docker") closeSheet();
       else openDockerSheet();
-      return;
-    }
-    if (!termOpen) return;
-    if (termMenuOpen) {
-      const menuActions = {
-        ArrowDown: () => moveTermMenuSelection(1),
-        ArrowUp: () => moveTermMenuSelection(-1),
-        Enter: () => commitTermMenuSelection(),
-        Escape: () => closeTermNewMenu(),
-      };
-      const menuAction = menuActions[e.key];
-      if (menuAction) {
-        e.preventDefault();
-        e.stopPropagation();
-        menuAction();
-        return;
-      }
-    }
-    const fromPanel = e.target instanceof Element && !!e.target.closest("[data-editor-term-panel]");
-    if (!fromPanel && !termFocusOwner) return;
-    if (e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      stepTermTab(e.shiftKey ? -1 : 1);
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "x") {
-      const tab = termTabFor(termActiveId);
-      if (!tab) return;
-      e.preventDefault();
-      e.stopPropagation();
-      void closeTermSession(termActiveId, tab.getAttribute("data-term-kind"), tab.getAttribute("data-term-name") || "");
-      return;
-    }
-    if ((e.key === "t" || e.key === "T") && e.metaKey && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      openTermNewMenu();
     }
   }, { capture: true, signal });
-  mobileMedia.addEventListener("change", paintTermPanel, { signal });
-  termPointerMedia.addEventListener("change", paintTermPanel, { signal });
-  wireTermSplitter();
-  if (!guest) wireTermTabDrag();
-  paintTermPanel();
+  void loadTerminals();
+  void loadAssistants();
   void loadDocker();
   void pullLSPIndex();
   void loadComments();
   document.body.appendChild(termModalsHostEl);
   document.body.appendChild(commentModalHostEl);
   const pageTerminal = root.dataset.editorTerminal || "";
-  if (pageTerminal && onDesktop()) {
-    termActiveId = pageTerminal;
-    void openTermPanel({ focus: true });
-  } else if (termOpen) {
-    void openTermPanel({ focus: false });
-  }
 
   // A double tap on bare Shift opens the quick open palette on files like
   // Ctrl+Shift+O. Same state machine as the terminal switcher's double
@@ -11225,8 +11382,20 @@ async function init(root) {
   const shiftTap = new DoubleTap();
   // A Shift+click is not a bare Shift tap.
   document.addEventListener("pointerdown", () => shiftTap.reset(), { capture: true, signal });
+  const fromTerminal = (e) => e.target instanceof Element && !!e.target.closest(".editor-term-box");
+  const TERM_TAB_KEYS = new Set(["x", "p", "o", "f", "h", "g", "e"]);
   document.addEventListener("keydown", (e) => {
-    if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
+    if (!(e.target instanceof Element) || !e.target.closest(".editor-term-box")) return;
+    const tabKey = e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey;
+    const listKey = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && TERM_TAB_KEYS.has(e.key.toLowerCase());
+    if (!tabKey && !listKey) return;
+    e.stopPropagation();
+    onEditorKey(e);
+  }, { capture: true, signal });
+  document.addEventListener("keydown", (e) => {
+    if (!fromTerminal(e)) onEditorKey(e);
+  }, { signal });
+  function onEditorKey(e) {
     if (e.key === "Shift" && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey) {
       shiftTap.keydown(e.key);
       return;
@@ -11314,7 +11483,7 @@ async function init(root) {
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
       && e.code === "KeyR" && quickOpenEl.hidden) {
       const tab = activeTab();
-      if (tab && !tab.compare && !tab.external) {
+      if (tab && !tab.compare && !tab.external && !viewTab(tab)) {
         e.preventDefault();
         void revealInTree(tab.path);
       }
@@ -11328,7 +11497,7 @@ async function init(root) {
     } else if (e.key === "F2" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
       && !e.repeat && quickOpenEl.hidden) {
       const tab = activeTab();
-      if (tab && !tab.compare && !tab.external && can("files")) {
+      if (tab && !tab.compare && !tab.external && !viewTab(tab) && can("files")) {
         e.preventDefault();
         void renameEntry({ path: tab.path, name: tab.name, isDir: false });
       }
@@ -11341,7 +11510,7 @@ async function init(root) {
       else if (revdiffOn && revdiffEl.contains(document.activeElement)) closeRevdiff();
       else closeDrawer();
     }
-  }, { signal });
+  }
   // Bootstrap's dropdown answers ArrowUp, ArrowDown and Escape from inside a
   // .dropdown-menu by looking for the toggle that opened it, and the menus the
   // sheet borrows have none: the lookup throws, and on a select it swallows the
@@ -11358,7 +11527,7 @@ async function init(root) {
     else sheetArrow(e);
   }, { capture: true, signal });
   document.addEventListener("keyup", (e) => {
-    if (e.target instanceof Element && e.target.closest("[data-editor-term-panel]")) return;
+    if (fromTerminal(e)) return;
     if (!shiftTap.keyup(e.key) || paletteOpen()) return;
     if (quickOpenEl.hidden) {
       e.preventDefault();
@@ -11414,18 +11583,29 @@ async function init(root) {
   const linkedFile = root.dataset.editorFile || "";
   if (linkedFile && linkedView !== "compare" && linkedView !== "commit") openFileAt(linkedFile, Number(root.dataset.editorLine), Number(root.dataset.editorCol));
   else if (!linkedFile && tabs.length === 0 && mobileMedia.matches) openDrawer();
-  if (pageTerminal && termOpen && onDesktop()) void activateTermPane(pageTerminal, { focus: true });
+  // The address carries the terminal only to the tab, a reload after closing
+  // it must not bring it back.
+  if (pageTerminal) void openTermTab(pageTerminal, { quiet: true }).then(() => {
+    if (signal.aborted || !termTabOf(pageTerminal)) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("terminal") && !url.searchParams.has("tab")) return;
+    url.searchParams.delete("terminal");
+    url.searchParams.delete("tab");
+    history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+  });
   // The pipeline and the line comments stand in a sheet over the editor, no
   // panel of it, so the panel the editor stood on last opens beneath them.
   const sheetView = linkedView === "pipeline" || linkedView === "comments";
   const panelView = linkedView && !sheetView ? linkedView : store.get(viewKey, "");
   if (panelView) void openPageView(panelView, panelView === linkedView, panelView === linkedView ? linkedFile : "", panelView === linkedView && root.dataset.editorPair === "suggested");
   if (sheetView) void openPageView(linkedView, true);
-  // A file link from this editor's own terminal panel opens in place, a page
-  // load would restart the panel's terminals.
+  // A file link from this editor's own terminal tab opens in place, a page
+  // load would restart its terminals.
   document.addEventListener("dc:open-file", (event) => {
     if (!opensHere(event.detail.href)) return;
     event.preventDefault();
+    if (sheetKind === "watching") closeSheet();
+    if (viewTab(activeTab())) focusGroup(screenGroups().find((g) => g !== group) || group);
     const params = new URL(event.detail.href, location.href).searchParams;
     openFileAt(params.get("file") || "", Number(params.get("line")), Number(params.get("col")));
   }, { signal });
@@ -11442,7 +11622,6 @@ async function init(root) {
       saveTreeScroll();
     }
     ac.abort();
-    termStripResize.disconnect();
     clearTimeout(statusTimer);
     clearTimeout(autosaveTimer);
     clearTimeout(searchTimer);
