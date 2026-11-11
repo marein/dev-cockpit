@@ -52,6 +52,65 @@ const { assert, sleep } = L;
       assert(ready, `opencode UI not visible, mirror tail: ${text.slice(-200)}`);
     }, { soft: true });
 
+    // Insert hands opencode the path as one paste with a space on either side,
+    // quoted for the space in its name, and never Enter, the dialog stays and
+    // closing it hands the terminal the focus. The empty input
+    // takes it as text, text already there stays around the cursor. The input
+    // wraps between its border marks and shares its rows with the sidebar, so
+    // the pane is read without whitespace and marks, at the path's two ends.
+    await run("opencode: Insert pastes a file's path quoted into the input, nothing submits, the dialog stays, closing it focuses the terminal", async () => {
+      for (let i = 0; i < 90 && !/ctrl\+p commands/.test(await mirror()); i++) await sleep(1000);
+      const flat = async () => (await mirror()).replace(/[\s┃]+/g, "");
+      const name = `in sert_${tag.slice(-4)}.txt`;
+      await page.click(".attach-desktop .coder-files-button");
+      await L.modalShown(page, "coder-files-modal");
+      await page.setInputFiles('#coder-files-modal input[type="file"][name="files"]', [{ name, mimeType: "text/plain", buffer: Buffer.from("insert\n") }]);
+      const row = page.locator("#coder-files-modal .list-group-item", { hasText: name });
+      await row.locator("[data-insert-file-path]").waitFor({ state: "visible", timeout: 15000 });
+      const path = await row.locator("[data-copy-file-path]").getAttribute("data-copy-file-path");
+      const end = `/${name.replace(/\s+/g, "")}'`;
+      const sent = [];
+      const watch = (r) => { if (/\/input$/.test(r.url()) && r.method() === "POST") sent.push(r.postData() || ""); };
+      const insert = async () => {
+        sent.length = 0;
+        if (!(await page.locator("#coder-files-modal").isVisible())) {
+          await page.click(".attach-desktop .coder-files-button");
+          await L.modalShown(page, "coder-files-modal");
+          await sleep(400);
+        }
+        await row.locator("[data-insert-file-path]").click();
+        await row.locator("[data-insert-file-path] .ti-check").waitFor({ state: "visible", timeout: 3000 });
+        assert(await page.locator("#coder-files-modal .modal-content").isVisible(), "the dialog closed on Insert");
+        await page.click("#coder-files-modal .btn-close");
+        await page.waitForSelector("#coder-files-modal", { state: "hidden", timeout: 6000 });
+        await sleep(2500);
+      };
+      const want = JSON.stringify({ items: [{ paste: ` '${path}' ` }] });
+      const focused = () => page.evaluate(() => document.activeElement?.matches(".xterm-helper-textarea") && !!document.activeElement.closest("#terminal"));
+      page.on("request", watch);
+      try {
+        await insert();
+        assert(sent.length === 1 && sent[0] === want, `Insert sent ${JSON.stringify(sent)}, wanted ${want}`);
+        assert(await focused(), "the terminal does not have the focus after Insert and close");
+        assert((await flat()).includes(end), `the path is not in opencode's input: ${JSON.stringify((await mirror()).slice(-600))}`);
+        await page.keyboard.press("Control+C");
+        await sleep(800);
+        assert(!(await flat()).includes(end), "Ctrl+C left the path in the input");
+        await page.keyboard.type("abc def", { delay: 40 });
+        for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowLeft");
+        await sleep(800);
+        await insert();
+        assert(sent.length === 1 && sent[0] === want, `the second Insert sent ${JSON.stringify(sent)}`);
+        const around = await flat();
+        assert(around.includes("abc'/") && around.includes(`${end}def`), `the path did not land at the cursor: ${JSON.stringify((await mirror()).slice(-600))}`);
+        assert(await focused(), "the terminal does not have the focus after the second Insert and close");
+        await page.keyboard.press("Control+C");
+        await sleep(800);
+      } finally {
+        page.off("request", watch);
+      }
+    });
+
     await run("opencode: stop session redirects", async () => {
       await L.stopSession(page, sessionUrl);
       sessionUrl = null;

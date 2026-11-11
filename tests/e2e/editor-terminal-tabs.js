@@ -803,6 +803,33 @@ L.runFeature("EDITOR-TERMINAL-TABS", async ({ engine, browser, page, run, mobile
       await closeFilesModal(coderId);
     });
 
+    await run("desktop: Insert in the coder tab's Files pastes the path into that coder and stays, closing gives the tab the focus", async () => {
+      await closeFilesModal(coderId);
+      await page.click(`${boxSel(coderId)} .attach-desktop .coder-files-button`);
+      await page.waitForFunction((id) => document.getElementById(`coder-files-modal-${id}`)?.classList.contains("show"), coderId, { timeout: 8000 });
+      const insert = page.locator(`#coder-files-modal-${coderId} [data-insert-file-path]`).first();
+      await insert.waitFor({ state: "visible", timeout: 8000 });
+      const word = await insert.getAttribute("data-insert-file-path");
+      const sent = [];
+      const watch = (r) => { if (r.url().endsWith("/input") && r.method() === "POST") sent.push(`${new URL(r.url()).pathname} ${r.postData()}`); };
+      page.on("request", watch);
+      try {
+        await sleep(400);
+        await insert.click();
+        await page.waitForSelector(`#coder-files-modal-${coderId} [data-insert-file-path] .ti-check`, { state: "visible", timeout: 3000 });
+        await sleep(800);
+        const want = `/coders/${coderId}/input ${JSON.stringify({ items: [{ paste: ` ${word} ` }] })}`;
+        assert(JSON.stringify(sent) === JSON.stringify([want]), `Insert sent ${JSON.stringify(sent)}`);
+        assert(await page.evaluate((id) => { const m = document.getElementById(`coder-files-modal-${id}`); return !!m && m.classList.contains("show") && getComputedStyle(m).display !== "none"; }, coderId), "the dialog closed on Insert");
+        await page.click(`#coder-files-modal-${coderId} .btn-close`);
+        await page.waitForFunction((id) => { const m = document.getElementById(`coder-files-modal-${id}`); return m && getComputedStyle(m).display === "none"; }, coderId, { timeout: 8000 });
+        await sleep(400);
+        assert(await focusedIn(page, coderId), "the coder tab does not have the focus after the dialog closed");
+      } finally {
+        page.off("request", watch);
+      }
+    });
+
     await run("desktop: a steered coder wears the steered mark on its tab and its picker row, with the assistant in the tooltip", async () => {
       const made = JSON.parse((await postAs(page, "/assistants/new", { form: "new", coder: "claude" })).text || "{}");
       steerer = made.id || "";

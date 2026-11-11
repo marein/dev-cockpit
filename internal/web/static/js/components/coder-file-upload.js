@@ -1,6 +1,9 @@
 import { confirm } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
 import { watchFileDrop } from "@dc/filedrop";
+import { flash } from "@dc/dom";
+
+const finePointer = window.matchMedia("(pointer: fine)");
 
 class CoderFileUpload extends HTMLElement {
   connectedCallback() {
@@ -21,6 +24,11 @@ class CoderFileUpload extends HTMLElement {
     this.progress = this.modal?.querySelector("[data-coder-file-upload-progress]");
     this.content = this.modal?.querySelector("[data-coder-files-content]");
     this.modalContent = this.modal?.querySelector(".modal-content");
+    this.batchBar = this.modal?.querySelector("[data-coder-files-batch]");
+    this.batch = null;
+    this.inserted = false;
+    this.opening = false;
+    this.checks = new WeakMap();
     this.activeUploads = 0;
     this.uploadRanWhileClosed = false;
     this.refreshController = null;
@@ -37,18 +45,32 @@ class CoderFileUpload extends HTMLElement {
       button.addEventListener("click", () => this.resetButton(), { signal });
     }
     this.modal.addEventListener("show.bs.modal", () => {
+      this.opening = true;
       this.resetButton();
       this.refreshFiles();
     }, { signal });
+    this.modal.addEventListener("shown.bs.modal", () => {
+      this.opening = false;
+    }, { signal });
+    this.modal.addEventListener("hide.bs.modal", () => this.returnFocus(), { signal });
     this.modal.addEventListener("hidden.bs.modal", () => {
       this.clearStatusMessages();
       this.updateButtonState();
+      this.inserted = false;
+      if (this.activeUploads === 0) {
+        this.progress.hidden = true;
+        this.batch = null;
+        this.markBatch();
+      }
     }, { signal });
     this.form.addEventListener("submit", (event) => this.submitFiles(event), { signal });
     this.input.addEventListener("change", () => this.onPicked(), { signal });
     this.modal.addEventListener("submit", (event) => this.submitDelete(event), { signal });
     this.modal.addEventListener("click", (event) => this.copyFilePath(event), { signal });
+    this.modal.addEventListener("click", (event) => this.insertFilePath(event), { signal });
+    this.batchBar?.querySelector("[data-insert-all-files]")?.addEventListener("click", () => this.insertBatch(), { signal });
     this.modal.addEventListener("paste", (event) => this.onPaste(event), { signal });
+    watchFileDrop(this.modal, (files) => this.uploadFiles(files), { signal });
 
     this.setupTerminalDropZone();
   }
@@ -119,6 +141,9 @@ class CoderFileUpload extends HTMLElement {
       return;
     }
 
+    const batch = { names: [] };
+    this.batch = batch;
+    this.markBatch();
     this.activeUploads = files.length;
     this.uploadRanWhileClosed = false;
     this.cancelRefresh();
@@ -134,7 +159,7 @@ class CoderFileUpload extends HTMLElement {
     // short beat, so a drag-and-drop upload that finishes instantly still shows
     // the bar instead of flashing past while the modal is still opening.
     const startUploads = () =>
-      Promise.allSettled(files.map((file, index) => this.uploadFile(file, index))).then((results) => {
+      Promise.allSettled(files.map((file, index) => this.uploadFile(file, index, batch))).then((results) => {
       this.activeUploads = 0;
       this.input.disabled = false;
       this.input.value = "";
@@ -148,15 +173,20 @@ class CoderFileUpload extends HTMLElement {
         if (shouldNotify) {
           this.setUploadState("done");
         }
-        if (this.isModalOpen()) {
-          this.refreshFiles();
-        }
       } else {
         if (shouldNotify) {
           this.setUploadState("error");
         }
       }
       this.updateButtonState();
+      const listed = allSucceeded && this.isModalOpen() ? this.refreshFiles() : Promise.resolve();
+      listed.then(() => {
+        if (this.batch === batch) {
+          batch.done = true;
+          this.markBatch();
+          this.pointAtBatch();
+        }
+      });
     });
 
     if (startDelayMs > 0) {
@@ -200,16 +230,114 @@ class CoderFileUpload extends HTMLElement {
     if (!path || !navigator.clipboard) {
       return;
     }
-    const original = button.innerHTML;
-    navigator.clipboard.writeText(path).then(() => {
-      button.innerHTML = '<i class="ti ti-check me-1"></i>Copied';
-      window.setTimeout(() => {
-        button.innerHTML = original;
-      }, 1200);
-    });
+    navigator.clipboard.writeText(path).then(() => this.showCheck(button));
   }
 
-  uploadFile(file, index) {
+  showCheck(button) {
+    const icon = button.querySelector("i.ti");
+    if (!icon) {
+      return;
+    }
+    if (!this.checks.has(button)) {
+      this.checks.set(button, { icon: icon.className });
+    }
+    const check = this.checks.get(button);
+    window.clearTimeout(check.timer);
+    icon.className = "ti ti-check";
+    check.timer = window.setTimeout(() => {
+      icon.className = check.icon;
+      this.checks.delete(button);
+    }, 1200);
+  }
+
+  insertFilePath(event) {
+    const button = event.target.closest("[data-insert-file-path]");
+    const word = button?.getAttribute("data-insert-file-path") || "";
+    if (!word || !this.isModalOpen() || !this.insert([word])) {
+      return;
+    }
+    this.showCheck(button);
+  }
+
+  insertBatch() {
+    const words = this.batchRows().map((row) => row.querySelector("[data-insert-file-path]")?.getAttribute("data-insert-file-path") || "").filter(Boolean);
+    if (words.length === 0 || !this.isModalOpen() || !this.insert(words)) {
+      return;
+    }
+    window.bootstrap?.Modal.getOrCreateInstance(this.modal).hide();
+  }
+
+  insert(words) {
+    if (!this.terminal) {
+      return false;
+    }
+    this.terminal.dispatchEvent(new CustomEvent("terminal-input", { bubbles: true, detail: { paste: ` ${words.join(" ")} ` } }));
+    this.inserted = true;
+    return true;
+  }
+
+  // Bootstrap's focus trap holds the focus until the hide has run, so the
+  // terminal takes it right after, still inside the tap that closed the dialog
+  // (a phone opens its keyboard only then), and again once the dialog is gone,
+  // since Bootstrap hands it back to the button that opened it. On a phone the
+  // keyboard only comes up when a path went in.
+  returnFocus() {
+    if (!this.terminal || !(finePointer.matches || this.inserted)) {
+      return;
+    }
+    queueMicrotask(() => this.focusTerminal());
+    this.modal.addEventListener("hidden.bs.modal", () => this.focusTerminal(), { once: true, signal: this.ac.signal });
+  }
+
+  batchRows() {
+    const names = this.batch?.names.filter(Boolean) || [];
+    const rows = new Map(Array.from(this.content.querySelectorAll("[data-coder-file]"), (row) => [row.getAttribute("data-coder-file"), row]));
+    return names.map((name) => rows.get(name)).filter(Boolean);
+  }
+
+  markBatch() {
+    const batch = this.batchRows();
+    const rows = new Set(batch);
+    for (const row of this.content.querySelectorAll("[data-coder-file]")) {
+      row.toggleAttribute("data-coder-file-new", rows.has(row));
+    }
+    batch[0]?.parentElement.prepend(...batch);
+    if (!this.batchBar) {
+      return;
+    }
+    const count = this.batch?.done ? rows.size : 0;
+    this.batchBar.hidden = count < 2;
+    this.batchBar.querySelector("[data-coder-files-batch-label]").textContent = `Insert all ${count}`;
+  }
+
+  pointAtBatch() {
+    const rows = this.batchRows();
+    if (rows.length === 0 || !this.isModalOpen()) {
+      return;
+    }
+    rows.forEach((row) => flash(row, this.ac.signal));
+    const target = rows.length === 1 ? rows[0].querySelector("[data-insert-file-path]") : this.batchBar.querySelector("[data-insert-all-files]");
+    (rows.length === 1 ? rows[0] : this.batchBar).scrollIntoView({ block: "nearest" });
+    if (!finePointer.matches || !target) {
+      return;
+    }
+    // Bootstrap focuses the dialog itself once it has faded in.
+    if (this.opening) {
+      this.modal.addEventListener("shown.bs.modal", () => target.focus({ preventScroll: true }), { once: true, signal: this.ac.signal });
+    } else {
+      target.focus({ preventScroll: true });
+    }
+  }
+
+  focusTerminal() {
+    const id = this.terminal.getAttribute("terminal-id");
+    if (id) {
+      document.dispatchEvent(new CustomEvent("dc:activate-pane", { detail: { id } }));
+    }
+    this.terminal.querySelector("#terminal-cursor-input")?.focus();
+  }
+
+  uploadFile(file, index, batch) {
     const item = this.progress.querySelector(`[data-file-index="${index}"]`);
     const bar = item.querySelector(".progress-bar");
     const progressOuter = item.querySelector(".progress");
@@ -232,11 +360,13 @@ class CoderFileUpload extends HTMLElement {
       bar.style.width = `${percent}%`;
       progressOuter.setAttribute("aria-valuenow", String(percent));
       status.textContent = `${percent}%`;
-    }).then(() => {
+    }).then((xhr) => {
       bar.style.width = "100%";
       progressOuter.setAttribute("aria-valuenow", "100");
       status.textContent = "Done";
       item.dataset.done = "true";
+      batch.names[index] = decodeURIComponent((xhr.getResponseHeader("X-Coder-Files-Saved") || "").split("/")[0]);
+      this.markBatch();
     }).catch((error) => {
       // Keep the per-file status short so it never overflows its cell; the
       // full reason is surfaced as a toast (see request()).
@@ -280,7 +410,7 @@ class CoderFileUpload extends HTMLElement {
           this.replaceContent(xhr.responseText);
         }
         if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(xhr.responseText);
+          resolve(xhr);
           return;
         }
         reject(new Error(xhr.statusText || `HTTP ${xhr.status}`));
@@ -293,6 +423,7 @@ class CoderFileUpload extends HTMLElement {
 
   replaceContent(html) {
     this.content.innerHTML = html;
+    this.markBatch();
   }
 
   refreshFiles() {
@@ -300,7 +431,7 @@ class CoderFileUpload extends HTMLElement {
     // the current list in the background and swap it in, like the quick
     // nav. An in-flight upload owns the content, so skip then.
     if (this.activeUploads > 0) {
-      return;
+      return Promise.resolve();
     }
     this.cancelRefresh();
     const controller = new AbortController();
@@ -308,7 +439,7 @@ class CoderFileUpload extends HTMLElement {
     if (this.modalContent && this.refreshSpinner.parentElement !== this.modalContent) {
       this.modalContent.appendChild(this.refreshSpinner);
     }
-    fetch(this.form.action, {
+    return fetch(this.form.action, {
       headers: { Accept: "text/html" },
       cache: "no-store",
       signal: controller.signal,

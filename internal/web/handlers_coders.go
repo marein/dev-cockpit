@@ -350,44 +350,53 @@ func (s *Server) handleCoderFiles(c *gin.Context) {
 
 func (s *Server) handleCoderFileUpload(c *gin.Context) {
 	id := c.Param("id")
-	_, err := s.uploadCoderFiles(c, id)
+	saved, err := s.uploadCoderFiles(c, id)
 	if err != nil {
 		s.renderCoderFiles(c, id, http.StatusBadRequest, err.Error(), "")
 		return
 	}
+	// A taken name is saved under a counted one, the dialog learns it here to
+	// insert what the upload wrote.
+	escaped := make([]string, len(saved))
+	for i, name := range saved {
+		escaped[i] = url.PathEscape(name)
+	}
+	c.Header("X-Coder-Files-Saved", strings.Join(escaped, "/"))
 	s.renderCoderFiles(c, id, http.StatusOK, "", "")
 }
 
-func (s *Server) uploadCoderFiles(c *gin.Context, id string) (int, error) {
+func (s *Server) uploadCoderFiles(c *gin.Context, id string) ([]string, error) {
 	form, err := c.MultipartForm()
 	if err != nil {
-		return 0, fmt.Errorf("Please choose a file to upload.")
+		return nil, fmt.Errorf("Please choose a file to upload.")
 	}
 	files := form.File["files"]
 	if len(files) == 0 {
-		return 0, fmt.Errorf("Please choose a file to upload.")
+		return nil, fmt.Errorf("Please choose a file to upload.")
 	}
 
 	co, err := s.coderForSession(id)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	saved := make([]string, 0, len(files))
 	for _, header := range files {
 		src, err := header.Open()
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		_, saveErr := co.Coder().SessionRepository().SaveFile(id, header.Filename, src)
+		file, saveErr := co.Coder().SessionRepository().SaveFile(id, header.Filename, src)
 		closeErr := src.Close()
 		if saveErr != nil {
-			return 0, saveErr
+			return nil, saveErr
 		}
 		if closeErr != nil {
-			return 0, closeErr
+			return nil, closeErr
 		}
+		saved = append(saved, file.Name)
 	}
 
-	return len(files), nil
+	return saved, nil
 }
 
 func (s *Server) handleCoderFileDownload(c *gin.Context) {

@@ -85,6 +85,68 @@ const { assert, sleep } = L;
       return `pane: "${snippet}"`;
     }, { soft: true });
 
+    // Insert hands the path to the pane as one paste with a space on either
+    // side, quoted for the space in its name, and never Enter, the dialog
+    // stays and closing it hands the terminal the focus. An empty prompt
+    // shows it after the prompt mark with no menu or mode, text already
+    // there stays around the cursor. Files exist only after the first
+    // message, which the check above sent.
+    await run("claude: Insert pastes a file's path quoted into the prompt, nothing submits, the dialog stays, closing it focuses the terminal", async () => {
+      const mirror = () => page.evaluate(() => (document.querySelector("#terminal .attach-selection") || {}).textContent || "");
+      const promptRow = (text) => text.split("\n").filter((l) => l.includes("❯")).pop() || "";
+      for (let i = 0; i < 90 && /esc to interrupt/i.test(await mirror()); i++) await sleep(1000);
+      const name = `in sert_${tag.slice(-4)}.txt`;
+      await page.click(".attach-desktop .coder-files-button");
+      await L.modalShown(page, "coder-files-modal");
+      await page.setInputFiles('#coder-files-modal input[type="file"][name="files"]', [{ name, mimeType: "text/plain", buffer: Buffer.from("insert\n") }]);
+      const row = page.locator("#coder-files-modal .list-group-item", { hasText: name });
+      await row.locator("[data-insert-file-path]").waitFor({ state: "visible", timeout: 15000 });
+      const path = await row.locator("[data-copy-file-path]").getAttribute("data-copy-file-path");
+      const sent = [];
+      const watch = (r) => { if (/\/input$/.test(r.url()) && r.method() === "POST") sent.push(r.postData() || ""); };
+      const insert = async () => {
+        sent.length = 0;
+        if (!(await page.locator("#coder-files-modal").isVisible())) {
+          await page.click(".attach-desktop .coder-files-button");
+          await L.modalShown(page, "coder-files-modal");
+          await sleep(400);
+        }
+        await row.locator("[data-insert-file-path]").click();
+        await row.locator("[data-insert-file-path] .ti-check").waitFor({ state: "visible", timeout: 3000 });
+        assert(await page.locator("#coder-files-modal .modal-content").isVisible(), "the dialog closed on Insert");
+        await page.click("#coder-files-modal .btn-close");
+        await page.waitForSelector("#coder-files-modal", { state: "hidden", timeout: 6000 });
+        await sleep(2500);
+      };
+      const want = JSON.stringify({ items: [{ paste: ` '${path}' ` }] });
+      const focused = () => page.evaluate(() => document.activeElement?.matches(".xterm-helper-textarea") && !!document.activeElement.closest("#terminal"));
+      page.on("request", watch);
+      try {
+        await insert();
+        assert(sent.length === 1 && sent[0] === want, `Insert sent ${JSON.stringify(sent)}, wanted ${want}`);
+        assert(await focused(), "the terminal does not have the focus after Insert and close");
+        let screen = await mirror();
+        assert(/^❯\s\s'\//.test(promptRow(screen)), `the empty prompt reads ${JSON.stringify(promptRow(screen))}`);
+        assert(!/for bash mode|\/add-dir\b|\/compact\b|esc to interrupt/i.test(screen), `the insert opened a menu or a turn: ${JSON.stringify(screen.slice(-400))}`);
+        await page.keyboard.press("Control+C");
+        await sleep(800);
+        await page.keyboard.type("abc def", { delay: 40 });
+        for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowLeft");
+        await sleep(800);
+        await insert();
+        assert(sent.length === 1 && sent[0] === want, `the second Insert sent ${JSON.stringify(sent)}`);
+        screen = await mirror();
+        const flat = screen.replace(/\s+/g, "");
+        assert(flat.includes(`abc'${path.replace(/\s+/g, "")}'def`), `the path did not land at the cursor: ${JSON.stringify(screen.slice(-400))}`);
+        assert(!/esc to interrupt/i.test(screen), "the insert submitted the prompt");
+        assert(await focused(), "the terminal does not have the focus after the second Insert and close");
+        await page.keyboard.press("Control+C");
+        await sleep(800);
+      } finally {
+        page.off("request", watch);
+      }
+    });
+
     await run("claude: stop session redirects", async () => {
       await L.stopSession(page, sessionUrl);
       sessionUrl = null;

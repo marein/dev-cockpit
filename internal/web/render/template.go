@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/hostinfo"
 	"github.com/marein/dev-cockpit/internal/pluginhost"
 )
@@ -37,6 +38,7 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plu
 			return rename(coder)
 		},
 		"join":           strings.Join,
+		"shellWord":      clirun.ShellWord,
 		"visible":        VisibleLine,
 		"worktreeChoice": WorktreeChoice,
 		"projectName": func(path string) string {

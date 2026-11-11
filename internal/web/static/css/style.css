@@ -1080,6 +1080,25 @@ body .swal2-styled.swal2-deny {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.coder-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "name actions" "meta actions";
+  column-gap: 1rem;
+  align-items: center;
+}
+.coder-file-name { grid-area: name; }
+.coder-file-meta { grid-area: meta; }
+.coder-file-actions { grid-area: actions; }
+.coder-file-row[data-coder-file-new] { box-shadow: inset 3px 0 0 var(--tblr-primary); }
+@media (max-width: 575.98px) {
+  .coder-file-row { grid-template-areas: "name name" "meta actions"; row-gap: 0.25rem; column-gap: 0.75rem; }
+  .coder-file-meta { display: flex; flex-direction: column; }
+}
+@media (pointer: coarse) {
+  .coder-file-row .coder-file-actions .btn-sm.btn-icon { --tblr-btn-icon-size: 1.25rem; width: 2.75rem; height: 2.75rem; }
+  .coder-files-upload, .coder-files-insert-all { min-height: 2.75rem; }
+}
 @keyframes coder-files-upload-icon-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.55; transform: scale(1.18); }

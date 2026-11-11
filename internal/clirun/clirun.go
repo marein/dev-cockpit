@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
 // Error captures a non-zero exit status from an external command.
@@ -77,6 +78,20 @@ func MissingTools(tools []string) []string {
 // ShellQuote wraps a string in POSIX-safe single quotes.
 func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// ShellWord returns s as one shell word, single quoted only when a character
+// in it means something to a shell.
+func ShellWord(s string) string {
+	if s == "" {
+		return ShellQuote(s)
+	}
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("_-./,+@%:=", r) {
+			return ShellQuote(s)
+		}
+	}
+	return s
 }
 
 // Executable is the absolute path of this binary, for whatever has to run it

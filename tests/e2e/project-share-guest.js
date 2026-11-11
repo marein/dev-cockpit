@@ -460,6 +460,7 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       assert((await gp.textContent("terminal-copy [data-copy-text]")).includes(`page-live-${fx.tag}`), "the copy view misses the shell's text");
       await gp.goto(at(`/coders/${fx.coder}`), { waitUntil: "domcontentloaded" });
       await gp.waitForSelector("#terminal .xterm-screen", { timeout: 10000 });
+      assert(!(await gp.$(".coder-files-button, [data-insert-file-path]")), "the coder's page offers the guest its files or Insert");
       await gp.click("[data-terminal-copy]:visible");
       await gp.waitForSelector("terminal-copy:not([hidden])", { timeout: 10000 });
       assert(!(await gp.isVisible("[data-copy-hint]")), "the coder's copy view tells the guest to type");

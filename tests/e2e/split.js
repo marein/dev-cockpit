@@ -1227,7 +1227,7 @@ L.runFeature("SPLIT VIEW", async ({ browser, page, run, mobilePage, engine }) =>
       shellUrls.length = 0;
     });
 
-    await run("mixed split: the footer follows the active pane, the files belong to the coder", async () => {
+    await run("mixed split: the footer follows the active pane, the files and their Insert belong to the coder", async () => {
       const coderUrl = await L.createSession(page, project, `cdr-${tag.slice(-5)}`);
       const coderId = new URL(coderUrl).pathname.split("/").pop();
       const shellUrl = await L.createShell(page, project);
@@ -1255,8 +1255,27 @@ L.runFeature("SPLIT VIEW", async ({ browser, page, run, mobilePage, engine }) =>
       await page.click(`${coderFooter} .attach-desktop .coder-files-button`);
       assert(await Promise.race([shown, sleep(6000).then(() => false)]), "the files modal never stood");
       assert(await page.$(`#coder-files-modal-${coderId} [data-coder-file-upload-form][action="/coders/${coderId}/files"]`), "files modal posts to the wrong coder");
-      await page.click(`#coder-files-modal-${coderId} .btn-close`);
-      await page.waitForSelector(`#coder-files-modal-${coderId}`, { state: "hidden", timeout: 6000 });
+      await page.setInputFiles(`#coder-files-modal-${coderId} input[type="file"][name="files"]`, [{ name: `split-${tag.slice(-5)}.txt`, mimeType: "text/plain", buffer: Buffer.from("split\n") }]);
+      const insert = page.locator(`#coder-files-modal-${coderId} [data-insert-file-path]`).first();
+      await insert.waitFor({ state: "visible", timeout: 15000 });
+      const word = await insert.getAttribute("data-insert-file-path");
+      const sent = [];
+      const watch = (r) => { if (r.url().endsWith("/input") && r.method() === "POST") sent.push(`${new URL(r.url()).pathname} ${r.postData()}`); };
+      page.on("request", watch);
+      try {
+        await insert.click();
+        await page.waitForSelector(`#coder-files-modal-${coderId} [data-insert-file-path] .ti-check`, { state: "visible", timeout: 3000 });
+        await sleep(800);
+        const want = `/coders/${coderId}/input ${JSON.stringify({ items: [{ paste: ` ${word} ` }] })}`;
+        assert(JSON.stringify(sent) === JSON.stringify([want]), `Insert sent ${JSON.stringify(sent)}`);
+        assert(await page.isVisible(`#coder-files-modal-${coderId} .modal-content`), "the dialog closed on Insert");
+        await page.click(`#coder-files-modal-${coderId} .btn-close`);
+        await page.waitForSelector(`#coder-files-modal-${coderId}`, { state: "hidden", timeout: 6000 });
+        await sleep(400);
+        assert(await page.evaluate((id) => !!document.querySelector(`terminal-attach[terminal-id="${id}"]`)?.contains(document.activeElement), coderId), "the coder pane does not have the focus after the dialog closed");
+      } finally {
+        page.off("request", watch);
+      }
       await page.click(`terminal-tabs .terminal-tab-split [data-tab-close]`);
       await confirmSwal(page);
       await page.waitForURL((u) => !/\/splits\//.test(u.toString()), { timeout: 15000 });

@@ -418,21 +418,27 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await sleep(2000);
     });
 
-    await run("files: multi upload -> Done -> list, reference (Copied), download, delete", async () => {
+    const newRows = (p) => p.evaluate(() => [...document.querySelectorAll("#coder-files-modal [data-coder-file][data-coder-file-new]")].map((row) => row.getAttribute("data-coder-file")));
+    await run("files: multi upload -> Done -> list, Insert all 2, Copy path icon, download, delete", async () => {
       await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
       await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
       await page.click(".attach-desktop .coder-files-button");
       await modalShown(page, "coder-files-modal");
-      const f1 = `u1_${tag.slice(-4)}.txt`, f2 = `u2_${tag.slice(-4)}.txt`, content = `payload ${tag}\n`;
+      const f1 = `u1_${tag.slice(-4)}.txt`, f2 = `u2_${tag.slice(-4)}_${"long-name-".repeat(9)}end.txt`, content = `payload ${tag}\n`;
       // Picking sends right away, the button only opens the file chooser.
       await page.setInputFiles('#coder-files-modal input[type="file"][name="files"]', [{ name: f1, mimeType: "text/plain", buffer: Buffer.from(content) }, { name: f2, mimeType: "text/plain", buffer: Buffer.from("two\n") }]);
       await page.waitForFunction(() => document.querySelectorAll('#coder-files-modal [data-file-index]').length >= 2, null, { timeout: 8000 });
       await page.waitForFunction(() => { const s = [...document.querySelectorAll('#coder-files-modal [data-file-status]')].map((e) => e.textContent.trim()); return s.length >= 2 && s.every((x) => x === "Done"); }, null, { timeout: 15000 });
       await page.waitForFunction((ns) => { const c = document.querySelector("[data-coder-files-content]"); return c && ns.every((n) => c.textContent.includes(n)); }, [f1, f2], { timeout: 10000 });
+      await page.waitForSelector("#coder-files-modal [data-insert-all-files]", { state: "visible", timeout: 8000 });
+      assert((await page.textContent("#coder-files-modal [data-insert-all-files]")).trim() === "Insert all 2", "the bar does not offer Insert all 2");
+      assert(JSON.stringify(await newRows(page)) === JSON.stringify([f1, f2]), `the marked rows are ${JSON.stringify(await newRows(page))}`);
       // reference + download the first file
       const copyBtn = page.locator("#coder-files-modal [data-copy-file-path]").first();
+      const copyLook = await copyBtn.evaluate((b) => ({ label: b.getAttribute("aria-label"), tip: b.getAttribute("title"), text: b.textContent.trim(), icon: !!b.querySelector(".ti-copy") }));
+      assert(await copyBtn.isVisible() && copyLook.label === "Copy path" && copyLook.tip === "Copy path" && !copyLook.text && copyLook.icon, `Copy path is no icon button: ${JSON.stringify(copyLook)}`);
       await copyBtn.click();
-      await page.waitForFunction(() => /Copied/.test((document.querySelector("[data-copy-file-path]") || {}).innerHTML || ""), null, { timeout: 3000 });
+      await page.waitForFunction(() => !!document.querySelector("#coder-files-modal [data-copy-file-path] .ti-check"), null, { timeout: 3000 });
       const href = await page.locator('#coder-files-modal a[href*="/files/download"]').first().getAttribute("href");
       const dl = await page.context().request.get(BASE + href);
       assert(dl.status() === 200 && (await dl.text()).includes(content.trim()), "download mismatch");
@@ -446,7 +452,141 @@ L.runFeature("SESSIONS", async ({ page, run, mobilePage }) => {
       await sleep(150); await page.click(".swal2-confirm");
       assert((await respP).status() < 400, "delete POST failed");
       await page.waitForFunction((n) => document.querySelectorAll('#coder-files-modal a[href*="/files/download"]').length < n, beforeLinks, { timeout: 10000 });
+      assert(!(await page.isVisible("#coder-files-modal [data-insert-all-files]")), "Insert all still stands with one file of the batch left");
       await page.keyboard.press("Escape").catch(() => {});
+    });
+
+    // Insert is one paste item, the path with a space on either side and
+    // quoted where a shell would read its characters, never Enter. The dialog
+    // stays with a check on the row, closing it hands the terminal the focus,
+    // on a phone its cursor input, and only after an Insert there.
+    const insertSent = (p) => {
+      const sent = [];
+      const watch = (r) => { if (/\/input$/.test(r.url()) && r.method() === "POST") sent.push(r.postData() || ""); };
+      p.on("request", watch);
+      return { sent, stop: () => p.off("request", watch) };
+    };
+    const xtermFocused = (p) => p.evaluate(() => document.activeElement?.matches(".xterm-helper-textarea") && !!document.activeElement.closest("#terminal"));
+    const modalOpen = (p) => p.evaluate(() => { const m = document.getElementById("coder-files-modal"); return !!m && m.classList.contains("show") && getComputedStyle(m).display !== "none"; });
+    await run("files: Insert pastes the quoted path, the dialog stays with a check, closing it focuses the terminal", async () => {
+      await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await page.click(".attach-desktop .coder-files-button");
+      await modalShown(page, "coder-files-modal");
+      const name = `in sert_${tag.slice(-4)}.txt`;
+      await page.setInputFiles('#coder-files-modal input[type="file"][name="files"]', [{ name, mimeType: "text/plain", buffer: Buffer.from("insert\n") }]);
+      const row = page.locator("#coder-files-modal .list-group-item", { hasText: name });
+      const insert = row.locator("[data-insert-file-path]");
+      await insert.waitFor({ state: "visible", timeout: 15000 });
+      await page.waitForFunction((n) => document.activeElement?.closest("[data-coder-file]")?.getAttribute("data-coder-file") === n && document.activeElement.matches("[data-insert-file-path]"), name, { timeout: 6000 });
+      assert(JSON.stringify(await newRows(page)) === JSON.stringify([name]), `the marked rows are ${JSON.stringify(await newRows(page))}`);
+      assert(!(await page.isVisible("#coder-files-modal [data-insert-all-files]")), "a single upload offers Insert all");
+      const look = await insert.evaluate((b) => ({ label: b.getAttribute("aria-label"), tip: b.getAttribute("title"), text: b.textContent.trim(), solid: b.classList.contains("btn-primary"), icon: !!b.querySelector(".ti-file-import") }));
+      assert(look.label === "Insert into the prompt" && look.tip === look.label && !look.text && !look.solid && look.icon, `Insert is no outlined icon button: ${JSON.stringify(look)}`);
+      const path = await row.locator("[data-copy-file-path]").getAttribute("data-copy-file-path");
+      const tap = insertSent(page);
+      try {
+        await insert.click();
+        await row.locator("[data-insert-file-path] .ti-check").waitFor({ state: "visible", timeout: 3000 });
+        await sleep(1500);
+        assert(JSON.stringify(tap.sent) === JSON.stringify([JSON.stringify({ items: [{ paste: ` '${path}' ` }] })]), `Insert sent ${JSON.stringify(tap.sent)}`);
+        assert(await modalOpen(page), "the dialog closed on Insert");
+        const screen = await page.evaluate(() => (document.querySelector("#terminal .attach-selection") || {}).textContent || "");
+        assert(screen.replace(/\s+/g, "").includes(path.replace(/\s+/g, "")), "the path is not in the pane");
+        await page.click("#coder-files-modal .btn-close");
+        await page.waitForSelector("#coder-files-modal", { state: "hidden", timeout: 6000 });
+        await sleep(400);
+        assert(await xtermFocused(page), "the terminal does not have the focus after the dialog closed");
+        assert(tap.sent.length === 1, `closing the dialog sent ${JSON.stringify(tap.sent.slice(1))}`);
+      } finally {
+        tap.stop();
+      }
+    });
+
+    await run("files: Insert all pastes the batch in upload order and closes the dialog, the terminal has the focus", async () => {
+      await page.goto(sessionUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await page.click(".attach-desktop .coder-files-button");
+      await modalShown(page, "coder-files-modal");
+      // The same name twice in one batch lands as zz and zz-2, in whichever
+      // order the two saves won, so the outer words are those two either way.
+      const zz = `zz_${tag.slice(-4)}.txt`, aa = `aa all_${tag.slice(-4)}.txt`;
+      await page.setInputFiles('#coder-files-modal input[type="file"][name="files"]', [zz, aa, zz].map((name, i) => ({ name, mimeType: "text/plain", buffer: Buffer.from(`${name} ${i}\n`) })));
+      const all = page.locator("#coder-files-modal [data-insert-all-files]");
+      await all.waitFor({ state: "visible", timeout: 15000 });
+      assert((await all.textContent()).trim() === "Insert all 3", `the bar reads ${JSON.stringify((await all.textContent()).trim())}`);
+      const saved = [zz, zz.replace(/\.txt$/, "-2.txt"), aa];
+      assert(JSON.stringify((await newRows(page)).sort()) === JSON.stringify([...saved].sort()), `the marked rows are ${JSON.stringify(await newRows(page))}`);
+      await page.waitForFunction(() => document.activeElement?.matches("[data-insert-all-files]"), null, { timeout: 4000 });
+      const words = await page.evaluate((ns) => ns.map((n) => document.querySelector(`#coder-files-modal [data-coder-file="${CSS.escape(n)}"] [data-insert-file-path]`).getAttribute("data-insert-file-path")), saved);
+      assert(words[2].startsWith("'"), `the name with a space is not quoted: ${words[2]}`);
+      const tap = insertSent(page);
+      try {
+        await all.click();
+        await page.waitForSelector("#coder-files-modal", { state: "hidden", timeout: 6000 });
+        await sleep(1500);
+        const pasted = tap.sent.map((body) => JSON.parse(body).items.map((item) => item.paste));
+        const want = [` ${words[0]} ${words[2]} ${words[1]} `, ` ${words[1]} ${words[2]} ${words[0]} `];
+        assert(pasted.length === 1 && pasted[0].length === 1 && want.includes(pasted[0][0]), `Insert all sent ${JSON.stringify(tap.sent)}, wanted one of ${JSON.stringify(want)}`);
+        assert(await xtermFocused(page), "the terminal does not have the focus after Insert all");
+      } finally {
+        tap.stop();
+      }
+      await page.click(".attach-desktop .coder-files-button");
+      await modalShown(page, "coder-files-modal");
+      await sleep(800);
+      assert(!(await all.isVisible()) && (await newRows(page)).length === 0, "the batch outlived the dialog's close");
+      await page.click("#coder-files-modal .btn-close");
+      await page.waitForSelector("#coder-files-modal", { state: "hidden", timeout: 6000 });
+    });
+
+    await run("files on a phone: the row's targets are 44px on one line, Insert stays, closing focuses the cursor input", async () => {
+      const mp = await mobilePage();
+      await mp.goto(sessionUrl, { waitUntil: "domcontentloaded" });
+      await mp.waitForSelector("#terminal .xterm-screen canvas", { timeout: 12000 });
+      await sleep(800);
+      await mp.tap(".attach-mobile .coder-files-button");
+      await modalShown(mp, "coder-files-modal");
+      await mp.waitForSelector("#coder-files-modal [data-insert-file-path]", { state: "visible", timeout: 10000 });
+      await sleep(400);
+      const rows = await mp.evaluate(() => [...document.querySelectorAll("#coder-files-modal .coder-file-row")].map((row) => {
+        const box = (el) => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; };
+        const name = row.querySelector(".coder-file-name");
+        return {
+          row: box(row),
+          name: { ...box(name), over: name.scrollWidth > name.clientWidth + 1 },
+          buttons: [...row.querySelectorAll(".coder-file-actions .btn")].map(box),
+        };
+      }));
+      assert(rows.length > 0, "the dialog lists no file");
+      for (const r of rows) {
+        assert(r.buttons.length === 4 && r.buttons.every((b) => b.w >= 43.5 && b.h >= 43.5), `a row's targets are under 44px: ${JSON.stringify(r.buttons)}`);
+        assert(r.buttons.every((b) => Math.abs(b.y - r.buttons[0].y) < 2 && b.x + b.w <= r.row.x + r.row.w), `a row's buttons do not stand on one line inside it: ${JSON.stringify(r)}`);
+        assert(!r.name.over && r.name.x + r.name.w <= r.row.x + r.row.w, `a name runs out of its row: ${JSON.stringify(r)}`);
+      }
+      await mp.tap("#coder-files-modal .btn-close");
+      await mp.waitForSelector("#coder-files-modal", { state: "hidden", timeout: 6000 });
+      await sleep(400);
+      assert(await mp.evaluate(() => document.activeElement?.id !== "terminal-cursor-input"), "closing without an Insert raised the keyboard");
+      await mp.tap(".attach-mobile .coder-files-button");
+      await modalShown(mp, "coder-files-modal");
+      await sleep(400);
+      const row = mp.locator("#coder-files-modal .list-group-item").first();
+      const word = await row.locator("[data-insert-file-path]").getAttribute("data-insert-file-path");
+      const tap = insertSent(mp);
+      try {
+        await row.locator("[data-insert-file-path]").tap();
+        await row.locator("[data-insert-file-path] .ti-check").waitFor({ state: "visible", timeout: 3000 });
+        await sleep(1200);
+        assert(JSON.stringify(tap.sent) === JSON.stringify([JSON.stringify({ items: [{ paste: ` ${word} ` }] })]), `Insert sent ${JSON.stringify(tap.sent)}`);
+        assert(await modalOpen(mp), "the dialog closed on Insert");
+        await mp.tap("#coder-files-modal .btn-close");
+        await mp.waitForSelector("#coder-files-modal", { state: "hidden", timeout: 6000 });
+        await sleep(400);
+        assert(await mp.evaluate(() => document.activeElement?.id === "terminal-cursor-input"), "the cursor input does not have the focus after Insert and close");
+      } finally {
+        tap.stop();
+      }
     });
 
     // A paste into the open dialog takes the same path as a pick: it uploads,
