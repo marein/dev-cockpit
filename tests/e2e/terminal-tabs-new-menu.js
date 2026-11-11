@@ -104,6 +104,65 @@ module.exports = async function terminalTabsNewMenu({ run, page, mobilePage, pro
     return "keyboard opens on the first row in the filter, the mouse on none";
   });
 
+  // Ctrl+T belongs to the program in the pane (readline's transpose, Claude
+  // Code's todo list), the strip leaves it alone.
+  await run("Ctrl+T reaches a shell and a claude coder and opens no + menu", async () => {
+    const raws = [];
+    const record = (request) => {
+      if (request.method() !== "POST" || !/^\/(shells|coders)\/[^/]+\/input$/.test(new URL(request.url()).pathname)) return;
+      try {
+        for (const item of JSON.parse(request.postData() || "{}").items || []) {
+          if (item.raw) raws.push({ path: new URL(request.url()).pathname, raw: item.raw });
+        }
+      } catch {}
+    };
+    const gotCtrlT = (path) => raws.some((sent) => sent.path === path && sent.raw.includes("\x14"));
+    const shellPath = new URL(shellUrl).pathname;
+    const mark = "ct" + String(Date.now()).slice(-6);
+    let coderId = "";
+    page.on("request", record);
+    try {
+      await toTerminal();
+      await page.keyboard.type(`echo ${mark}QZ`, { delay: 30 });
+      await page.keyboard.press("Control+t");
+      await sleep(300);
+      assert(!(await state()).open, "Ctrl+T opened the + menu over the shell");
+      await page.keyboard.press("Enter");
+      let text = "";
+      const until = Date.now() + 10000;
+      while (Date.now() < until && !text.split("\n").some((line) => line.trim() === `${mark}ZQ`)) {
+        await sleep(300);
+        text = await page.evaluate(async (path) => {
+          const res = await fetch(`${path}/copy?lines=200`);
+          return res.ok ? (await res.json()).text : "";
+        }, shellPath);
+      }
+      assert(gotCtrlT(`${shellPath}/input`), `the shell got no ^T: ${JSON.stringify(raws)}`);
+      assert(text.split("\n").some((line) => line.trim() === `${mark}ZQ`), `readline did not transpose QZ: ${JSON.stringify(text.trim().slice(-300))}`);
+
+      const coderUrl = await L.createSession(page, project, `${mark}-claude`, "claude");
+      coderId = new URL(coderUrl).pathname.split("/").pop();
+      await page.waitForSelector(".attach-terminal .xterm-screen canvas", { timeout: 15000 });
+      await page.click(".attach-terminal");
+      await sleep(200);
+      await page.keyboard.press("Control+t");
+      await sleep(500);
+      assert(!(await state()).open, "Ctrl+T opened the + menu over the coder");
+      assert(gotCtrlT(`/coders/${coderId}/input`), `the coder got no ^T: ${JSON.stringify(raws)}`);
+    } finally {
+      page.off("request", record);
+      if (coderId) {
+        await page.evaluate(async (target) => {
+          await fetch(`/coders/${target}/delete`, {
+            method: "POST",
+            headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content, Accept: "application/json" },
+          });
+        }, coderId).catch(() => {});
+      }
+    }
+    return "readline transposed QZ to ZQ, the coder got ^T, no menu opened";
+  });
+
   await run("the + menu filter hides and ranks the rows, the arrows walk the hits and wrap, Tab stays, Enter takes, Esc closes", async () => {
     const prefix = "fq" + String(Date.now()).slice(-6);
     const names = { ab: `${prefix}-ab-cd`, cd: `${prefix}-cd-ab` };

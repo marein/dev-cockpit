@@ -40,8 +40,9 @@ const { guestPage } = require("./project-share-guest");
 // naming the cockpit's host stays a link. Of the workspace
 // the guest reads the file a message links and nothing else. The questions of
 // an answer stand read only, with nothing of what the owner picked and wrote
-// in them so far, live or on a load. No write reaches
-// the assistant from the guest, no request of a guest page leaves the link,
+// in them so far, live or on a load. The terminals page's keys open, ask and
+// delete nothing for the guest. No write reaches the assistant from the guest,
+// no request of a guest page leaves the link,
 // and the local API socket can make and grow no link. Deleting the assistant
 // ends a link of it alone, takes it off the link it shares with the project
 // and ends the open guest's stream.
@@ -685,6 +686,25 @@ L.runFeature("assistant-share", async ({ browser, page, run, mobilePage, bag }) 
       assert(triggers.some((t) => t.id === fx.trigA) && !triggers.some((t) => (t.task || "").includes("MAGIC")), `the guest moved the triggers: ${JSON.stringify(triggers.map((t) => t.id))}`);
       const outside = fx.requests.filter((r) => { const p = r.split(" ")[1]; return !p.startsWith(`${fx.base}/`) && p !== fx.base && !/^\/(js|css)\//.test(p) && !/^\/[\w.-]+\.(svg|png|json)$/.test(p); });
       assert(!outside.length, `guest requests left the link: ${JSON.stringify(outside.slice(0, 5))}`);
+    });
+
+    await run("the guest's Ctrl+T, Cmd+T, Ctrl+Shift+X and Cmd+Shift+X open nothing, ask nothing and delete nothing", async () => {
+      const gp = guest.page;
+      await gp.goto(`${fx.link}/assistants/${fx.a}`, { waitUntil: "domcontentloaded" });
+      await gp.waitForSelector("dc-share-chat [data-share-log]", { state: "attached", timeout: 10000 });
+      const at = gp.url();
+      for (const key of ["Control+t", "Meta+t", "Control+Shift+X", "Meta+Shift+X"]) {
+        await gp.keyboard.press(key);
+        await sleep(400);
+        const seen = await gp.evaluate(() => ({
+          menu: [...document.querySelectorAll(".dropdown-menu.show")].some((node) => node.getClientRects().length > 0),
+          dialog: Boolean(document.querySelector(".swal2-container")),
+          focus: document.activeElement?.closest?.(".dc-ctx") ? document.activeElement.outerHTML.slice(0, 80) : "",
+        }));
+        assert(!seen.menu && !seen.dialog && !seen.focus && gp.url() === at, `${key} acted for the guest: ${JSON.stringify(seen)} on ${gp.url()}`);
+      }
+      const owner = await page.evaluate(async (p) => (await fetch(p, { headers: { Accept: "text/html" } })).status, `/assistants/${fx.a}`);
+      assert(owner === 200, `the shared assistant answers the owner ${owner}`);
     });
 
     await run("the guest sees a turn as the owner does: on the assistant's row, in the switcher, the phone's head and the chat", async () => {

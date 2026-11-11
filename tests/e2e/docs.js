@@ -54,6 +54,22 @@ L.runFeature("DOCS", async ({ page, run }) => {
     assert(await page.locator('#settings a[href="/settings/general"]').count() === 1, "general settings link missing");
   });
 
+  await run("the plus menu names Cmd+T, the assistants Ctrl+T and Cmd+T, deleting the open assistant Ctrl+Shift+X", async () => {
+    await page.goto(`${BASE}/docs`, { waitUntil: "domcontentloaded" });
+    await dismissUpdate(page);
+    for (const [topic, title, want] of [
+      ["terminals", "Open the plus menu", ["Cmd+T"]],
+      ["assistants", "Start a new assistant", ["Ctrl+T", "Cmd+T"]],
+      ["assistants", "Delete the open assistant", ["Ctrl+Shift+X"]],
+    ]) {
+      const keys = await page.evaluate(([topic, title]) => {
+        const row = [...document.querySelectorAll(`section#${topic} .list-group-item`)].find((item) => item.textContent.includes(title));
+        return row ? [...row.querySelectorAll(".text-nowrap")].filter((alt) => alt.querySelector("kbd")).map((alt) => [...alt.querySelectorAll("kbd")].map((cap) => cap.textContent.trim()).join("+")) : null;
+      }, [topic, title]);
+      assert(JSON.stringify(keys) === JSON.stringify(want), `${topic} "${title}" names ${JSON.stringify(keys)}`);
+    }
+  });
+
   await run("named controls carry their own icon", async () => {
     await page.goto(`${BASE}/docs`, { waitUntil: "domcontentloaded" });
     // One control per topic, each one named in the text beside its icon: the

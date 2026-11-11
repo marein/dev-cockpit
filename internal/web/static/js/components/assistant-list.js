@@ -11,6 +11,8 @@ import { renameAssistant } from "@dc/rename";
 import { RowDrag } from "@dc/rowdrag";
 import { notifyError } from "@dc/toast";
 
+const MENUS = ".terminal-switcher, .dropdown-menu.show, [data-mention-panel]:not([hidden])";
+
 // A self-refreshing assistant list: the projects and the steered jobs of an
 // assistant, the assistants in the list column, and the memory. The list swaps
 // its [data-assistant-body] on the assistant event, so a check that finished
@@ -60,6 +62,8 @@ class AssistantList extends HTMLElement {
         this.openRowMenu(button.closest("[data-assistant-instance]"), rect.left, rect.bottom + 4);
       }, { signal: this.ac.signal });
       this.wireDrag(this.ac.signal);
+      this.confirming = false;
+      document.addEventListener("keydown", (event) => this.onPageKeydown(event), { signal: this.ac.signal, capture: true });
     }
 
     if (this.hasAttribute("memory")) this.wireMemory(this.ac.signal);
@@ -918,8 +922,7 @@ class AssistantList extends HTMLElement {
     if (!row) return null;
     // A long press on the grip is both a drag and a menu; the menu wins.
     this.rowDrag?.cancel();
-    const url = row.dataset.assistantUrl || "/assistants/" + row.dataset.assistantInstance;
-    const name = row.dataset.assistantName || "";
+    const { url, name } = this.target(row);
     return openMenu({
       x,
       y,
@@ -939,6 +942,60 @@ class AssistantList extends HTMLElement {
         { label: "Delete", icon: "ti-trash", danger: true, action: () => void this.deleteAssistant(url, name) },
       ],
     });
+  }
+
+  target(row) {
+    return { url: row.dataset.assistantUrl || "/assistants/" + row.dataset.assistantInstance, name: row.dataset.assistantName || "" };
+  }
+
+  // The terminals page's keys (terminal-tabs onKeydown). The phone's sheet
+  // holds a second copy of this column, only the page's own one answers.
+  onPageKeydown(event) {
+    if (this.confirming || event.altKey || event.ctrlKey === event.metaKey || !this.matches(".dc-app > .dc-ctx")) return;
+    const key = event.key.toLowerCase();
+    if (key !== "t" && key !== "x") return;
+    const open = Array.from(document.querySelectorAll(MENUS));
+    if (key === "t") {
+      const toggle = this.querySelector(".dc-ctx-head [data-assistant-new-label]");
+      if (!toggle?.offsetParent) return;
+      const menu = toggle.matches('[data-bs-toggle="dropdown"]') ? toggle.nextElementSibling : null;
+      if (open.some((node) => node !== menu)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.openNew(toggle, menu);
+      return;
+    }
+    if (!event.shiftKey || event.repeat || open.length) return;
+    const row = this.querySelector("[data-assistant-instance].active");
+    if (!row) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void this.deleteOpen(row);
+  }
+
+  // Bootstrap focuses the toggle after its hidden event, so the way back to
+  // where the keyboard was waits for that.
+  openNew(toggle, menu) {
+    if (!menu) {
+      toggle.focus();
+      return;
+    }
+    if (menu.classList.contains("show")) return;
+    const back = document.activeElement;
+    toggle.parentElement.addEventListener("hidden.bs.dropdown", () => queueMicrotask(() => {
+      if (document.activeElement === toggle && back?.isConnected) back.focus({ preventScroll: true });
+    }), { once: true, signal: this.ac.signal });
+    window.bootstrap?.Dropdown.getOrCreateInstance(toggle).show();
+  }
+
+  async deleteOpen(row) {
+    const { url, name } = this.target(row);
+    this.confirming = true;
+    try {
+      await this.deleteAssistant(url, name);
+    } finally {
+      this.confirming = false;
+    }
   }
 
   async renameAssistant(url, name) {

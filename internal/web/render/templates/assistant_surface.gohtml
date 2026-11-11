@@ -154,7 +154,7 @@
 {{$toggleLabel := $toggleBase}}{{if .ContextPercent}}{{$toggleLabel = printf "%s. Context %d percent" $toggleBase .ContextPercent}}{{end}}
 {{if or .Models (gt (len .Coders) 1)}}
 <div class="dropdown flex-shrink-0">
-  <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$toggleBase}}" aria-label="{{$toggleLabel}}" title="{{$toggleLabel}}">
+  <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$toggleBase}}" aria-label="{{$toggleLabel}}" title="{{$toggleLabel}}{{with .Key}} ({{.}}){{end}}">
     {{if .Models}}{{template "assistant_context_ring_icon.gohtml" (dict "ID" .CoderID "Hidden" (ne .Models.Launcher ""))}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-launcher data-launcher="ollama"{{if eq .Models.Launcher ""}} hidden{{end}}>{{template "coder_icon.gohtml" (dict "ID" .CoderID "Launcher" "ollama")}}</span>{{else}}<i class="ti ti-message-plus"></i>{{end}}
     {{if not .NoRing}}{{template "assistant_context_ring.gohtml" .ContextPercent}}{{end}}
   </button>
@@ -182,7 +182,7 @@
   </div>
 </div>
 {{else}}
-<button type="submit" form="{{.Prefix}}" class="{{.NewClass}} position-relative" data-assistant-new-label="{{$base}}" aria-label="{{$label}}" title="{{$label}}" data-assistant-new="{{.CoderID}}">
+<button type="submit" form="{{.Prefix}}" class="{{.NewClass}} position-relative" data-assistant-new-label="{{$base}}" aria-label="{{$label}}" title="{{$label}}{{with .Key}} ({{.}}){{end}}" data-assistant-new="{{.CoderID}}">
   <i class="ti ti-message-plus"></i>
   {{if not .NoRing}}{{template "assistant_context_ring.gohtml" .ContextPercent}}{{end}}
 </button>

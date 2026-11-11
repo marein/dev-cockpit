@@ -77,6 +77,16 @@ func docsAssistantsTopic() DocsTopic {
 				Desc:  `Steps through the list in the order it stands in and wraps at either end.`,
 			},
 			{
+				Title: "Start a new assistant",
+				Keys:  []DocsKeys{{Caps: []string{"Ctrl", "T"}}, {Caps: []string{"Cmd", "T"}}},
+				Desc:  `Opens the new assistant control <i class="ti ti-message-plus align-text-bottom" aria-hidden="true"></i> in the list's head on its first coder, <kbd>Enter</kbd> starts one.`,
+			},
+			{
+				Title: "Delete the open assistant",
+				Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Shift", "X"}}},
+				Desc:  `Asks first, like Delete in its row's menu.`,
+			},
+			{
 				Title:    "Swipe to the next assistant",
 				Tag:      "Touch",
 				TagClass: "bg-blue-lt",

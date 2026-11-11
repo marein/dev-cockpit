@@ -17,7 +17,7 @@
     {{if not .Access.Guest}}
     <div class="dc-ctx-tools">
       <button type="button" class="btn btn-icon btn-ghost-secondary" data-bs-toggle="offcanvas" data-bs-target="#assistant-memory" aria-label="Memory" title="What the assistants know about you" data-assistant-memory-button><i class="ti ti-brain" aria-hidden="true"></i></button>
-      {{if .Available}}{{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "ContextPercent" 0 "NoRing" true "NewClass" "btn btn-icon btn-ghost-secondary" "Prefix" .IDPrefix)}}{{end}}
+      {{if .Available}}{{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .NewCoderID "ContextPercent" 0 "NoRing" true "NewClass" "btn btn-icon btn-ghost-secondary" "Prefix" .IDPrefix "Key" "Ctrl+T")}}{{end}}
     </div>
     {{end}}
   </div>
