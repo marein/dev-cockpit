@@ -2,8 +2,9 @@ import { escapeHtml } from "@dc/dom";
 import { rankTokens } from "@dc/filter";
 import { KIND_ICONS, markedName } from "@dc/editor-types";
 
-// The rows of the structure sheet of the open file. The sheet, its filter
-// field, the keys and the jump are the editor's own, as for every sheet.
+// The rows of the open file's structure in the quick open palette. The
+// list, the field, the keys and the jump are the palette's own, as for its
+// other modes.
 
 const ICONS = {
   ...KIND_ICONS,
@@ -57,20 +58,17 @@ export function filterStructure(rows, query) {
 // its parent; a filtered list is ranked, so the parent is named instead.
 export function structureRow(row, query) {
   const item = document.createElement("div");
-  item.className = "editor-sheet-row";
+  item.className = "editor-quickopen-item";
+  item.setAttribute("role", "option");
   item.dataset.kind = row.kind;
-  const open = document.createElement("button");
-  open.type = "button";
-  open.className = "editor-sheet-open";
   const parent = row.parents.at(-1) || "";
-  open.title = `${row.kind} ${row.name}${parent ? ` in ${parent}` : ""}${row.detail ? ` ${row.detail}` : ""}, line ${row.line}`;
-  open.innerHTML = (query ? "" : '<i class="ti ti-point invisible" aria-hidden="true"></i>'.repeat(row.parents.length))
-    + `<i class="ti ${ICONS[row.kind] || "ti-code"} text-secondary flex-shrink-0" data-editor-structure-icon></i>`
+  item.title = `${row.kind} ${row.name}${parent ? ` in ${parent}` : ""}${row.detail ? ` ${row.detail}` : ""}, line ${row.line}`;
+  item.innerHTML = (query ? "" : '<i class="ti ti-point invisible" aria-hidden="true"></i>'.repeat(row.parents.length))
+    + `<i class="ti ${ICONS[row.kind] || "ti-code"}" data-editor-structure-icon></i>`
     + `<span class="editor-quickopen-name">${markedName(row.name, query)}</span>`
     + (query && parent ? `<span class="text-secondary text-truncate" data-editor-structure-parent>${escapeHtml(parent)}</span>` : "")
     + `<span class="badge bg-secondary-lt flex-shrink-0">${escapeHtml(row.kind)}</span>`
     + `<span class="editor-quickopen-dir font-monospace">${escapeHtml(row.detail)}</span>`
     + `<span class="text-secondary flex-shrink-0" data-editor-structure-line>${row.line}</span>`;
-  item.append(open);
   return item;
 }

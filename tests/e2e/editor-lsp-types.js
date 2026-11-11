@@ -4,7 +4,7 @@ const { assert, sleep, BASE } = L;
 // The type search of the editor's quick open palette: Ctrl+O, Go to type in
 // the menu, the Files and Types buttons beside the field, bare Shift twice in
 // the palette, Ctrl+O and Ctrl+Shift+O switching between the two lists with
-// the query kept, Ctrl+Alt+O opening no palette and switching no list; rows
+// the query kept, Ctrl+Alt+O switching to the structure; rows
 // with kind, name, package and path, ranked by the files' rule;
 // Enter, a click and a tap opening the declaration; the waiting states of a
 // server that is built and indexes; the note of a project no server covers.
@@ -369,11 +369,8 @@ L.runFeature("EDITOR-LSP-TYPES", async ({ engine, page, run, mobilePage }) => {
     await closePalette();
   });
 
-  await run("the keyboard switches between files and types and keeps the query, ctrl+alt+o opens no palette and switches no list", async () => {
+  await run("the keyboard switches between files and types and keeps the query, ctrl+alt+o switches to the structure", async () => {
     await page.click(".editor-tree");
-    await page.keyboard.press("Control+Alt+o");
-    await sleep(400);
-    assert(await page.evaluate(() => document.querySelector("[data-editor-quickopen]").hidden), "Ctrl+Alt+O opened the palette");
     await page.keyboard.press("Control+Shift+o");
     await page.waitForFunction(() => !document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 5000 });
     await page.keyboard.type("box");
@@ -389,11 +386,6 @@ L.runFeature("EDITOR-LSP-TYPES", async ({ engine, page, run, mobilePage }) => {
     await page.waitForSelector('[data-editor-quickopen-list] .editor-quickopen-item[data-path="inner/box.go"]', { timeout: 10000 });
     state = await palette();
     assert(state.placeholder === "Go to file…" && state.value === "box", `back ${JSON.stringify(state)}`);
-    await page.keyboard.press("Control+Alt+o");
-    await sleep(400);
-    state = await palette();
-    assert(state.placeholder === "Go to file…" && state.value === "box" && state.pressed === "files", `Ctrl+Alt+O switched ${JSON.stringify(state)}`);
-    assert(await page.evaluate(() => document.querySelector("[data-editor-sheet]").hidden), "Ctrl+Alt+O opened a sheet over the palette");
     await page.keyboard.press("Control+o");
     await waitTypeRows(page, 1);
     state = await palette();
@@ -402,6 +394,11 @@ L.runFeature("EDITOR-LSP-TYPES", async ({ engine, page, run, mobilePage }) => {
     await page.waitForSelector('[data-editor-quickopen-list] .editor-quickopen-item[data-path="inner/box.go"]', { timeout: 10000 });
     state = await palette();
     assert(state.placeholder === "Go to file…" && state.value === "box" && state.pressed === "files", `Ctrl+Shift+O ${JSON.stringify(state)}`);
+    await page.keyboard.press("Control+Alt+o");
+    await page.waitForFunction(() => document.querySelector("[data-editor-quickopen-input]").placeholder === "Go to symbol…", null, { timeout: 5000 });
+    state = await palette();
+    assert(state.open && state.value === "" && !state.kinds, `Ctrl+Alt+O ${JSON.stringify(state)}`);
+    assert(await page.evaluate(() => document.querySelector("[data-editor-sheet]").hidden), "Ctrl+Alt+O opened a sheet over the palette");
     await closePalette();
 
     await page.keyboard.press("Control+Shift+f");

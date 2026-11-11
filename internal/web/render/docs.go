@@ -288,7 +288,7 @@ func DocsTopics() []DocsTopic {
 				{
 					Title: "File structure",
 					Keys:  []DocsKeys{{Caps: []string{"Ctrl", "Alt", "O"}}},
-					Desc:  `Opens a sheet with the types, functions, methods, properties and constants of the open file with its unsaved changes, nested in file order, each with its kind, the signature or type the language server gives and its line. A markdown file lists its headings, nested by level. <em>Structure</em> in the menu of a tab or of a file in the tree opens it too, for a closed file after opening it. It opens on the innermost symbol the cursor stands in. Typing narrows the list, Enter jumps to the line, in a diff on the working copy, and scrolls a shown preview to the heading. PHP answers while it still indexes, Go once its index stands.`,
+					Desc:  `Opens the quick open palette with the types, functions, methods, properties and constants of the open file with its unsaved changes, nested in file order, each with its kind, the signature or type the language server gives and its line. A markdown file lists its headings, nested by level. <em>Structure</em> in the menu of a tab or of a file in the tree opens it too, for a closed file after opening it. It opens on the innermost symbol the cursor stands in. Typing narrows the list, Enter jumps to the line, in a diff on the working copy, and scrolls a shown preview to the heading. PHP answers while it still indexes, Go once its index stands.`,
 				},
 				{
 					Title: "Go to definition and usages",
@@ -343,7 +343,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "The sheets take the keyboard",
-					Desc:  `The git sheet, the forge sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor's width and 70% of its height at its right edge, on a phone the full width from the bottom, as tall as the other lists.`,
+					Desc:  `The git sheet, the forge sheet, the docker sheet, the open files and a file's history open with the first row marked: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor's width and 70% of its height at its right edge, on a phone the full width from the bottom, as tall as the other lists.`,
 				},
 				{
 					Title: "Open files and their order",

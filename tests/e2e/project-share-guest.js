@@ -324,23 +324,26 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
     });
 
-    await run("the guest's file structure lists main.go's declarations over the real gopls and opens on the one at the cursor, another project's structure answers the plain 404", async () => {
+    await run("the guest's file structure in the quick open palette lists main.go's declarations over the real gopls and opens on the one at the cursor, another project's structure answers the plain 404", async () => {
+      const STRUCTURE_ROW = "[data-editor-quickopen-list] .editor-quickopen-item";
       await gp.keyboard.press("Control+Alt+o");
-      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 5, null, { timeout: 90000 });
-      const rows = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-open", (els) => els.map((el) => el.title).join(" | "));
+      await gp.waitForFunction((sel) => document.querySelectorAll(sel).length === 5, STRUCTURE_ROW, { timeout: 90000 });
+      const context = await gp.$eval("[data-editor-quickopen-structure]", (el) => (el.getClientRects().length > 0 ? el.textContent : ""));
+      assert(context === "Structure of main.go", `the palette names "${context}"`);
+      const rows = await gp.$$eval(STRUCTURE_ROW, (els) => els.map((el) => el.title).join(" | "));
       assert(rows === "function main func(), line 5 | struct ShareProbe struct{}, line 9 | interface Prober interface{...}, line 11 | method Probe in Prober func(), line 11 | method (ShareProbe).Probe func(), line 13", `the structure reads ${rows}`);
       await gp.keyboard.type("prober");
-      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 2, null, { timeout: 5000 });
-      const ranked = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-open", (els) => els.map((el) => el.title).join(" | "));
+      await gp.waitForFunction((sel) => document.querySelectorAll(sel).length === 2, STRUCTURE_ROW, { timeout: 5000 });
+      const ranked = await gp.$$eval(STRUCTURE_ROW, (els) => els.map((el) => el.title).join(" | "));
       assert(ranked === "interface Prober interface{...}, line 11 | method Probe in Prober func(), line 11", `the filtered structure reads ${ranked}`);
       await gp.keyboard.press("Enter");
       await gp.waitForFunction(() => document.querySelector("[data-editor-pos]")?.textContent === "11:6", null, { timeout: 10000 });
       await gp.keyboard.press("Control+Alt+o");
-      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 5, null, { timeout: 30000 });
-      const marked = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-row.selected .editor-sheet-open", (els) => els.map((el) => el.title).join(" | "));
+      await gp.waitForFunction((sel) => document.querySelectorAll(sel).length === 5, STRUCTURE_ROW, { timeout: 30000 });
+      const marked = await gp.$$eval(`${STRUCTURE_ROW}.active`, (els) => els.map((el) => el.title).join(" | "));
       assert(marked === "interface Prober interface{...}, line 11", `the structure opened on ${marked}`);
       await gp.keyboard.press("Escape");
-      await gp.waitForFunction(() => document.querySelector("[data-editor-sheet]").hidden, null, { timeout: 5000 });
+      await gp.waitForFunction(() => document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 5000 });
       const csrf = await gp.evaluate(() => document.querySelector('meta[name="csrf-token"]').content);
       const nothing = await fetchRaw(`${BASE}/no/such/page`, { headers: { Accept: "application/json" } });
       const ask = (project) => fetchRaw(at(`/projects/${project}/editor/lsp/structure`), {
@@ -353,15 +356,15 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       assert(other.status === 404 && other.body === nothing.body, `a project off the link answered ${other.status}`);
     });
 
-    await run("the guest's file structure lists README.md's headings without a language server, another project's headings answer the plain 404", async () => {
+    await run("the guest's file structure in the quick open palette lists README.md's headings without a language server, another project's headings answer the plain 404", async () => {
       await openFile(gp, "README.md");
       await gp.waitForFunction(() => document.querySelector('.editor-tab[aria-selected="true"]')?.dataset.path === "README.md", null, { timeout: 8000 });
       await gp.keyboard.press("Control+Alt+o");
-      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-sheet-body] .editor-sheet-open").length === 1, null, { timeout: 30000 });
-      const rows = await gp.$$eval("[data-editor-sheet-body] .editor-sheet-row", (els) => els.map((el) => `${el.querySelector(".editor-sheet-open").title}${el.classList.contains("selected") ? " (marked)" : ""}`).join(" | "));
+      await gp.waitForFunction(() => document.querySelectorAll("[data-editor-quickopen-list] .editor-quickopen-item").length === 1, null, { timeout: 30000 });
+      const rows = await gp.$$eval("[data-editor-quickopen-list] .editor-quickopen-item", (els) => els.map((el) => `${el.title}${el.classList.contains("active") ? " (marked)" : ""}`).join(" | "));
       assert(rows === "h1 Shared, line 1 (marked)", `the structure reads ${rows}`);
       await gp.keyboard.press("Escape");
-      await gp.waitForFunction(() => document.querySelector("[data-editor-sheet]").hidden, null, { timeout: 5000 });
+      await gp.waitForFunction(() => document.querySelector("[data-editor-quickopen]").hidden, null, { timeout: 5000 });
       const csrf = await gp.evaluate(() => document.querySelector('meta[name="csrf-token"]').content);
       const nothing = await fetchRaw(`${BASE}/no/such/page`, { headers: { Accept: "application/json" } });
       const ask = (project) => fetchRaw(at(`/projects/${project}/editor/headings`), {

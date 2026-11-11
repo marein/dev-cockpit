@@ -156,6 +156,7 @@ async function init(root) {
   const quickOpenContextEl = root.querySelector("[data-editor-quickopen-context]");
   const quickOpenFolderSlot = root.querySelector("[data-editor-quickopen-folder-slot]");
   const quickOpenMaskSlot = root.querySelector("[data-editor-quickopen-mask-slot]");
+  const quickOpenStructureEl = root.querySelector("[data-editor-quickopen-structure]");
   const quickOpenFootLeft = root.querySelector("[data-editor-quickopen-foot-left]");
   const quickOpenFootRight = root.querySelector("[data-editor-quickopen-foot-right]");
   const filesItem = root.querySelector("[data-editor-files-item]");
@@ -1182,7 +1183,7 @@ async function init(root) {
   // menu's, which is where the movement itself lives.
   const SHEET_ROW = ".dropdown-item, .editor-sheet-open";
   const sheetRows = () => rowsOf(sheetBodyEl, SHEET_ROW);
-  const FILTERED_SHEETS = new Set(["files", "structure", "docker", "git", "comments", "history", "forge-jobs", "terminals", "assistants"]);
+  const FILTERED_SHEETS = new Set(["files", "docker", "git", "comments", "history", "forge-jobs", "terminals", "assistants"]);
   // Which sheets a row does not close, see the click handler far below.
   const STANDING_SHEETS = new Set(["settings", "term-settings", "docker", "git", "comments", "history", "forge", "forge-jobs", "forge-log", "terminals", "assistants"]);
   let sheetQuery = "";
@@ -1194,21 +1195,14 @@ async function init(root) {
     return unit && sheetBodyEl.contains(unit) ? unit : row;
   }
 
-  // The row the filter's Enter takes and its arrows start from: the one a
-  // sheet marks as where the editor stands, or the first.
-  function sheetMarkIndex(rows) {
-    return Math.max(0, rows.findIndex((row) => row.closest("[data-editor-sheet-mark]")));
-  }
-
   function paintSheetMark() {
     if (sheetMarked) sheetMarked.classList.remove("selected");
     sheetMarked = null;
     if (document.activeElement !== sheetFilterEl) return;
-    const rows = sheetRows();
-    const row = rows[sheetMarkIndex(rows)];
-    if (!row) return;
-    const line = row.closest(".editor-sheet-row");
-    sheetMarked = line && sheetBodyEl.contains(line) ? line : row;
+    const [first] = sheetRows();
+    if (!first) return;
+    const line = first.closest(".editor-sheet-row");
+    sheetMarked = line && sheetBodyEl.contains(line) ? line : first;
     sheetMarked.classList.add("selected");
   }
 
@@ -1271,11 +1265,6 @@ async function init(root) {
       divider.hidden = query !== "" && !sheetDividerNeeded(divider, shown);
     }
     for (const node of sheetBodyEl.querySelectorAll("[data-editor-sheet-unfiltered]")) node.hidden = query !== "";
-    paintSheetFilter(found, total);
-  }
-
-  function paintSheetFilter(found, total) {
-    const query = sheetQuery;
     sheetEmptyEl.textContent = `Nothing matches "${query}".`;
     sheetEmptyEl.hidden = query === "" || found > 0;
     sheetFilterCountEl.textContent = query === "" ? "" : `${found} of ${total}`;
@@ -1283,13 +1272,10 @@ async function init(root) {
     paintSheetMark();
   }
 
-  // The structure ranks its rows by the quick open rule, so it paints them
-  // again instead of hiding the ones that miss.
   function setSheetQuery(query) {
     if (query === sheetQuery) return;
     sheetQuery = query;
-    if (sheetKind === "structure") renderStructureSheet();
-    else applySheetFilter();
+    applySheetFilter();
   }
 
   function clearSheetFilter() {
@@ -8208,6 +8194,7 @@ async function init(root) {
   const resultsPlaceholder = () => {
     if (quickOpenMode === "replace") return "Replace in files…";
     if (quickOpenMode === "types") return "Go to type…";
+    if (quickOpenMode === "structure") return "Go to symbol…";
     return quickOpenMode === "search" ? "Find in files…" : "Go to file…";
   };
 
@@ -8245,7 +8232,7 @@ async function init(root) {
     // The first open of a page pays for the fetch; what it brings only lands
     // when the palette is still the one that asked for it.
     void loadSearchDraft().then((draft) => {
-      if (generation !== quickOpenGeneration || quickOpenEl.hidden || quickOpenTouched) return;
+      if (generation !== quickOpenGeneration || quickOpenEl.hidden || quickOpenTouched || quickOpenMode === "structure") return;
       if (!applySearchDraft(draft, keepFolder)) return;
       syncQuickOpenSwitches();
       renderQuickOpenContext();
@@ -8267,6 +8254,10 @@ async function init(root) {
     }
     if (quickOpenMode === "types") {
       void runTypeQuery(quickOpenInput.value);
+      return;
+    }
+    if (quickOpenMode === "structure") {
+      void loadStructure();
       return;
     }
     showQuickOpenNote("Loading…");
@@ -8302,11 +8293,16 @@ async function init(root) {
   }
 
   function renderQuickOpenContext() {
-    const showFolder = quickOpenMode !== "usages" && quickOpenMode !== "types";
+    const structure = quickOpenMode === "structure";
+    const showFolder = quickOpenMode !== "usages" && quickOpenMode !== "types" && !structure;
     const showMask = findsInFiles();
-    quickOpenContextEl.hidden = !showFolder && !showMask;
+    quickOpenContextEl.hidden = !showFolder && !showMask && !structure;
     quickOpenFolderSlot.hidden = !showFolder;
     quickOpenMaskSlot.hidden = !showMask;
+    quickOpenStructureEl.hidden = !structure;
+    const file = structure ? structureFile() : null;
+    quickOpenStructureEl.textContent = file ? `Structure of ${file.name}` : "Structure";
+    quickOpenStructureEl.title = file ? file.path : "";
     // The slot a chooser was opened from stays standing and marked, and a
     // second click on it is the way back: without a keyboard that is the one
     // control that is certainly still there.
@@ -8381,7 +8377,7 @@ async function init(root) {
   // A filter changed, so the answer on screen is about the old question: ask the
   // new one at once, through the debounce that already guards the ordering.
   function runQuickOpenQuery() {
-    if (quickOpenMode === "usages") return;
+    if (quickOpenMode === "usages" || quickOpenMode === "structure") return;
     if (findsInFiles()) scheduleSearch(0);
     else if (quickOpenMode === "types") scheduleTypeQuery(0);
     else scheduleFileQuery(0);
@@ -8605,10 +8601,11 @@ async function init(root) {
   // ---- structure -------------------------------------------------------------
 
   // The structure is about the file in front, not a search of the project, so
-  // it stands in a sheet beside the open files. It is asked each time the
-  // sheet opens, with the text and the cursor as they stand, of its server
-  // or, for markdown, of the cockpit, and filtered here as the query changes.
-  // It does not wait for the index, only for a server being built.
+  // the palette shows it without the switch between files and types. It is
+  // asked each time the mode opens, with the text and the cursor as they
+  // stand, of its server or, for markdown, of the cockpit, and filtered here
+  // as the query changes. It does not wait for the index, only for a server
+  // being built.
   let structureSeq = 0;
   let structureAbort = null;
   let lastStructure = null;
@@ -8620,14 +8617,17 @@ async function init(root) {
 
   async function structureOf(path) {
     await openPath(path);
-    if (activeTab()?.path === path) openStructureSheet();
+    if (activeTab()?.path === path) void openQuickOpen("structure");
   }
 
-  function openStructureSheet() {
+  function toggleStructure() {
+    if (!quickOpenEl.hidden && quickOpenMode === "structure") closeQuickOpen();
+    else void openQuickOpen("structure");
+  }
+
+  function structureFile() {
     const tab = activeTab();
-    openSheet("structure", tab ? `Structure of ${tab.name}` : "Structure");
-    focusSheetTop();
-    void loadStructure();
+    return tab && !tab.kind && !tab.compare && !tab.revision ? tab : null;
   }
 
   async function loadStructure() {
@@ -8635,18 +8635,17 @@ async function init(root) {
     structureAbort?.abort();
     structureAbort = null;
     lastStructure = null;
-    const tab = activeTab();
-    const file = tab && !tab.kind && !tab.compare && !tab.revision;
-    const headings = file && isMarkdown(tab.name);
+    const tab = structureFile();
+    const headings = tab && isMarkdown(tab.name);
     if (!headings && !lspUsable()) {
-      lastStructure = { note: file ? "No language server covers this file." : "Open a file to see its structure." };
-      renderStructureSheet();
+      lastStructure = { note: tab ? "No language server covers this file." : "Open a file to see its structure." };
+      renderStructure();
       return;
     }
     const abort = new AbortController();
     structureAbort = abort;
     if (!headings) void pullLSPIndex();
-    renderStructureSheet();
+    renderStructure();
     const at = editor.lspPosition?.();
     const position = at && { line: at.line, character: at.character };
     try {
@@ -8668,7 +8667,7 @@ async function init(root) {
     } finally {
       if (structureAbort === abort) structureAbort = null;
     }
-    renderStructureSheet();
+    renderStructure();
   }
 
   async function markdownHeadings(tab, position, signal) {
@@ -8677,57 +8676,46 @@ async function init(root) {
     return res.json();
   }
 
-  function structureNote(text, danger = false) {
-    const el = document.createElement("div");
-    el.className = `small px-3 py-2 ${danger ? "text-danger" : "text-secondary"}`;
-    el.dataset.editorStructureNote = "";
-    el.textContent = text;
-    return el;
-  }
-
-  function structureWaitNote() {
+  function structureWaitText() {
     const state = lspIndexState;
     const tab = activeTab();
-    return structureNote(state?.preparing && tab && state.label === lsp.label(tab.path) ? typesWaitText(state) : "Loading…");
+    return state?.preparing && tab && state.label === lsp.label(tab.path) ? typesWaitText(state) : "Loading…";
   }
 
-  function renderStructureSheet() {
-    if (sheetKind !== "structure") return;
+  function renderStructure() {
+    if (quickOpenEl.hidden || quickOpenMode !== "structure") return;
     const res = lastStructure;
-    const note = !res ? structureWaitNote()
-      : res.note ? structureNote(res.note, !!res.danger)
-        : res.rows.length === 0 ? structureNote("The file declares nothing.") : null;
+    const note = !res ? structureWaitText()
+      : res.note || (res.rows.length === 0 ? "The file declares nothing." : "");
     if (note) {
-      sheetBodyEl.replaceChildren(note);
-      sheetEmptyEl.hidden = true;
-      sheetFilterCountEl.textContent = "";
-      sheetFilterClearBtn.style.visibility = sheetQuery === "" ? "hidden" : "";
+      showQuickOpenNote(note, !!res?.danger);
+      setQuickOpenFoot("", "");
       return;
     }
-    const query = sheetQuery;
+    const query = quickOpenInput.value.trim();
     const rows = filterStructure(res.rows, query);
-    sheetBodyEl.replaceChildren(...rows.map((row) => {
+    const total = countLabel(res.rows.length, "symbol", "symbols");
+    if (rows.length === 0) {
+      showQuickOpenNote("No matching symbols.");
+      setQuickOpenFoot(`0 of ${total}`, "");
+      return;
+    }
+    quickOpenMatches = rows;
+    quickOpenActive = query ? 0 : Math.max(0, rows.findIndex((row) => row.cursor));
+    quickOpenList.replaceChildren(...rows.map((row, i) => {
       const item = structureRow(row, query);
-      if (!query && row.cursor) {
-        item.classList.add("active");
-        item.dataset.editorSheetMark = "";
-      }
-      item.querySelector(".editor-sheet-open").addEventListener("click", () => {
-        closeSheet();
-        void goToStructureRow(row, res.tab);
-      });
+      item.classList.toggle("active", i === quickOpenActive);
+      item.addEventListener("click", () => void chooseQuickOpen(row));
       return item;
     }));
-    if (res.truncated && !query) sheetBodyEl.appendChild(structureNote(`Only the first ${res.rows.length} symbols are shown.`));
-    paintSheetFilter(rows.length, res.rows.length);
-    const mark = sheetBodyEl.querySelector("[data-editor-sheet-mark]");
-    if (!mark) {
-      sheetBodyEl.scrollTop = 0;
-      return;
-    }
-    const box = sheetBodyEl.getBoundingClientRect();
+    setQuickOpenFoot(query ? `${rows.length} of ${total}` : total,
+      res.truncated && !query ? `Only the first ${res.rows.length} symbols are shown.` : "");
+    quickOpenList.scrollTop = 0;
+    const mark = quickOpenList.children[quickOpenActive];
+    if (!quickOpenActive || !mark) return;
+    const box = quickOpenList.getBoundingClientRect();
     const at = mark.getBoundingClientRect();
-    sheetBodyEl.scrollTop += at.top - box.top - (box.height - at.height) / 2;
+    quickOpenList.scrollTop += at.top - box.top - (box.height - at.height) / 2;
   }
 
   // A heading moves the preview too, which on a phone covers the text.
@@ -8739,7 +8727,7 @@ async function init(root) {
   }
 
   function repaintStructureWait() {
-    if (!lastStructure) renderStructureSheet();
+    if (!lastStructure) renderStructure();
   }
 
   // Files and types are one palette on two lists, so a switch keeps what is
@@ -9579,9 +9567,13 @@ async function init(root) {
     const fromSearch = typeof entry !== "string";
     const path = fromSearch ? entry.path : entry;
     const line = fromSearch ? entry.line : splitLineSuffix(quickOpenInput.value).line;
-    const isUsage = quickOpenMode === "usages" || quickOpenMode === "types";
+    const mode = quickOpenMode;
     closeQuickOpen();
-    if (isUsage) {
+    if (mode === "structure") {
+      await goToStructureRow(entry, lastStructure.tab);
+      return;
+    }
+    if (mode === "usages" || mode === "types") {
       await goToLocation(entry);
       return;
     }
@@ -9708,6 +9700,10 @@ async function init(root) {
       }
       if (quickOpenMode === "usages") {
         filterUsages();
+        return;
+      }
+      if (quickOpenMode === "structure") {
+        renderStructure();
         return;
       }
       scheduleSearchDraftSave();
@@ -10365,12 +10361,11 @@ async function init(root) {
       e.preventDefault();
       const rows = sheetRows();
       if (!rows.length) return;
-      const at = sheetMarkIndex(rows);
-      focusRow(sheetBodyEl, e.key === "ArrowDown" ? rows[Math.min(at + 1, rows.length - 1)] : rows[at > 0 ? at - 1 : rows.length - 1]);
+      focusRow(sheetBodyEl, e.key === "ArrowDown" ? rows[Math.min(1, rows.length - 1)] : rows[rows.length - 1]);
     } else if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      const rows = sheetRows();
-      rows[sheetMarkIndex(rows)]?.click();
+      const [first] = sheetRows();
+      if (first) first.click();
     } else if (e.key === "Escape") {
       if (sheetFilterEl.value === "") return;
       e.preventDefault();
@@ -11410,11 +11405,9 @@ async function init(root) {
     } else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "o") {
       e.preventDefault();
       openQuickOpenKind(e.shiftKey ? "files" : "types");
-    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
-      && e.code === "KeyO" && quickOpenEl.hidden) {
+    } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat && e.code === "KeyO") {
       e.preventDefault();
-      if (sheetKind === "structure") closeSheet();
-      else openStructureSheet();
+      toggleStructure();
     } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       openQuickOpen("search");
