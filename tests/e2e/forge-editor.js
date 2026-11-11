@@ -124,6 +124,17 @@ L.runFeature("FORGE_EDITOR", async ({ browser, page, run, mobilePage, bag }) => 
       top: pre ? pre.scrollTop : -1,
       overflows: !!pre && pre.scrollHeight > pre.clientHeight + 1,
       retry: !!view.querySelector("[data-forge-retry]"),
+      fills: (() => {
+        if (!pre) return null;
+        const body = document.querySelector("[data-editor-sheet-body]");
+        const b = body.getBoundingClientRect();
+        const back = body.querySelector(".editor-sheet-open").getBoundingClientRect();
+        const bottom = pre.getBoundingClientRect().bottom;
+        return {
+          ok: body.scrollHeight <= body.clientHeight + 1 && body.scrollTop === 0 && Math.abs(b.bottom - parseFloat(getComputedStyle(body).paddingBottom) - bottom) <= 2 && back.top >= b.top - 1,
+          body: [Math.round(b.top), Math.round(b.bottom), body.scrollHeight, body.clientHeight, body.scrollTop], pre: Math.round(bottom), back: Math.round(back.top),
+        };
+      })(),
     };
   });
   const logHas = (p, text, timeout) => p.waitForFunction((text) => document.querySelector("[data-editor-sheet-body] [data-forge-log-text]")?.textContent.includes(text), text, { timeout });
@@ -409,7 +420,7 @@ L.runFeature("FORGE_EDITOR", async ({ browser, page, run, mobilePage, bag }) => 
       assert(log.length === 0, `the sheet asked the forge for ${JSON.stringify(log.map((r) => r.path))}`);
     });
 
-    await run("the log of a running job follows it without a reload, at its end or where it was scrolled to, the focus kept, until the job ended", async () => {
+    await run("the log of a running job follows it without a reload, at its end or where it was scrolled to, the focus kept, until the job ended, filling the sheet as its one scroller", async () => {
       fakeForge.state.status = "running";
       await refresh();
       await sheetPipeline(page, "running", 15000);
@@ -433,6 +444,7 @@ L.runFeature("FORGE_EDITOR", async ({ browser, page, run, mobilePage, bag }) => 
         await logHas(page, "team/app/pkg79", 8000);
         got = await logView(page);
         assert(got.overflows && got.end && got.head === "The whole log, 86 lines. Live while the job runs.", `the log grown past its box reads ${JSON.stringify({ ...got, text: undefined })}`);
+        assert(got.fills.ok, `the grown log does not fill the sheet as its one scroller with Back on top: ${JSON.stringify(got.fills)}`);
         await page.evaluate(() => { document.querySelector("[data-editor-sheet-body] [data-forge-log-text]").scrollTop = 0; });
         fakeForge.state.traceFill = 81;
         await logHas(page, "team/app/pkg80", 8000);
@@ -528,7 +540,7 @@ L.runFeature("FORGE_EDITOR", async ({ browser, page, run, mobilePage, bag }) => 
       return `read after ${Date.now() - at} ms`;
     });
 
-    await run("phone: the forge's button, the forge sheet, the jobs and the log stand within 390px, the log's last line in view", async () => {
+    await run("phone: the forge's button, the forge sheet, the jobs and the log stand within 390px, the log's last line in view, the log filling the sheet as its one scroller", async () => {
       fakeForge.state.status = "failed";
       const phone = await mobilePage();
       await openEditor(phone);
@@ -589,6 +601,8 @@ L.runFeature("FORGE_EDITOR", async ({ browser, page, run, mobilePage, bag }) => 
         return { last: rects[rects.length - 1].bottom, pre: pre.getBoundingClientRect().bottom, body: document.querySelector("[data-editor-sheet-body]").getBoundingClientRect().bottom, text: pre.textContent.trim().split("\n").pop() };
       });
       assert(end.text === "ERROR: Job failed: exit code 1" && end.last <= end.body + 1 && end.pre <= end.body + 1, `the log's last line stands below the sheet: ${JSON.stringify(end)}`);
+      const filled = (await logView(phone)).fills;
+      assert(filled.ok, `the phone's log does not fill the sheet as its one scroller with Back on top: ${JSON.stringify(filled)}`);
       const focusRing = await phone.evaluate(() => document.activeElement?.matches("input, textarea") || false);
       assert(!focusRing, "a field took the focus on touch");
     });

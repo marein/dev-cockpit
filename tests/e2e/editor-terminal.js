@@ -1,5 +1,6 @@
 const L = require("./lib");
 const { assert, sleep, confirmSwal, BASE } = L;
+const sheetSizeChecks = require("./editor-sheet-size");
 
 // The editor's terminal picker: the terminals sheet listing the project's
 // coders and shells from the fragment GET /projects/:name/editor/terminals
@@ -1101,6 +1102,8 @@ L.runFeature("EDITOR-TERMINAL", async ({ engine, browser, page, run, mobilePage,
       await openEditor();
       return `gaps phone ${phone.gaps.join("/")}, desktop ${wide.gaps.join("/")}, short ${short.gaps.join("/")}`;
     });
+
+    await sheetSizeChecks({ browser, page, run, mobilePage, bag, openEditor, pickerOpen, waitRows, elsewhere, shellOf, postAs, made });
   } finally {
     try {
       for (const id of made) await L.deleteShell(page, `${BASE}/shells/${id}`).catch(() => {});

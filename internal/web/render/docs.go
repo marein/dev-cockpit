@@ -343,7 +343,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "The sheets take the keyboard",
-					Desc:  `The git sheet, the forge sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor at its right edge, on a phone the full width from the bottom.`,
+					Desc:  `The git sheet, the forge sheet, the docker sheet, the open files, a file's history and its structure open with the first row marked, the structure with the symbol at the cursor: <kbd>&darr;</kbd> and <kbd>&uarr;</kbd> walk the rows and wrap, <kbd>Enter</kbd> runs the marked one, <kbd>Escape</kbd> leaves a level at a time and then the sheet. The branch and revision lists start in their filter field instead. On a wide screen the sheet takes three quarters of the editor's width and 70% of its height at its right edge, on a phone the full width from the bottom, as tall as the other lists.`,
 				},
 				{
 					Title: "Open files and their order",

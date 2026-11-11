@@ -15,6 +15,7 @@
   --dc-term-icon-size: 22px;
   --dc-float-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.35);
   --dc-sheet-radius: 12px;
+  --dc-sheet-h: 52vh;
 }
 :root, [data-bs-theme=light] {
   --tblr-primary: #146ecd;
@@ -217,7 +218,7 @@ dc-theme-cycle { display: contents; }
   background: rgba(17, 24, 39, 0.55);
 }
 .dc-sheet-panel {
-  display: flex; flex-direction: column; width: 100%; height: 52vh;
+  display: flex; flex-direction: column; width: 100%; height: var(--dc-sheet-h);
   background: var(--tblr-bg-surface);
   border-top: 1px solid var(--tblr-border-color);
   border-radius: var(--dc-sheet-radius) var(--dc-sheet-radius) 0 0;
@@ -2193,6 +2194,7 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
   display: flex;
   flex-direction: column;
   width: 100%;
+  height: var(--dc-sheet-h);
   max-height: 85%;
   background: var(--tblr-bg-surface);
   border-top: 1px solid var(--tblr-border-color);
@@ -2212,17 +2214,31 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
   }
   .editor-sheet-panel {
     width: 75%;
+    height: 70%;
     border-left: 1px solid var(--tblr-border-color);
     border-radius: var(--dc-sheet-radius) 0 0 0;
     box-shadow: -0.5rem -0.5rem 2rem rgba(0, 0, 0, 0.35);
   }
 }
 .editor-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 0.5rem;
   touch-action: pan-y;
+}
+.editor-sheet-body:has(+ [data-editor-sheet-empty]:not([hidden])) {
+  flex-grow: 0;
+}
+.editor-sheet-body:has([data-forge-log-text]), .editor-sheet-body > :has([data-forge-log-text]), .editor-sheet-body [data-forge-log-view] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.editor-sheet-body [data-forge-log-text] {
+  max-height: none;
 }
 .editor-sheet-row {
   display: flex;
