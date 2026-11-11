@@ -11,21 +11,12 @@ export function rankProject(row, query) {
   return rankTokens([name, repo], row.dataset.projectSearch || name, query);
 }
 
-// A member stands under its main, which names the repository already, so its
-// own name heads the row and its branch takes the line below.
+// A member stands under its main, which names the repository already, so it
+// drops the repository and heads with its own name whole.
 function asMember(row) {
   row.classList.add("editor-palette-member");
-  row.querySelector(".editor-palette-repo").textContent = row.dataset.projectName;
-  const sub = row.querySelector(".editor-palette-sub");
-  const branch = row.querySelector(".editor-palette-branch");
-  if (!branch) {
-    sub.remove();
-    return;
-  }
-  sub.replaceChildren(...branch.childNodes);
-  const rest = branch.parentElement;
-  branch.remove();
-  if (!rest.childElementCount) rest.remove();
+  row.querySelector(".editor-palette-repo")?.remove();
+  row.querySelector(".editor-palette-worktree").textContent = row.dataset.projectName;
 }
 
 function group(label, rows, members) {

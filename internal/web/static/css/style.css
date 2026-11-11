@@ -1614,6 +1614,18 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
   font-size: 0.75rem;
   color: var(--tblr-secondary);
 }
+.editor-palette-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tblr-secondary);
+}
+.editor-palette-title .editor-palette-repo {
+  margin-left: 0.5rem;
+}
+.editor-palette-worktree, .editor-palette-member .editor-palette-title {
+  color: var(--tblr-body-color);
+}
 .editor-palette-line .editor-palette-check {
   color: var(--tblr-primary);
 }

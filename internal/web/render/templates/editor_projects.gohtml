@@ -7,10 +7,11 @@
 {{define "project_palette_body.gohtml"}}
   <span class="editor-palette-line">
     <i class="ti {{if .Worktree}}ti-git-fork{{else if .Repo}}ti-folder-code{{else}}ti-folder{{end}}" aria-hidden="true"></i>
-    <span class="dc-tagged editor-palette-name"><span class="editor-palette-repo">{{if .Repo}}{{.Repo}}{{else}}{{.Name}}{{end}}</span>{{if or .Branch .Tags}}<span class="editor-palette-rest">{{if .Branch}}<span class="editor-palette-branch"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.Branch}}</span>{{end}}{{template "tag_pie.gohtml" .Tags}}</span>{{end}}</span>
+    {{if .Worktree}}<span class="editor-palette-name editor-palette-title"><span class="editor-palette-worktree">{{.WorktreeName}}</span>{{if .Repo}}<span class="editor-palette-repo">{{.Repo}}</span>{{end}}</span>
+    {{else}}<span class="dc-tagged editor-palette-name"><span class="editor-palette-repo">{{if .Repo}}{{.Repo}}{{else}}{{.Name}}{{end}}</span>{{if or .Branch .Tags}}<span class="editor-palette-rest">{{if .Branch}}<span class="editor-palette-branch"><i class="ti ti-git-branch" aria-hidden="true"></i> {{.Branch}}</span>{{end}}{{template "tag_pie.gohtml" .Tags}}</span>{{end}}</span>{{end}}
     {{if .Current}}<i class="ti ti-check editor-palette-check" aria-hidden="true"></i>{{end}}
   </span>
-  {{if .Worktree}}<span class="editor-palette-sub">{{.Name}}{{if not .WorktreeOf}}<span class="editor-palette-outside"><i class="ti ti-external-link" aria-hidden="true"></i>{{.WorktreeMain}}</span>{{end}}</span>{{end}}
+  {{if and .Worktree (or .Branch (not .WorktreeOf))}}<span class="editor-palette-sub">{{if .Branch}}<i class="ti ti-git-branch" aria-hidden="true"></i> {{.Branch}}{{end}}{{if not .WorktreeOf}}<span class="editor-palette-outside"><i class="ti ti-external-link" aria-hidden="true"></i>{{.WorktreeMain}}</span>{{end}}</span>{{end}}
 {{end}}
 
 {{define "editor_projects.gohtml"}}

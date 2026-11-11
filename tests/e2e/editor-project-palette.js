@@ -3,31 +3,89 @@ const { assert, sleep, BASE } = L;
 
 // Not a runner of its own: editor.js runs these checks of the project palette
 // in its scratch project, with a second project and two worktrees of the
-// scratch project made through the git proxy, one on a branch and one on a
-// detached HEAD. The palette clones the server's rows into its groups, so a
-// worktree folded behind its main is only known in the browser and reads
-// differently there than in the Recent shortlist or under a query.
+// scratch project made through the git proxy, one on a branch and named after
+// its main, one on a detached HEAD with a name of its own. The palette clones
+// the server's rows into its groups, so a worktree folded behind its main is
+// only known in the browser and reads differently there than in the Recent
+// shortlist or under a query, where it stands as its name, then its
+// repository muted.
 
 function readRow(el) {
   const sub = el.querySelector(".editor-palette-sub");
-  const head = el.querySelector(".editor-palette-repo");
+  const repo = el.querySelector(".editor-palette-repo");
+  const own = el.querySelector(".editor-palette-worktree");
+  const head = el.querySelector(".editor-palette-name");
   const firstBox = (node) => {
     const range = document.createRange();
     range.selectNodeContents(node);
     return [...range.getClientRects()].find((box) => box.width > 0);
   };
+  const shown = (node) => Boolean(node?.checkVisibility()) && node.getBoundingClientRect().width > 0;
+  const color = (node) => getComputedStyle(node).color;
   return {
     indent: sub ? Math.round((firstBox(sub).left - firstBox(head).left) * 100) / 100 : null,
     member: el.classList.contains("editor-palette-member"),
     fork: Boolean(el.querySelector(".editor-palette-line > .ti-git-fork")),
     head: head?.textContent.trim(),
-    headShown: Boolean(head?.checkVisibility()),
+    headShown: shown(head),
+    headPlain: Boolean(head) && color(head) === color(el),
+    repo: repo?.textContent.trim(),
+    repoShown: shown(repo),
+    gap: own && repo ? Math.round((repo.getBoundingClientRect().left - own.getBoundingClientRect().right) * 100) / 100 : null,
+    nameIcon: Boolean(el.querySelector(".editor-palette-name .ti")),
+    own: own?.textContent.trim(),
+    ownShown: shown(own),
+    muted: Boolean(repo && own) && color(repo) === color(sub || el) && color(own) === color(el) && color(own) !== color(repo),
     line: el.querySelector(".editor-palette-line").textContent.replace(/\s+/g, " ").trim(),
     branch: el.querySelector(".editor-palette-branch")?.textContent.trim(),
     sub: sub?.textContent.trim(),
     subBranch: Boolean(sub?.querySelector(".ti-git-branch")?.checkVisibility()),
     check: Boolean(el.querySelector(".editor-palette-check")?.checkVisibility()),
   };
+}
+
+// titleRoom narrows the panel around a standing worktree row until its title
+// line has width px left, null gives the panel its own width back. Both
+// engines keep the boxes of the text an ellipsis hides where the line laid
+// them out, so the line's right edge tells what still shows.
+async function titleRoom(row, panelSelector, width) {
+  return row.evaluate((el, { panelSelector, width }) => {
+    const panel = el.closest(panelSelector);
+    const title = el.querySelector(".editor-palette-title");
+    panel.style.removeProperty("width");
+    if (width !== null) panel.style.width = `${panel.getBoundingClientRect().width - (title.clientWidth - width)}px`;
+    const own = el.querySelector(".editor-palette-worktree").getBoundingClientRect();
+    const repo = title.querySelector(".editor-palette-repo").getBoundingClientRect();
+    const left = title.getBoundingClientRect().left;
+    const edge = left + title.clientWidth;
+    return {
+      room: title.clientWidth,
+      ownNeeds: own.right - left,
+      repoNeeds: repo.right - left,
+      ownWhole: own.right <= edge + 0.5,
+      repoWhole: repo.right <= edge + 0.5,
+      repoGone: repo.left >= edge - 0.5,
+      cut: title.scrollWidth > title.clientWidth + 1,
+      ellipsis: getComputedStyle(title).textOverflow === "ellipsis",
+      inside: el.scrollWidth <= el.clientWidth + 1,
+    };
+  }, { panelSelector, width });
+}
+
+// cutsAtTheEnd squeezes a standing worktree row twice: by a little, which cuts
+// into the repository and leaves the name whole, then to half the name, which
+// has cut the repository away and the name with it.
+async function cutsAtTheEnd(row, panelSelector) {
+  const free = await titleRoom(row, panelSelector, null);
+  assert(free.ownWhole && free.repoWhole && !free.cut && free.inside, `the worktree row is cut with room to spare: ${JSON.stringify(free)}`);
+  const little = await titleRoom(row, panelSelector, Math.floor((free.ownNeeds + free.repoNeeds) / 2));
+  assert(little.cut && little.ellipsis && little.ownWhole && !little.repoWhole && !little.repoGone && little.inside,
+    `a row short by a little did not cut the repository and keep the name whole: ${JSON.stringify({ free, little })}`);
+  const tight = await titleRoom(row, panelSelector, Math.floor(free.ownNeeds / 2));
+  assert(tight.cut && tight.ellipsis && !tight.ownWhole && tight.repoGone && tight.room > 0 && tight.inside,
+    `a row far too short did not drop the repository and cut the name: ${JSON.stringify(tight)}`);
+  await titleRoom(row, panelSelector, null);
+  return { free, little, tight };
 }
 
 async function projectPaletteChecks({ browser, ctx, page, run, bag, project, projectB, projectW, projectD, tag, editorURL }) {
@@ -156,7 +214,7 @@ async function projectPaletteChecks({ browser, ctx, page, run, bag, project, pro
     await page.waitForSelector("[data-editor-palette]", { state: "hidden", timeout: 4000 });
   });
 
-  await run("project palette: a worktree is found by repository and branch together and reads as both, under its main as its name over its branch, each second line under its headline's text", async () => {
+  await run("project palette: a worktree standing on its own reads as its name, then its repository muted after a small gap, over its branch, the repository's prefix folded, a name of its own whole, the line cut at its end; under its main as its name over its branch; main rows unchanged; each second line under its headline's text", async () => {
     const path = await L.projectPath(page, project);
     const git = async (cwd, args) => {
       const res = await page.evaluate(async ({ cwd, args }) => {
@@ -179,12 +237,19 @@ async function projectPaletteChecks({ browser, ctx, page, run, bag, project, pro
     await git(path, ["commit", "-q", "--allow-empty", "-m", "init"]);
     await git(path, ["worktree", "add", "-q", "-b", "topic/htmx", `../${projectW}`]);
     await git(path, ["worktree", "add", "-q", "--detach", `../${projectD}`]);
+    const ownW = projectW.slice(project.length + 1);
+    assert(projectW.startsWith(`${project}-`) && !projectD.startsWith(`${project}-`), `the fixture names do not cover both cases: ${projectW}, ${projectD}`);
 
     await page.goto(editorURL, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
     await page.waitForFunction((ps) => ps.every((p) => [...document.querySelectorAll("[data-editor-project-list] [data-project-name]")]
       .some((el) => el.dataset.projectName === p)), [projectW, projectD], { timeout: 8000 });
     const shown = () => page.$$eval("[data-editor-palette-list] [data-project-name]", (els) => els.map((el) => el.dataset.projectName));
+    const query = async (text) => {
+      await page.fill("[data-editor-project-filter]", text);
+      await page.evaluate(() => document.querySelector("[data-editor-project-filter]").dispatchEvent(new Event("input", { bubbles: true })));
+      await sleep(200);
+    };
 
     await page.keyboard.press("Control+Shift+P");
     await page.waitForSelector("[data-editor-palette]", { state: "visible", timeout: 4000 });
@@ -194,41 +259,64 @@ async function projectPaletteChecks({ browser, ctx, page, run, bag, project, pro
     await sleep(200);
     let names = await shown();
     assert(names.length === 1 && names[0] === projectW, `repository plus branch did not land on the worktree: ${names.join(", ")}`);
-    const row = await page.locator(`[data-editor-palette-list] [data-project-name="${projectW}"]`).evaluate(readRow);
-    assert(!row.member && row.head === project && row.branch === "topic/htmx" && row.sub === projectW && row.fork,
-      `the worktree row does not read as repository, branch and directory: ${JSON.stringify(row)}`);
+    const hit = page.locator(`[data-editor-palette-list] [data-project-name="${projectW}"]`);
+    const row = await hit.evaluate(readRow);
+    assert(!row.member && row.fork && row.line === `${ownW}${project}` && row.own === ownW && row.ownShown && row.gap >= 4 && row.gap <= 12 && row.repo === project && row.repoShown && row.muted && !row.nameIcon,
+      `the worktree's top line is not the name without its prefix, then the muted repository after a small gap: ${JSON.stringify(row)}`);
+    assert(row.sub === "topic/htmx" && row.subBranch && !row.branch && !row.line.includes(projectW) && !row.sub.includes(projectW),
+      `the worktree's second line is not its branch alone, or the bare name stayed: ${JSON.stringify(row)}`);
     assert(Math.abs(row.indent) <= 1, `the hit's second line starts ${row.indent}px off its headline's text`);
+    const squeezed = await cutsAtTheEnd(hit, ".editor-palette-panel");
     // The branch alone finds it as well, the name of the directory need not
-    // be known.
-    await page.fill("[data-editor-project-filter]", "topic/htmx");
-    await page.evaluate(() => document.querySelector("[data-editor-project-filter]").dispatchEvent(new Event("input", { bubbles: true })));
-    await sleep(200);
+    // be known; the full name and the repository do as before.
+    for (const text of ["topic/htmx", projectW]) {
+      await query(text);
+      names = await shown();
+      assert(names.length === 1 && names[0] === projectW, `"${text}" did not find the worktree alone: ${names.join(", ")}`);
+    }
+    // A name that does not start with the repository's stays whole.
+    await query(projectD);
     names = await shown();
-    assert(names.length === 1 && names[0] === projectW, `the branch alone did not find the worktree: ${names.join(", ")}`);
+    assert(names.length === 1 && names[0] === projectD, `the detached worktree's name did not find it alone: ${names.join(", ")}`);
+    const own = await page.locator(`[data-editor-palette-list] [data-project-name="${projectD}"]`).evaluate(readRow);
+    assert(own.line === `${projectD}${project}` && own.own === projectD && own.ownShown && own.gap >= 4 && own.gap <= 12 && own.repo === project && own.repoShown && own.muted && !own.nameIcon && /^[0-9a-f]{7}$/.test(own.sub) && own.subBranch,
+      `a worktree whose name does not start with its repository's is not its whole name, then the muted repository, over its short hash: ${JSON.stringify(own)}`);
     // Without a query the worktree stands behind its main as its member.
-    await page.fill("[data-editor-project-filter]", "");
-    await page.evaluate(() => document.querySelector("[data-editor-project-filter]").dispatchEvent(new Event("input", { bubbles: true })));
-    await sleep(200);
+    await query("");
     const grouped = await page.$$eval("[data-editor-palette-list] .editor-palette-group:last-child [data-project-name]", (els) => els.map((el) => `${el.dataset.projectName}${el.classList.contains("editor-palette-member") ? "*" : ""}`));
     const main = grouped.indexOf(project);
     assert(main >= 0 && grouped[main + 1] === `${projectW}*` && grouped[main + 2] === `${projectD}*`, `the worktrees do not stand behind their main: ${grouped.join(", ")}`);
     // The main above names the repository, so a member heads with its own
-    // name and carries its branch below, a detached one its short hash.
+    // name whole and carries its branch below, a detached one its short hash.
     const all = "[data-editor-palette-list] .editor-palette-group:last-child";
     const member = await page.locator(`${all} [data-project-name="${projectW}"]`).evaluate(readRow);
-    assert(member.head === projectW && member.headShown && member.line === projectW && !member.branch && member.sub === "topic/htmx" && member.subBranch && member.fork,
+    assert(member.head === projectW && member.headShown && member.headPlain && member.line === projectW && !member.repo && !member.nameIcon && !member.branch && member.sub === "topic/htmx" && member.subBranch && member.fork,
       `the member does not read as its name over its branch: ${JSON.stringify(member)}`);
     const detached = await page.locator(`${all} [data-project-name="${projectD}"]`).evaluate(readRow);
-    assert(detached.head === projectD && detached.headShown && detached.line === projectD && /^[0-9a-f]{7}$/.test(detached.sub) && detached.subBranch && detached.fork,
+    assert(detached.head === projectD && detached.headShown && detached.headPlain && detached.line === projectD && !detached.repo && /^[0-9a-f]{7}$/.test(detached.sub) && detached.subBranch && detached.fork,
       `the detached member does not read as its name over its short hash: ${JSON.stringify(detached)}`);
-    for (const [what, r] of [["member", member], ["detached member", detached]]) {
+    // The main keeps its one line: the repository with the branch beside it.
+    const mainRow = await page.locator(`${all} [data-project-name="${project}"]`).evaluate((el) => ({
+      folder: Boolean(el.querySelector(".editor-palette-line > .ti-folder-code")),
+      tagged: Boolean(el.querySelector(".dc-tagged.editor-palette-name")),
+      repo: el.querySelector(".editor-palette-repo")?.textContent.trim(),
+      repoColor: getComputedStyle(el.querySelector(".editor-palette-repo")).color === getComputedStyle(el).color,
+      branch: el.querySelector(".editor-palette-branch")?.textContent.trim(),
+      branchShown: Boolean(el.querySelector(".editor-palette-branch")?.checkVisibility()),
+      worktree: Boolean(el.querySelector(".editor-palette-title, .editor-palette-worktree")),
+      sub: Boolean(el.querySelector(".editor-palette-sub")),
+    }));
+    assert(mainRow.folder && mainRow.tagged && mainRow.repo === project && mainRow.repoColor && mainRow.branch === "master" && mainRow.branchShown && !mainRow.worktree && !mainRow.sub,
+      `the main row changed: ${JSON.stringify(mainRow)}`);
+    for (const [what, r] of [["member", member], ["detached member", detached], ["own named worktree", own]]) {
       assert(Math.abs(r.indent) <= 1, `the ${what}'s second line starts ${r.indent}px off its headline's text`);
     }
     await page.keyboard.press("Escape");
     await page.waitForSelector("[data-editor-palette]", { state: "hidden", timeout: 4000 });
+    return `squeezed to ${squeezed.little.room}px the repository cut and the name whole, to ${squeezed.tight.room}px the repository gone and the name cut`;
   });
 
-  await run("project palette on a phone: the quick open's shape with the field on top, no keyboard, the desktop's order, Go takes the first hit, a worktree reads as itself in Recent and as a member below, each second line under its headline's text", async () => {
+  await run("project palette on a phone: the quick open's shape with the field on top, no keyboard, the desktop's order, Go takes the first hit, a worktree reads as its name, then its repository muted in Recent and as a member below, each second line under its headline's text", async () => {
     const ctx = await browser.newContext({ ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
     const tp = await ctx.newPage();
     L.wirePage(tp, bag);
@@ -281,11 +369,14 @@ async function projectPaletteChecks({ browser, ctx, page, run, bag, project, pro
       await tp.tap("[data-editor-project-switch]");
       await tp.waitForSelector("[data-editor-palette]", { state: "visible", timeout: 4000 });
       const recent = await tp.locator(`[data-editor-palette-list] .editor-palette-group:first-child [data-project-name="${projectW}"]`).evaluate(readRow);
-      assert(!recent.member && recent.head === project && recent.headShown && recent.branch === "topic/htmx" && recent.sub === projectW && recent.check,
-        `the worktree's Recent row does not read as repository, branch and directory: ${JSON.stringify(recent)}`);
+      const ownW = projectW.slice(project.length + 1);
+      assert(!recent.member && recent.line === `${ownW}${project}` && recent.own === ownW && recent.ownShown && recent.gap >= 4 && recent.gap <= 12 && recent.repo === project && recent.repoShown && recent.muted && !recent.nameIcon && !recent.branch && recent.sub === "topic/htmx" && recent.subBranch && recent.check,
+        `the worktree's Recent row does not read as its name, then its muted repository, over its branch: ${JSON.stringify(recent)}`);
+      const fits = await tp.locator(`[data-editor-palette-list] .editor-palette-group:first-child [data-project-name="${projectW}"] .editor-palette-title`).evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+      assert(fits, "the worktree's line is cut on a phone with room for it");
       const all = "[data-editor-palette-list] .editor-palette-group:last-child";
       const member = await tp.locator(`${all} [data-project-name="${projectW}"]`).evaluate(readRow);
-      assert(member.member && member.head === projectW && member.line === projectW && member.sub === "topic/htmx" && member.subBranch && member.check,
+      assert(member.member && member.head === projectW && member.headPlain && member.line === projectW && member.sub === "topic/htmx" && member.subBranch && member.check,
         `the current member does not read as its name over its branch with the check: ${JSON.stringify(member)}`);
       for (const [what, r] of [["Recent row", recent], ["member", member]]) {
         assert(Math.abs(r.indent) <= 1, `the phone's ${what} has its second line ${r.indent}px off its headline's text`);
@@ -300,4 +391,4 @@ async function projectPaletteChecks({ browser, ctx, page, run, bag, project, pro
   });
 }
 
-module.exports = { projectPaletteChecks };
+module.exports = { projectPaletteChecks, readRow, cutsAtTheEnd };

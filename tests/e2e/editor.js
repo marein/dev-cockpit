@@ -93,8 +93,9 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
   const project = `zztc-${tag}`;
   const projectB = `zztc-a-${tag}`;
   // Worktrees of the scratch project, made through the git proxy: what the
-  // palette tells apart by repository and branch, the second detached.
-  const projectW = `zztc-w-${tag}`;
+  // palette tells apart by repository and branch, the first named after its
+  // main, the second detached under a name of its own.
+  const projectW = `${project}-mysql-support`;
   const projectD = `zztc-x-${tag}`;
   const editorURL = `${BASE}/projects/${encodeURIComponent(project)}/editor`;
   const noteFile = `note_${tag}.md`;

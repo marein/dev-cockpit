@@ -12,4 +12,4 @@
 }
 .dc-picker-list .editor-palette-name { flex-wrap: wrap; min-width: 0; overflow-wrap: anywhere; }
 .dc-picker-list .editor-palette-rest { flex: 0 1 auto; overflow: visible; }
-.dc-picker-list .editor-palette-repo, .dc-picker-list .editor-palette-branch, .dc-picker-list .editor-palette-sub { white-space: normal; overflow-wrap: anywhere; }
+.dc-picker-list .editor-palette-repo, .dc-picker-list .editor-palette-title, .dc-picker-list .editor-palette-branch, .dc-picker-list .editor-palette-sub { white-space: normal; overflow-wrap: anywhere; }

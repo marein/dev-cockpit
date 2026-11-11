@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const L = require("./lib");
 const fileMentionLinks = require("./file-mention-links");
+const { readRow, cutsAtTheEnd } = require("./editor-project-palette");
 const { assert, BASE, sleep } = L;
 
 // The @ in an assistant's message box (dc-file-mention, file_mention.gohtml):
@@ -33,8 +34,8 @@ const { assert, BASE, sleep } = L;
 // the fake claude), and its --projects-dir and --state-dir inside a scratch
 // directory mounted into the runner at its own host path (AUX_DIR, default
 // /tmp/dcfm): the runner builds its projects there with the container's git,
-// a repository with a linked worktree, a plain folder and a tree of 24,000
-// files, and deletes them at the end. SHOTS_DIR, when set and mounted,
+// a repository with two linked worktrees, one named after it and one not, a
+// plain folder and a tree of 24,000 files, and deletes them at the end. SHOTS_DIR, when set and mounted,
 // receives the phone screenshots of the projects, a project's folders and
 // files and the inside of a folder, in both themes.
 //
@@ -49,12 +50,13 @@ const AUX = process.env.AUX_DIR || "/tmp/dcfm";
 const PROJECTS = path.join(AUX, "projects");
 const SHOTS = process.env.SHOTS_DIR || "";
 const S = Date.now().toString(36).slice(-3);
-const SHOP = `shop-${S}`;
+const SHOP = `webshop-${S}`;
 const CHECKOUT = `${SHOP}-checkout`;
+const SPIKE = `spike-${S}`;
 const MONO = `mono-${S}`;
 const NOTES = `notes-${S}`;
 const LATE = `late-${S}`;
-const BUILT = [SHOP, CHECKOUT, MONO, NOTES];
+const BUILT = [SHOP, CHECKOUT, SPIKE, MONO, NOTES];
 const OURS = [...BUILT, LATE];
 const BIG_FILES = 24000;
 const NEEDLE = "zz/deep/needle/TargetWidget.ts";
@@ -89,6 +91,7 @@ function buildFixture() {
   git(shop, ["add", "-A"]);
   git(shop, ["commit", "-qm", "init"]);
   git(shop, ["worktree", "add", "-q", "-b", "checkout", path.join(PROJECTS, CHECKOUT)]);
+  git(shop, ["worktree", "add", "-q", "-b", "pay", path.join(PROJECTS, SPIKE)]);
   writeFiles(path.join(PROJECTS, NOTES), ["todo.md", "ideas/cart-redesign.md", "meetings/2026-10.md"]);
   const mono = path.join(PROJECTS, MONO);
   const big = [];
@@ -331,7 +334,7 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       return `first query ${firstMs}ms, warm max ${Math.max(...warm)}ms, walks max ${Math.max(...walked.map((x) => x.ms))}ms, typed to row ${uiMs}ms, walk to rows ${walkMs}ms`;
     });
 
-    await run("the project step lists every project, the worktree included, filtered live by @dc/filter's token match", async () => {
+    await run("the project step lists every project, the worktree included, filtered live by @dc/filter's token match, a worktree hit as its name, then its repository muted, over its branch, the line cut at its end", async () => {
       await reset(page);
       await page.keyboard.type("@");
       let s = await waitState(page, (x) => x.shown && x.rows.includes(`@${SHOP}`), "the projects never came");
@@ -342,12 +345,39 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       assert(s.count === `${all.length} project${all.length === 1 ? "" : "s"}`, `the head counts ${s.count}`);
       assert(s.active === 0 && s.described === s.activeID && s.activeID, `the first row is not marked for the keys: ${JSON.stringify(s)}`);
       // The full list stands last, its member heads with its own name over its
-      // branch, a recent shortlist above lists it as itself once opened.
+      // branch, a recent shortlist above lists it as its name, then its
+      // repository, once opened.
       const worktree = await page.evaluate((name) => {
         const row = [...document.querySelectorAll(`[data-mention-list] [data-project-name="${name}"]`)].at(-1);
-        return { icon: row.querySelector(".ti").className, repo: row.querySelector(".editor-palette-repo").textContent, sub: row.querySelector(".editor-palette-sub")?.textContent || "", member: row.classList.contains("editor-palette-member") };
+        return { icon: row.querySelector(".ti").className, head: row.querySelector(".editor-palette-name").textContent, repo: Boolean(row.querySelector(".editor-palette-repo")), sub: row.querySelector(".editor-palette-sub")?.textContent || "", member: row.classList.contains("editor-palette-member") };
       }, CHECKOUT);
-      assert(worktree.icon.includes("ti-git-fork") && worktree.repo === CHECKOUT && worktree.sub.trim() === "checkout" && worktree.member, `the worktree does not read as its main's member, its name over its branch: ${JSON.stringify(worktree)}`);
+      assert(worktree.icon.includes("ti-git-fork") && worktree.head === CHECKOUT && worktree.sub.trim() === "checkout" && worktree.member && !worktree.repo, `the worktree does not read as its main's member, its name over its branch: ${JSON.stringify(worktree)}`);
+      // A hit stands on its own: the name without the repository's prefix, a
+      // name of its own whole, then the repository muted after a small gap,
+      // the branch below; the main keeps its one line, the line is cut at its
+      // end.
+      await reset(page);
+      await page.keyboard.type(`@${S}`);
+      await waitState(page, (x) => x.rows.length === 5 && !x.busy, "the hits never came for the worktree rows");
+      const hit = (name) => page.locator(`[data-mention-list] [data-project-name="${name}"]`);
+      const folded = await hit(CHECKOUT).evaluate(readRow);
+      assert(!folded.member && folded.fork && folded.line === `checkout${SHOP}` && folded.own === "checkout" && folded.ownShown && folded.gap >= 4 && folded.gap <= 12 && folded.repo === SHOP && folded.repoShown && folded.muted && !folded.nameIcon && folded.sub === "checkout" && folded.subBranch && !folded.branch,
+        `the worktree hit is not the name without its prefix, then the muted repository, over its branch: ${JSON.stringify(folded)}`);
+      const whole = await hit(SPIKE).evaluate(readRow);
+      assert(whole.line === `${SPIKE}${SHOP}` && whole.own === SPIKE && whole.ownShown && whole.gap >= 4 && whole.gap <= 12 && whole.repo === SHOP && whole.repoShown && whole.muted && !whole.nameIcon && whole.sub === "pay" && whole.subBranch,
+        `a worktree whose name does not start with its repository's is not its whole name, then the muted repository, over its branch: ${JSON.stringify(whole)}`);
+      for (const [what, r] of [["folded", folded], ["whole", whole]]) assert(Math.abs(r.indent) <= 1, `the ${what} hit's second line starts ${r.indent}px off its headline's text`);
+      const main = await hit(SHOP).evaluate((el) => ({
+        folder: Boolean(el.querySelector(".editor-palette-line > .ti-folder-code")),
+        tagged: Boolean(el.querySelector(".dc-tagged.editor-palette-name")),
+        repo: el.querySelector(".editor-palette-repo")?.textContent,
+        repoColor: getComputedStyle(el.querySelector(".editor-palette-repo")).color === getComputedStyle(el).color,
+        branch: el.querySelector(".editor-palette-branch")?.textContent.trim(),
+        worktree: Boolean(el.querySelector(".editor-palette-title, .editor-palette-worktree")),
+        sub: Boolean(el.querySelector(".editor-palette-sub")),
+      }));
+      assert(main.folder && main.tagged && main.repo === SHOP && main.repoColor && main.branch === "main" && !main.worktree && !main.sub, `the main row changed: ${JSON.stringify(main)}`);
+      const squeezed = await cutsAtTheEnd(hit(CHECKOUT), "[data-mention-panel]");
       for (const query of [S, `${S} check`, `CHECKOUT ${S}`, `${S} notes`]) {
         await reset(page);
         await page.keyboard.type(`@${query}`);
@@ -361,14 +391,14 @@ L.runFeature("FILE MENTION", async ({ engine, browser, page, run, mobilePage }) 
       s = await waitState(page, (x) => x.note.includes("No project matches"), "a filter nobody matches says nothing");
       await page.keyboard.type(" ");
       await waitState(page, (x) => !x.shown, "a blank after a filter nobody matches did not close");
-      return `${all.length} projects, filtered like @dc/filter`;
+      return `${all.length} projects, filtered like @dc/filter; squeezed to ${squeezed.little.room}px the repository cut and the name whole, to ${squeezed.tight.room}px the repository gone and the name cut`;
     });
 
     await run("arrows move the mark with wrap, Enter takes a project without sending, the files open with the folder first", async () => {
       await reset(page);
       const before = await messages(page);
       await page.keyboard.type(`@${S}`);
-      let s = await waitState(page, (x) => x.rows.length === 4, "the four projects never came");
+      let s = await waitState(page, (x) => x.rows.length === 5, "the five projects never came");
       await page.keyboard.press("ArrowDown");
       s = await state(page);
       assert(s.active === 1 && s.described === s.activeID, `ArrowDown did not step: ${JSON.stringify(s)}`);

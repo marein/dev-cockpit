@@ -1,6 +1,10 @@
 package render
 
-import "github.com/marein/dev-cockpit/internal/project"
+import (
+	"strings"
+
+	"github.com/marein/dev-cockpit/internal/project"
+)
 
 // EditorData is the model for the per-project code editor page.
 type EditorData struct {
@@ -90,6 +94,15 @@ type EditorProject struct {
 	Search string
 	// Tags are the project's tags, a worktree carries none.
 	Tags []project.Tag
+}
+
+// WorktreeName is what a worktree's row names ahead of its repository: the
+// name without a leading "<repo>-", the whole name when it does not start so.
+func (p EditorProject) WorktreeName() string {
+	if rest, ok := strings.CutPrefix(p.Name, p.Repo+"-"); ok && p.Repo != "" && rest != "" {
+		return rest
+	}
+	return p.Name
 }
 
 // EditorTerminalsData feeds the editor's terminals fragment: the live coders
