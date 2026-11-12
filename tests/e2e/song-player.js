@@ -28,7 +28,8 @@ const { assert, sleep, BASE, dismissUpdate } = L;
 // The current song carries the equalizer in place of its number, its genre
 // row carries one too, folded or not. Stop ends it, and a song plays on
 // across a page change because the playback lives in @dc/music, not in the
-// element the swap replaces. The filter finds titles in every genre, folded
+// element the swap replaces, and once per browser: every tab shows it, one
+// tab sounds (song-player-tabs.js). The filter finds titles in every genre, folded
 // or not, shows each genre with hits under a header that does not fold while
 // a query stands, and typing never moves the panel. The menu carries
 // data-own-selection, so app.js does not let the focus follow the pointer and
@@ -200,7 +201,7 @@ async function typeFilter(page, text) {
   if (text) await page.type(FILTER, text);
 }
 
-L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) => {
+L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage, bag }) => {
   try {
     await run("the line shows only the music note and the panel starts closed", async () => {
       await ready(page);
@@ -701,24 +702,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       await closePanel(page);
     });
 
-    await run("a song plays on across a page change", async () => {
-      await openPanel(page);
-      await page.click(TOGGLE);
-      await waitPlaying(page, true);
-      const before = (await state(page)).now;
-      await closePanel(page);
-      await page.evaluate(() => { window.__songPlayerPage = true; });
-      await page.click('.dc-rail a[href="/docs"]');
-      await page.waitForURL(/\/docs$/, { timeout: 10000 });
-      await page.waitForFunction(() => document.querySelector("dc-song-player [data-song-now]")?.textContent, null, { timeout: 10000 });
-      assert(await page.evaluate(() => window.__songPlayerPage === true), "the page change was a full reload");
-      const after = await state(page);
-      assert(after.now === before && /ti-player-stop/.test(after.icon), `after the page change ${JSON.stringify(after)}, before "${before}"`);
-      await openPanel(page);
-      await page.click(TOGGLE);
-      await waitPlaying(page, false);
-      await closePanel(page);
-    });
+    await require("./song-player-tabs").tabChecks({ page, run, ready, openPanel, closePanel, state, waitPlaying, toggle: TOGGLE, bag });
 
     await run("a failed load says so in a toast and the next play loads the songs", async () => {
       const ctx = await L.newDesktop(browser, engine);

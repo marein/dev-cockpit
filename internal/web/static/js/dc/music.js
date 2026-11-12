@@ -79,11 +79,21 @@ const titles = Object.assign({}, ...catalog.map((shelf) => shelf.songs));
 const shelves = Object.fromEntries(catalog.flatMap((shelf) => Object.keys(shelf.songs).map((key) => [key, shelf])));
 const lengths = new Map();
 const listeners = new Set();
+const PING_MS = 1500;
+const MISSES = 2;
 let sheets = null;
 let attempts = 0;
-let scope = null;
-let queue = [];
-let current = null;
+let sound = null;
+let shown = null;
+let ended = null;
+let watch = null;
+let unanswered = 0;
+
+// The tabs of a browser share one playback. The tab that plays owns it and
+// tells the others what it plays, they only show it. A click makes its own
+// tab the owner, the autoplay policy lets no other tab start the sound.
+const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("dc-music") : null;
+const tab = Array.from(crypto.getRandomValues(new Uint32Array(2)), (part) => part.toString(36)).join("-");
 
 // A module that failed to load stays failed in the browser's module map, so a
 // retry asks for the same file under a fresh URL.
@@ -137,19 +147,75 @@ function tempo(sheet) {
   return Number(/^#BPM (\d+)$/m.exec(sheet)?.[1]) || 120;
 }
 
-function shuffled() {
-  if (!queue.length) {
-    queue = Object.keys(scope?.songs ?? titles).filter((key) => key !== current?.key);
-    for (let i = queue.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [queue[i], queue[j]] = [queue[j], queue[i]];
-    }
-  }
-  return queue.pop();
+function shelfOf(style) {
+  return catalog.find((shelf) => shelf.style === style) ?? null;
 }
 
-function changed() {
-  for (const listener of listeners) listener();
+function shuffled(keys) {
+  for (let i = keys.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+  }
+  return keys;
+}
+
+function post(message) {
+  channel?.postMessage(message);
+}
+
+function show(state) {
+  unanswered = 0;
+  const same = JSON.stringify(state) === JSON.stringify(shown);
+  shown = state;
+  follow();
+  if (!same) for (const listener of listeners) listener();
+}
+
+function publish(state) {
+  show(state);
+  post({ type: "state", state });
+}
+
+function silence() {
+  sound?.abort();
+  sound = null;
+}
+
+// Two tabs that start at once both claim the playback, the later click wins.
+// A song that follows on its own keeps the claim of the click that started
+// its round, so it never wins over a click in another tab.
+function wins(a, b) {
+  return a.claim > b.claim || (a.claim === b.claim && a.owner > b.owner);
+}
+
+// A tab that closes or crashes may never say so, so a tab that shows another
+// tab's playback keeps asking after it and shows nothing once it stays silent.
+function follow() {
+  const away = !!shown && shown.owner !== tab;
+  if (away === !!watch) return;
+  clearInterval(watch);
+  watch = away ? setInterval(() => (unanswered++ < MISSES ? post({ type: "ping" }) : show(null)), PING_MS) : null;
+}
+
+// A stop ends the round of its claim, an answer about that round still on its
+// way when the stop arrives must not bring it back.
+function receive({ type, state, owner, claim }) {
+  if (type === "hello" || type === "ping") {
+    if (shown?.owner === tab) post({ type: "state", state: shown });
+  } else if (type === "stop") {
+    ended = { owner, claim };
+    if (owner === shown?.owner && claim >= shown.claim) {
+      silence();
+      show(null);
+    }
+  } else if (type === "state") {
+    if (state.owner === ended?.owner && state.claim <= ended.claim) return;
+    if (shown?.owner === tab && wins(shown, state)) post({ type: "state", state: shown });
+    else if (!shown || state.owner === shown.owner || wins(state, shown)) {
+      silence();
+      show(state);
+    }
+  }
 }
 
 // Composing a song blocks the page for a moment, so the answer to a click
@@ -157,35 +223,49 @@ function changed() {
 // none, a hidden page draws no frames.
 const drawn = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
 
-async function start(shelf, key, frame = true) {
-  if (shelf !== scope) {
-    scope = shelf;
-    queue = [];
+async function start(shelf, key, claim = Date.now(), frame = true) {
+  const style = shelf?.style ?? null;
+  let round = shown?.style === style ? shown.round : [];
+  if (!key) {
+    if (!round.length) round = shuffled(Object.keys(shelf?.songs ?? titles).filter((other) => other !== shown?.key));
+    key = round.at(-1);
   }
-  const next = key ?? shuffled();
-  queue = queue.filter((other) => other !== next);
-  current?.abort.abort();
+  round = round.filter((other) => other !== key);
+  silence();
   const abort = new AbortController();
-  current = { key: next, abort, started: performance.now() };
-  changed();
+  sound = abort;
+  const song = { owner: tab, claim, key, style, round, started: Date.now(), length: lengths.get(key) };
+  publish(song);
   let sheet;
   try {
     const compose = await loadSheets();
     if (frame) await drawn();
     if (abort.signal.aborted) return;
-    sheet = compose(next);
+    sheet = compose(key);
   } catch (error) {
-    if (current?.abort === abort) stop();
+    if (sound === abort) stop();
     throw error;
   }
-  if (!lengths.has(next)) lengths.set(next, seconds(sheet));
-  current.started = performance.now();
-  current.bpm = tempo(sheet);
-  changed();
+  if (!lengths.has(key)) lengths.set(key, seconds(sheet));
+  publish({ ...song, started: Date.now(), length: lengths.get(key), bpm: tempo(sheet) });
   music.play(sheet, { signal: abort.signal })
-    .then(() => current?.abort === abort && start(scope, null, false))
-    .catch(() => current?.abort === abort && stop());
+    .then(() => sound === abort && start(shelf, null, claim, false))
+    .catch(() => sound === abort && stop());
 }
+
+channel?.addEventListener("message", (event) => receive(event.data));
+post({ type: "hello" });
+addEventListener("pagehide", () => {
+  if (shown?.owner === tab) stop();
+});
+addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  show(null);
+  post({ type: "hello" });
+});
+// scriptune applies a volume only to the sound of the tab that sets it, so
+// the playing tab takes a move made in another tab from their shared storage.
+addEventListener("storage", () => music.setVolume(music.getVolume()));
 
 export function onChange(listener) {
   listeners.add(listener);
@@ -201,17 +281,17 @@ export function genreOf(key) {
 }
 
 export function playing() {
-  return current?.key ?? null;
+  return shown?.key ?? null;
 }
 
 // The genre the shuffle keeps to, null while it runs through every genre.
 export function mode() {
-  return current ? scope?.style ?? null : null;
+  return shown?.style ?? null;
 }
 
 export function position() {
-  if (!current) return null;
-  return { elapsed: (performance.now() - current.started) / 1000, length: lengths.get(current.key), bpm: current.bpm };
+  if (!shown) return null;
+  return { elapsed: (Date.now() - shown.started) / 1000, length: shown.length, bpm: shown.bpm };
 }
 
 export function play(key) {
@@ -219,15 +299,18 @@ export function play(key) {
 }
 
 export function shuffle(style) {
-  return start(catalog.find((shelf) => shelf.style === style) ?? null);
+  return start(shelfOf(style));
 }
 
 export function next() {
-  return start(scope);
+  return start(shelfOf(shown?.style));
 }
 
 export function stop() {
-  current?.abort.abort();
-  current = null;
-  changed();
+  const was = shown;
+  silence();
+  show(null);
+  if (!was) return;
+  ended = { owner: was.owner, claim: was.claim };
+  post({ type: "stop", ...ended });
 }
