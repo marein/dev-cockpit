@@ -96,6 +96,7 @@
       "dc-update-check": "{{asset "/js/components/update-check.js"}}",
       "dc-host-status": "{{asset "/js/components/host-status.js"}}",
       "dc-status-links": "{{asset "/js/components/status-links.js"}}",
+      "dc-song-dancer": "{{asset "/js/components/song-dancer.js"}}",
       "dc-song-player": "{{asset "/js/components/song-player.js"}}",
       "dc-song-volume": "{{asset "/js/components/song-volume.js"}}",
       "dc-cost-status": "{{asset "/js/components/cost-status.js"}}",
@@ -371,7 +372,8 @@
   {{/* Like the server status, the list is a dropup positioned fixed, so the
        sideways scrolling status line does not clip it. */}}
   <dc-song-player class="dc-status-item dropup">
-    <button type="button" class="dc-status-item" data-song-open data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Songs" aria-label="Songs"><i class="ti ti-music" aria-hidden="true" data-song-note></i><span class="dc-eq" aria-hidden="true" data-song-note-eq hidden><i></i><i></i><i></i></span></button>
+    <button type="button" class="dc-status-item" data-song-open data-bs-toggle="dropdown" data-bs-auto-close="outside" data-bs-popper-config='{"strategy":"fixed"}' aria-expanded="false" title="Songs" aria-label="Songs"><i class="ti ti-music" aria-hidden="true" data-song-note></i>{{template "song_dancer.gohtml"}}</button>
+    <template data-song-eq><span class="dc-eq" aria-hidden="true"><i></i><i></i><i></i></span></template>
     <div class="dropdown-menu dropdown-menu-end dropdown-menu-card dc-song-panel" data-own-selection>
       <div class="px-3 pt-3 pb-2 dc-song-now" data-song-stage>
         <div class="d-flex align-items-center gap-3">

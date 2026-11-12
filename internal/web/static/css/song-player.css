@@ -118,3 +118,44 @@
   from { transform: scaleY(0.25); }
   to { transform: scaleY(1); }
 }
+/* The note and the dancer take turns in one slot as wide as the dancer, the
+   note centered where its body stands, so the line does not move when music
+   starts or stops. */
+dc-song-player [data-song-note] {
+  display: inline-block;
+  width: calc(22px * 28 / 24);
+  text-align: center;
+}
+/* The mascot keeps its own color in both themes, no Tabler color matches it. */
+.dc-dancer {
+  --dc-dancer-skin: #d97757;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: calc(22px * 28 / 24);
+  height: 22px;
+}
+.dc-dancer > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.dc-dancer-skin { fill: var(--dc-dancer-skin); }
+.dc-dancer-dark { fill: var(--tblr-gray-800); }
+.dc-dancer-darker { fill: var(--tblr-gray-900); }
+.dc-dancer-mid { fill: var(--tblr-gray-600); }
+.dc-dancer-white { fill: var(--tblr-white); }
+.dc-dancer-hull { fill: var(--tblr-gray-200); }
+.dc-dancer-hull-shade { fill: var(--tblr-gray-400); }
+.dc-dancer-led { stroke: rgb(var(--tblr-orange-rgb)); }
+.dc-dancer-yellow { fill: rgb(var(--tblr-yellow-rgb)); }
+.dc-dancer-orange { fill: rgb(var(--tblr-orange-rgb)); }
+.dc-dancer-red { fill: rgb(var(--tblr-red-rgb)); }
+.dc-dancer-lime { fill: rgb(var(--tblr-lime-rgb)); }
+.dc-dancer-green { fill: rgb(var(--tblr-green-rgb)); }
+.dc-dancer-cyan { fill: rgb(var(--tblr-cyan-rgb)); }
+.dc-dancer-pink { fill: rgb(var(--tblr-pink-rgb)); }
+.dc-dancer-purple { fill: rgb(var(--tblr-purple-rgb)); }
+.dc-dancer-stop-yellow { stop-color: rgb(var(--tblr-yellow-rgb)); }
+.dc-dancer-stop-orange { stop-color: rgb(var(--tblr-orange-rgb)); }
+.dc-dancer-stop-pink { stop-color: rgb(var(--tblr-pink-rgb)); }

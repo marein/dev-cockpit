@@ -101,9 +101,7 @@ class SongPlayer extends HTMLElement {
   }
 
   equalizer() {
-    const eq = this.noteEq.cloneNode(true);
-    eq.removeAttribute("data-song-note-eq");
-    return eq;
+    return this.querySelector("[data-song-eq]").content.firstElementChild.cloneNode(true);
   }
 
   pick(event) {
