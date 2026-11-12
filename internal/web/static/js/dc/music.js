@@ -131,6 +131,12 @@ function seconds(sheet) {
   return Math.max(0, ...tracks.values());
 }
 
+// A sheet opens on its song's tempo, every later #BPM only times a voice's
+// notes, so the first one is the beat the song's dancer follows.
+function tempo(sheet) {
+  return Number(/^#BPM (\d+)$/m.exec(sheet)?.[1]) || 120;
+}
+
 function shuffled() {
   if (!queue.length) {
     queue = Object.keys(scope?.songs ?? titles).filter((key) => key !== current?.key);
@@ -174,6 +180,7 @@ async function start(shelf, key, frame = true) {
   }
   if (!lengths.has(next)) lengths.set(next, seconds(sheet));
   current.started = performance.now();
+  current.bpm = tempo(sheet);
   changed();
   music.play(sheet, { signal: abort.signal })
     .then(() => current?.abort === abort && start(scope, null, false))
@@ -204,7 +211,7 @@ export function mode() {
 
 export function position() {
   if (!current) return null;
-  return { elapsed: (performance.now() - current.started) / 1000, length: lengths.get(current.key) };
+  return { elapsed: (performance.now() - current.started) / 1000, length: lengths.get(current.key), bpm: current.bpm };
 }
 
 export function play(key) {

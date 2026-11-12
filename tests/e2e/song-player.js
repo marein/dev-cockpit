@@ -3,9 +3,10 @@ const L = require("./lib");
 const { assert, sleep, BASE, dismissUpdate } = L;
 
 // The song player of the status line (dc-song-player, desktop only). The
-// line carries a single muted music note, an animated equalizer while music
-// plays (static bars with prefers-reduced-motion: reduce), its tooltip naming
-// the title and the genre; a click on it opens the dropup panel and never
+// line carries a single muted music note, a dancer while music plays, dressed
+// in the one prop of the song's genre and moving to its beat (standing still
+// with prefers-reduced-motion: reduce), its tooltip naming the title and the
+// genre; a click on it opens the dropup panel and never
 // stops the music. The panel opens on a now playing area (the genre's art,
 // title, genre, the position against the length scriptune plays the sheet
 // for, play or stop and next, the mode the shuffle runs in), the volume row
@@ -531,19 +532,20 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
 
     await require("./song-player-genres").genreChecks({ page, run, ready, openPanel, setFolds, state, waitPlaying, toggle: TOGGLE });
 
-    await run("the status line note turns into an equalizer naming the song while music plays, a click on it opens the player and never stops the music", async () => {
+    await run("the status line note turns into a dancer of the song's genre naming the song while music plays, a click on it opens the player and never stops the music", async () => {
       await ready(page);
       const note = () => page.evaluate(() => {
         const root = document.querySelector("dc-song-player");
         const shown = (el) => el.getBoundingClientRect().height > 0 && getComputedStyle(el).visibility !== "hidden";
-        const bars = [...root.querySelectorAll("[data-song-note-eq] > i")];
+        const dancer = root.querySelector("[data-song-note-eq]");
         return {
           icon: shown(root.querySelector("[data-song-note]")),
-          eq: shown(root.querySelector("[data-song-note-eq]")),
+          eq: shown(dancer),
+          genre: dancer.dataset.dancerGenre,
+          props: [...dancer.querySelectorAll("[data-dancer-prop]")].filter(shown).map((el) => el.dataset.dancerProp),
+          pose: ["[data-dancer-char]", "[data-dancer-body]"].map((sel) => dancer.querySelector(sel).getAttribute("transform")).join(" "),
           title: root.querySelector("[data-song-open]").getAttribute("title"),
           label: root.querySelector("[data-song-open]").getAttribute("aria-label"),
-          animations: bars.map((bar) => getComputedStyle(bar).animationName),
-          heights: bars.map((bar) => bar.getBoundingClientRect().height),
         };
       });
       const idle = await note();
@@ -557,11 +559,16 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const on = await note();
       assert(!on.icon && on.eq, `the playing note ${JSON.stringify(on)}`);
       assert(on.title === `${song.now} · ${song.genre}` && on.label === `Songs, playing ${song.now} from ${song.genre}`, `the playing note names ${JSON.stringify(on)}`);
-      assert(on.animations.length === 3 && on.animations.every((name) => name === "dc-eq"), `the equalizer does not move: ${JSON.stringify(on.animations)}`);
+      assert(on.genre === song.genre && on.props.length === 1, `the dancer is not dressed for ${song.genre}: ${JSON.stringify(on)}`);
+      await sleep(150);
+      assert((await note()).pose !== on.pose, `the dancer does not move: ${on.pose}`);
       try {
         await page.emulateMedia({ reducedMotion: "reduce" });
+        await sleep(100);
         const still = await note();
-        assert(still.eq && still.animations.every((name) => name === "none") && still.heights.every((height) => height > 0), `with reduced motion the equalizer ${JSON.stringify(still)}`);
+        await sleep(150);
+        const later = await note();
+        assert(still.eq && still.props.length === 1 && later.pose === still.pose, `with reduced motion the dancer ${JSON.stringify([still, later])}`);
       } finally {
         await page.emulateMedia({ reducedMotion: "no-preference" });
       }

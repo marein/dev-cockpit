@@ -1,0 +1,124 @@
+{{/* The dancer that stands in the status line while music plays. Each genre
+     dresses it in one prop, dc-song-dancer shows the genre's and moves it to
+     the song's beat. */}}
+{{define "song_dancer.gohtml"}}<dc-song-dancer class="dc-dancer" aria-hidden="true" data-song-note-eq hidden>
+  <svg viewBox="-8 0 40 24">
+    <defs>
+      <filter id="dc-dancer-glow" x="-150%" y="-150%" width="400%" height="400%">
+        <feGaussianBlur stdDeviation="0.45" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <linearGradient id="dc-dancer-sunset" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" class="dc-dancer-stop-yellow"/>
+        <stop offset=".5" class="dc-dancer-stop-orange"/>
+        <stop offset="1" class="dc-dancer-stop-pink"/>
+      </linearGradient>
+      <g id="dc-dancer-cup">
+        <rect x="0.4" y="4.2" width="1.2" height="1.5" class="dc-dancer-dark"/>
+        <rect x="2.5" y="5.9" width="1.6" height="4.6" class="dc-dancer-darker"/>
+        <rect x="-0.6" y="5.3" width="3.4" height="5.6" class="dc-dancer-dark"/>
+        <rect x="-1.2" y="5.9" width="4.0" height="4.4" class="dc-dancer-dark"/>
+        <rect x="-0.25" y="6.85" width="1.9" height="2.6" class="dc-dancer-led" fill="none" stroke-width="0.42" filter="url(#dc-dancer-glow)" data-dancer-pulse="stroke"/>
+      </g>
+      <g id="dc-dancer-band">
+        <rect x="0.1" y="3.4" width="2.5" height="1.0" class="dc-dancer-dark"/>
+        <rect x="2.0" y="2.8" width="3.2" height="1.1" class="dc-dancer-dark"/>
+        <rect x="4.6" y="2.2" width="7.5" height="1.5" class="dc-dancer-dark"/>
+        <rect x="5.6" y="3.7" width="6.5" height="1.6" class="dc-dancer-mid"/>
+      </g>
+      <g id="dc-dancer-horn">
+        <rect x="4.2" y="3.8" width="2.6" height="1.7" class="dc-dancer-green"/>
+        <rect x="3.6" y="2.4" width="2.0" height="1.6" class="dc-dancer-lime"/>
+        <rect x="3.0" y="1.0" width="1.4" height="1.6" class="dc-dancer-lime"/>
+        <rect x="2.6" y="0.0" width="0.9" height="1.2" class="dc-dancer-lime"/>
+      </g>
+      <g id="dc-dancer-stick">
+        <rect x="-0.6" y="-7.2" width="1.2" height="6.8" rx="0.4" class="dc-dancer-pink" filter="url(#dc-dancer-glow)" data-dancer-pulse="fill"/>
+        <rect x="-0.6" y="-0.6" width="1.2" height="1.3" class="dc-dancer-dark"/>
+      </g>
+    </defs>
+    <g data-dancer-char>
+      <g class="dc-dancer-skin">
+        <rect data-dancer-leg x="4.487" y="14" width="1.513" height="6"/>
+        <rect data-dancer-leg x="7.488" y="14" width="1.512" height="6"/>
+        <rect data-dancer-leg x="15" y="14" width="1.513" height="6"/>
+        <rect data-dancer-leg x="18" y="14" width="1.513" height="6"/>
+      </g>
+      <g data-dancer-body>
+        <path class="dc-dancer-skin" fill-rule="evenodd" d="M3 5H20.998V10.949H24V14.051H21V17.079H3V14.05H0V10.95H3Z M6 10.949H7.488V8.102H6Z M16.51 10.949H18V8.102H16.51Z"/>
+        <rect data-dancer-lid class="dc-dancer-skin" x="5.9" y="8.002" width="1.688" height="0"/>
+        <rect data-dancer-lid class="dc-dancer-skin" x="16.41" y="8.002" width="1.69" height="0"/>
+        <g data-dancer-prop="headphones" data-dancer-lag>
+          <use href="#dc-dancer-band"/>
+          <use href="#dc-dancer-band" transform="translate(24 0) scale(-1 1)"/>
+          <use href="#dc-dancer-cup"/>
+          <use href="#dc-dancer-cup" transform="translate(24 0) scale(-1 1)"/>
+        </g>
+        <g data-dancer-prop="cap" data-dancer-lag>
+          <g transform="rotate(-5 12 5)">
+            <rect x="-0.6" y="4.4" width="7" height="1.2" class="dc-dancer-orange"/>
+            <rect x="5.4" y="2.6" width="13.2" height="2.9" class="dc-dancer-yellow"/>
+            <rect x="6.8" y="1.8" width="10.4" height="1.0" class="dc-dancer-yellow"/>
+            <rect x="11.3" y="1.2" width="1.4" height="0.7" class="dc-dancer-orange"/>
+            <rect x="5.4" y="4.7" width="13.2" height="0.8" class="dc-dancer-orange"/>
+          </g>
+        </g>
+        <g data-dancer-prop="horns">
+          <use href="#dc-dancer-horn"/>
+          <use href="#dc-dancer-horn" transform="translate(24 0) scale(-1 1)"/>
+        </g>
+        <g data-dancer-prop="snorkel">
+          <rect x="3" y="8.6" width="18" height="1.0" class="dc-dancer-darker"/>
+          <rect x="4.6" y="6.9" width="14.8" height="5.0" class="dc-dancer-dark"/>
+          <rect x="5.3" y="7.6" width="13.4" height="3.6" class="dc-dancer-cyan" fill-opacity=".55"/>
+          <rect x="8.6" y="8.0" width="2.2" height="0.5" class="dc-dancer-white" opacity=".6"/>
+          <rect x="19.4" y="9.8" width="2.9" height="1.0" class="dc-dancer-cyan"/>
+          <rect x="21.2" y="0.6" width="1.1" height="10.2" class="dc-dancer-cyan"/>
+          <rect x="21.0" y="-0.2" width="1.5" height="1.4" class="dc-dancer-orange"/>
+        </g>
+        <g data-dancer-prop="glowsticks">
+          <g data-dancer-stick><use href="#dc-dancer-stick"/></g>
+          <g data-dancer-stick><use href="#dc-dancer-stick"/></g>
+        </g>
+        <g data-dancer-prop="shades">
+          <rect x="3" y="7.7" width="18" height="0.8" class="dc-dancer-darker"/>
+          <rect x="4.6" y="7.7" width="5.2" height="3.8" class="dc-dancer-darker"/>
+          <rect x="14.2" y="7.7" width="5.2" height="3.8" class="dc-dancer-darker"/>
+          <rect x="5.2" y="8.4" width="4.0" height="2.5" fill="url(#dc-dancer-sunset)"/>
+          <rect x="14.8" y="8.4" width="4.0" height="2.5" fill="url(#dc-dancer-sunset)"/>
+          <rect x="5.6" y="8.7" width="1.0" height="0.5" class="dc-dancer-white" opacity=".75"/>
+          <rect x="15.2" y="8.7" width="1.0" height="0.5" class="dc-dancer-white" opacity=".75"/>
+        </g>
+        <g data-dancer-prop="guitar">
+          <g data-dancer-strum>
+            <g transform="rotate(-24 12 14)">
+              <rect x="9" y="13.4" width="13" height="1.2" class="dc-dancer-mid"/>
+              <rect x="22" y="12.8" width="2.6" height="2.4" class="dc-dancer-dark"/>
+              <rect x="2.2" y="11.2" width="8" height="5.6" class="dc-dancer-red"/>
+              <rect x="2.9" y="10.4" width="6.6" height="7.2" class="dc-dancer-red"/>
+              <rect x="3.8" y="12.6" width="3.4" height="2.8" class="dc-dancer-white"/>
+              <rect x="8.0" y="12.2" width="0.7" height="3.6" class="dc-dancer-dark"/>
+            </g>
+          </g>
+        </g>
+      </g>
+      <g data-dancer-prop="rocket">
+        <g data-dancer-flame>
+          <rect x="-4.6" y="15.6" width="3.8" height="3.4" class="dc-dancer-orange"/>
+          <rect x="-3.2" y="16.3" width="2.4" height="2.0" class="dc-dancer-yellow"/>
+        </g>
+        <rect x="-1.2" y="12.4" width="2.2" height="1.2" class="dc-dancer-purple"/>
+        <rect x="-1.2" y="13.4" width="3.6" height="1.4" class="dc-dancer-purple"/>
+        <rect x="-1.2" y="20.0" width="3.6" height="1.4" class="dc-dancer-purple"/>
+        <rect x="-1.2" y="21.2" width="2.2" height="1.2" class="dc-dancer-purple"/>
+        <rect x="-1" y="14.6" width="26" height="5.6" class="dc-dancer-hull"/>
+        <rect x="-1" y="19.0" width="26" height="1.2" class="dc-dancer-hull-shade"/>
+        <rect x="3.0" y="14.6" width="1.4" height="5.6" class="dc-dancer-purple"/>
+        <rect x="19.6" y="14.6" width="1.4" height="5.6" class="dc-dancer-purple"/>
+        <rect x="25" y="15.2" width="2" height="4.6" class="dc-dancer-purple"/>
+        <rect x="27" y="16.0" width="1.6" height="3.0" class="dc-dancer-purple"/>
+        <rect x="28.6" y="16.8" width="1.0" height="1.4" class="dc-dancer-purple"/>
+      </g>
+    </g>
+  </svg>
+</dc-song-dancer>{{end}}

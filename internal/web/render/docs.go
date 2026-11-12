@@ -629,7 +629,7 @@ func DocsTopics() []DocsTopic {
 					Title:    "Songs",
 					Tag:      "Status line",
 					TagClass: "bg-secondary-lt",
-					Desc:     `On a desktop, the note <i class="ti ti-music align-text-bottom" aria-hidden="true"></i> in the status line opens the player. Play shuffles all genres, a genre's play only that genre, a title plays that song and then its genre. Next stays in that mode, and the music plays on across pages. Folds, filter, list position and volume stay per device, the volume apart from the notification sound.`,
+					Desc:     `On a desktop, the note <i class="ti ti-music align-text-bottom" aria-hidden="true"></i> in the status line opens the player. While a song plays, a dancer stands in its place, dressed for the song's genre and moving to its beat, still when the system asks for reduced motion. Play shuffles all genres, a genre's play only that genre, a title plays that song and then its genre. Next stays in that mode, and the music plays on across pages. Folds, filter, list position and volume stay per device, the volume apart from the notification sound.`,
 				},
 				{
 					Title:    "Restore terminals at startup",
