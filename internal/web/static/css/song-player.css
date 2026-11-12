@@ -118,12 +118,20 @@
   from { transform: scaleY(0.25); }
   to { transform: scaleY(1); }
 }
+/* The note and the dancer take turns in one slot as wide as the dancer, the
+   note centered where its body stands, so the line does not move when music
+   starts or stops. */
+dc-song-player [data-song-note] {
+  display: inline-block;
+  width: calc(22px * 28 / 24);
+  text-align: center;
+}
 /* The mascot keeps its own color in both themes, no Tabler color matches it. */
 .dc-dancer {
   --dc-dancer-skin: #d97757;
   display: inline-block;
   flex: 0 0 auto;
-  width: 37px;
+  width: calc(22px * 28 / 24);
   height: 22px;
 }
 .dc-dancer > svg {

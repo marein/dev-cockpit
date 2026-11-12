@@ -3,10 +3,10 @@ const L = require("./lib");
 const { assert, sleep, BASE, dismissUpdate } = L;
 
 // The song player of the status line (dc-song-player, desktop only). The
-// line carries a single muted music note, a dancer while music plays, dressed
-// in the one prop of the song's genre and moving to its beat (standing still
-// with prefers-reduced-motion: reduce), its tooltip naming the title and the
-// genre; a click on it opens the dropup panel and never
+// line carries a single muted music note, a dancer while music plays in the
+// note's own slot, so the line never moves, dressed in the one prop of the
+// song's genre and moving to its beat (standing still with
+// prefers-reduced-motion: reduce), its tooltip naming the title and the genre; a click on it opens the dropup panel and never
 // stops the music. The panel opens on a now playing area (the genre's art,
 // title, genre, the position against the length scriptune plays the sheet
 // for, play or stop and next, the mode the shuffle runs in), the volume row
@@ -546,6 +546,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
           pose: ["[data-dancer-char]", "[data-dancer-body]"].map((sel) => dancer.querySelector(sel).getAttribute("transform")).join(" "),
           title: root.querySelector("[data-song-open]").getAttribute("title"),
           label: root.querySelector("[data-song-open]").getAttribute("aria-label"),
+          box: (({ x, width }) => Math.round(x) + "+" + Math.round(width))(root.querySelector("[data-song-open]").getBoundingClientRect()),
         };
       });
       const idle = await note();
@@ -559,6 +560,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       const on = await note();
       assert(!on.icon && on.eq, `the playing note ${JSON.stringify(on)}`);
       assert(on.title === `${song.now} · ${song.genre}` && on.label === `Songs, playing ${song.now} from ${song.genre}`, `the playing note names ${JSON.stringify(on)}`);
+      assert(on.box === idle.box, `the note moved when the music started: ${idle.box} to ${on.box}`);
       assert(on.genre === song.genre && on.props.length === 1, `the dancer is not dressed for ${song.genre}: ${JSON.stringify(on)}`);
       await sleep(150);
       assert((await note()).pose !== on.pose, `the dancer does not move: ${on.pose}`);
@@ -579,7 +581,7 @@ L.runFeature("SONG-PLAYER", async ({ engine, browser, page, run, mobilePage }) =
       await page.click(TOGGLE);
       await waitPlaying(page, false);
       const off = await note();
-      assert(off.icon && !off.eq && off.title === "Songs", `the stopped note ${JSON.stringify(off)}`);
+      assert(off.icon && !off.eq && off.title === "Songs" && off.box === idle.box, `the stopped note ${JSON.stringify(off)}`);
       await closePanel(page);
     });
 
