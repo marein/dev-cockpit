@@ -331,6 +331,7 @@
   <a class="dc-rail-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" href="/terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "assistants"}} active{{end}}" href="/assistants" title="Assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></a>
+  {{range pluginPages}}<a class="dc-rail-btn{{if eq $.ActiveTab .Tab}} active{{end}}" href="{{.URL}}" title="{{.Title}}"><i class="ti {{.Icon}} icon" aria-hidden="true"></i><span>{{.Title}}</span></a>{{end}}
   <span class="dc-rail-gap"></span>
   <div class="dc-rail-foot">
     <a class="dc-rail-btn{{if eq .ActiveTab "settings"}} active{{end}}" href="/settings/general"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{template "backup_reviews_badge.gohtml" (dict "Count" .BackupReviewCount "Class" "dc-rail-count")}}</a>
@@ -423,6 +424,7 @@
   <button type="button" class="dc-tabbar-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" data-ctx-area="terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></button>
   <a class="dc-tabbar-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
   <button type="button" class="dc-tabbar-btn{{if eq .ActiveTab "assistants"}} active{{end}}" data-ctx-area="assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></button>
+  {{range pluginPages}}<a class="dc-tabbar-btn{{if eq $.ActiveTab .Tab}} active{{end}}" href="{{.URL}}"><i class="ti {{.Icon}} icon" aria-hidden="true"></i><span>{{.Title}}</span></a>{{end}}
   {{/* The Cockpit tab replaces Settings on the phone: the app's gauge is its
        icon, colored by the worst server reading, and one plain dot says that
        something in its sheet wants attention, an unread notification or an

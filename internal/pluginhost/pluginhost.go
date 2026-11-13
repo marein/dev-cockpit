@@ -14,7 +14,7 @@ import (
 // ServesHTTP reports whether the plugin's subtree answers anything, which is
 // what decides whether the router registers it at all.
 func ServesHTTP(s *Serve) bool {
-	return s.Handler() != nil || s.Assets() != nil || len(s.CustomElements()) > 0
+	return s.Handler() != nil || s.Assets() != nil || len(s.CustomElements()) > 0 || s.Page() != nil
 }
 
 // AssetPrefix is the manifest path prefix of one plugin's added assets,
@@ -90,4 +90,29 @@ func SlotHTML(serves []*Serve, slot string) template.HTML {
 		b.WriteString(s.SlotHTML(slot))
 	}
 	return template.HTML(b.String())
+}
+
+// PageLink is one plugin page as the rail and the tab bar show it.
+type PageLink struct {
+	Title string
+	Icon  string
+	URL   string
+	Tab   string
+}
+
+// PageTab is the active tab name of a plugin's page.
+func PageTab(s *Serve) string { return "plugin-" + s.ID() }
+
+// PageURL is where a plugin's page answers, the root of its subtree.
+func PageURL(s *Serve) string { return "/plugins/" + s.ID() + "/" }
+
+// Pages answers the pages the plugins added, in plugin order.
+func Pages(serves []*Serve) []PageLink {
+	var links []PageLink
+	for _, s := range serves {
+		if p := s.Page(); p != nil {
+			links = append(links, PageLink{Title: p.Title, Icon: p.Icon, URL: PageURL(s), Tab: PageTab(s)})
+		}
+	}
+	return links
 }

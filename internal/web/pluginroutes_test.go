@@ -29,6 +29,7 @@ func (subtreePlugin) ConfigureServe(s plugin.Serve) error {
 		_, _ = w.Write([]byte("plugin page"))
 	})
 	s.AddRoutes(mux)
+	s.AddPage("Fake", "ti-box", "<fake-board></fake-board>")
 	return nil
 }
 
@@ -140,5 +141,35 @@ func TestPluginSubtreeRequiresTheCSRFToken(t *testing.T) {
 	r.ServeHTTP(rec, post)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("a POST without the CSRF token answered %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// A plugin's own page answers at the root of its subtree behind the session,
+// in the cockpit's layout, with its rail entry marked active.
+func TestPluginPageRendersInTheLayout(t *testing.T) {
+	r, _ := pluginRouter(t)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/fake/", nil))
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/login") {
+		t.Fatalf("unauthenticated GET /plugins/fake/ answered %d %q, want the login redirect",
+			rec.Code, rec.Header().Get("Location"))
+	}
+
+	shell, s, _ := assistantEntryServer(t)
+	serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "fake", Plugin: subtreePlugin{}}}, "", t.TempDir(), nil, nil)
+	if err != nil {
+		t.Fatalf("ConfigureServe() = %v", err)
+	}
+	withShell(t, shell, s, serves)
+	signedIn := func(c *gin.Context) { ginsessions.Default(c).Set(sessionUserKey, "admin") }
+	shell.Any("/plugins/fake/*path", signedIn, s.servePlugin(serves[0]))
+	rec = httptest.NewRecorder()
+	shell.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/fake/", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "<fake-board></fake-board>") {
+		t.Fatalf("GET /plugins/fake/ answered %d without the plugin's markup", rec.Code)
+	}
+	if !strings.Contains(body, `class="dc-rail-btn active" href="/plugins/fake/"`) {
+		t.Fatal("the page shows no active rail entry for itself")
 	}
 }
