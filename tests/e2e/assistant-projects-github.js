@@ -83,14 +83,14 @@ const tab = (p, name) => p.evaluate(({ pane, name }) => {
   const root = document.querySelector(`${pane} [data-assistant-project-view-body]`);
   const thread = (el) => ({
     id: el.dataset.thread || "",
-    cid: el.dataset.assistantThread || "",
-    project: shown(el.querySelector("[data-assistant-thread-project]")),
-    origin: text(el.querySelector("[data-assistant-thread-origin]")),
-    file: text(el.querySelector("[data-assistant-thread-file]")),
-    quote: text(el.querySelector("[data-assistant-thread-quote]")),
-    outdated: shown(el.querySelector("[data-assistant-thread-outdated]")),
+    cid: el.dataset.lineThread || "",
+    project: shown(el.querySelector("[data-line-thread-project]")),
+    origin: text(el.querySelector("[data-line-thread-origin]")),
+    file: text(el.querySelector("[data-line-thread-file]")),
+    quote: text(el.querySelector("[data-line-thread-quote]")),
+    outdated: shown(el.querySelector("[data-line-thread-outdated]")),
     notes: [...el.querySelectorAll("[data-comment-note]")].filter(shown).map((n) => `${text(n.querySelector("[data-comment-note-author]"))}: ${text(n.querySelector("[data-comment-note-text]"))}`),
-    actions: [...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map(text),
+    actions: [...el.querySelectorAll("[data-line-thread-actions] button")].filter(shown).map(text),
     right: el.getBoundingClientRect().right,
   });
   return {
@@ -111,10 +111,10 @@ const tab = (p, name) => p.evaluate(({ pane, name }) => {
     open: shown(root),
     count: text(root?.querySelector("[data-assistant-project-reviews-count]")),
     unpublished: text(root?.querySelector("[data-assistant-project-unpublished-box]")),
-    threads: [...(root?.querySelectorAll("[data-assistant-project-threads-open] [data-assistant-thread]") || [])].map(thread),
+    threads: [...(root?.querySelectorAll("[data-assistant-project-threads-open] [data-line-thread]") || [])].map(thread),
     resolvedToggle: shown(root?.querySelector("[data-assistant-project-resolved-toggle]")) ? root.querySelector("[data-assistant-project-resolved-toggle]").innerText.replace(/\s+/g, " ").trim() : "",
     resolvedOpen: root?.querySelector("[data-assistant-project-resolved-toggle]")?.getAttribute("aria-expanded") || "",
-    resolved: [...(root?.querySelectorAll("[data-assistant-project-threads-resolved] [data-assistant-thread]") || [])].map(thread),
+    resolved: [...(root?.querySelectorAll("[data-assistant-project-threads-resolved] [data-line-thread]") || [])].map(thread),
     controls: root ? [...root.querySelectorAll("button, form, textarea, input")].filter((el) => !el.matches("[data-assistant-project-back], [data-assistant-project-switch], [data-assistant-project-resolved-toggle], [data-assistant-changed-toggle], [data-assistant-changed-more], [data-assistant-changes-older]")).length : 0,
     width: window.innerWidth,
   };
@@ -227,7 +227,7 @@ L.runFeature("assistant-projects-github", async ({ browser, page, run, mobilePag
   let linkId = "";
   let guest = null;
   const refresh = () => page.evaluate(async (p) => (await fetch(`/projects/${p}/forge/status?fresh=1`, { headers: { Accept: "application/json" } })).status, REPO);
-  const threadSel = (id) => `${PANE} [data-assistant-thread][data-thread="${id}"]`;
+  const threadSel = (id) => `${PANE} [data-line-thread][data-thread="${id}"]`;
   const toast = (p, words) => p.waitForFunction((w) => [...document.querySelectorAll(".dc-toast")].some((el) => el.textContent.includes(w)), words, { timeout: 15000 });
   const openReviews = async (p) => {
     await p.click(`${PANE} [data-assistant-project="${REPO}"] [data-assistant-project-review]`);
@@ -311,18 +311,18 @@ L.runFeature("assistant-projects-github", async ({ browser, page, run, mobilePag
       assert(outdated && outdated.outdated && JSON.stringify(outdated.notes) === JSON.stringify(["octocat: Added e"]), `the outdated thread reads ${JSON.stringify(outdated)}`);
       assert(mine && mine.origin === "local", `the local comment reads ${JSON.stringify(mine)}`);
       assert(v.count === "5" && v.resolvedToggle === "Show 1 resolved thread" && /^1 line comment not published Publish as review$/.test(v.unpublished), `the view reads ${JSON.stringify(v)}`);
-      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-assistant-thread-handoff]`);
+      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-line-thread-handoff]`);
       const want = `Review thread PRRT_kwDOe2e1 in project ${REPO} on branch feature at ${FILE}:4.\n`;
       await page.waitForFunction(([sel, w]) => document.querySelector(sel)?.value === w, ["[data-assistant-input]", want], { timeout: 5000 });
       await page.fill("[data-assistant-input]", "");
       await sleep(700);
-      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-assistant-thread-reply-open]`);
-      await page.fill(`${threadSel("PRRT_kwDOe2e1")} [data-assistant-thread-reply-text]`, "Renamed in abc.");
-      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-assistant-thread-reply-send]`);
+      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-line-thread-reply-open]`);
+      await page.fill(`${threadSel("PRRT_kwDOe2e1")} [data-line-thread-reply-text]`, "Renamed in abc.");
+      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-line-thread-reply-send]`);
       await toast(page, "The reply is posted on pull request #7.");
       assert(state.replies.some((r) => r.kind === "github" && r.thread === "PRRT_kwDOe2e1" && r.body === "Renamed in abc."), `the forge holds ${JSON.stringify(state.replies)}`);
       await until(page, (w) => JSON.stringify(w.threads.find((t) => t.id === "PRRT_kwDOe2e1")?.notes) === JSON.stringify(["octocat: New name bb?", "octocat: Renamed in abc."]), "the reply did not reach the view");
-      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-assistant-thread-resolve]`);
+      await page.click(`${threadSel("PRRT_kwDOe2e1")} [data-line-thread-resolve]`);
       await toast(page, "The thread is resolved on pull request #7.");
       assert(state.resolved.includes("PRRT_kwDOe2e1"), `the forge resolved ${JSON.stringify(state.resolved)}`);
       await until(page, (w) => w.count === "4" && w.resolvedToggle === "Show 2 resolved threads" && !w.threads.some((t) => t.id === "PRRT_kwDOe2e1"), "the resolved thread did not fold away");

@@ -2,6 +2,8 @@ const L = require("./lib");
 const { assert, sleep, BASE } = L;
 const { guestChecks } = require("./editor-comments-guest");
 const { threadChecks } = require("./editor-comments-threads");
+const { inlineChecks } = require("./editor-comments-inline");
+const { editChecks } = require("./editor-comments-edit");
 
 // Line comments in the editor: notes pinned to single lines. Routes: GET
 // /projects/:name/editor/comments (the project's notes, the project comments
@@ -18,29 +20,34 @@ const { threadChecks } = require("./editor-comments-threads");
 // every open editor pulls the list itself. Client: no gutter column of its
 // own; a commented line tints its whole gutter row (.cm-comment-line via
 // gutterLineClass, so the tint spans the line numbers AND the gutters beside
-// them, the fold gutter included). The line's menu opens on a plain click
-// anywhere in the gutter, on a right click and on a touch long press
-// (wireRowMenus), and holds in this
-// order: add the comment or open its thread, Delete comment on a commented
-// line, Copy path:line, and the blame toggle (only in a git repository,
-// blameMenuItem answers null without one, so this runner's scratch project
-// shows a bare line's menu with two entries). The note's dialog is a
-// Bootstrap modal (data-editor-comment-modal, its host moved to document.body
-// like the terminal panel's modals): textarea with a dimmed form-hint under
-// it, Cancel, Add, an empty add marks the field is-invalid, Ctrl/Cmd+Enter
-// saves like the commit message. A commented line opens its thread in the
-// same dialog: the conversation, a pencil on each note to edit it in the
-// field, the field for a reply and the resolve switch, the threads' checks
-// standing in editor-comments-threads.js; every delete lives in the menus
-// behind a swal confirm. Ctrl+Alt+C comments the cursor line or opens its
-// thread, Ctrl+Shift+C toggles the Line comments sheet, and the menu badges
+// them, the fold gutter included). A plain click anywhere in the gutter beside
+// a line folds the line's threads in or out under it, on a bare line it opens
+// the field of a new comment there (@dc/editor-threads). The line's menu
+// opens on a right click and on a touch long press (wireRowMenus), and holds
+// in this order: add the comment or open its thread, Delete comment on a
+// commented line, Copy path:line, and the blame toggle (only in a git
+// repository, blameMenuItem answers null without one, so this runner's
+// scratch project shows a bare line's menu with two entries). The field
+// (data-line-comment-form) stands under its line: textarea with a dimmed
+// form-hint under it, Cancel, Add, an empty add marks the field is-invalid,
+// Ctrl/Cmd+Enter saves like the commit message, and the new thread unfolds
+// there. A thread unfolds as the server's card (data-line-thread, GET
+// .../comments/thread): the conversation, a pencil on each note to edit it in
+// place, Reply with the field and the resolve switch, Resolve or Reopen, the
+// threads' checks standing in editor-comments-threads.js, what the inline
+// threads keep through edits, saves, the disk and the keys in
+// editor-comments-inline.js and the edit in place in editor-comments-edit.js;
+// every delete lives in the menus and the card's
+// bins behind a swal confirm. Ctrl+Alt+C opens the field on the cursor line
+// or the reply of its thread, Ctrl+Shift+C toggles the Line comments sheet, and the menu badges
 // (Line comments, Git) hide at zero instead of standing as an empty pill. The
 // sheet follows the git history's shape: one cell per comment, the sheet's
 // own row, in a row-deck grid (col-12 col-lg-6, two per line from lg up), the
 // whole cell is the control and a click on it opens the app's menu over it (Go
 // to line jumps there, Open thread opens the thread, Delete is the danger
 // entry), anchored at the click or at the cell when Enter got there; the sheet
-// stands behind that menu. The head actions close the sheet themselves: Copy
+// stands behind that menu, Open thread closes it for the thread unfolded
+// under its line. The head actions close the sheet themselves: Copy
 // as text (built by GET .../comments/text: heading "Line comments in
 // <project>:", then an entry per comment, path:line and the code line in its
 // head, every line of the comment behind "  > " as written, a line break or a
@@ -87,22 +94,42 @@ async function openEditor(target) {
 }
 
 async function openFile(target, probe = "one") {
+  const open = await target.evaluate(([f, p]) => document.querySelector(`.editor-tab[data-path="${f}"]`) && document.querySelector(".editor-group-focused .cm-content")?.textContent.includes(p), [FILE, probe]);
   const row = target.locator(`.editor-file[data-path="${FILE}"]`);
-  await row.waitFor({ state: "visible", timeout: 15000 });
-  await row.click();
+  if (!open) {
+    await row.waitFor({ state: "visible", timeout: 15000 });
+    await row.click();
+  }
   await target.waitForSelector(".cm-lineNumbers", { state: "attached", timeout: 15000 });
   await target.waitForFunction((p) => document.querySelector(".cm-content")?.textContent.includes(p), probe, { timeout: 15000 });
 }
+
+// codeLine is the first line of the code, a click there never lands in a
+// thread standing under a line.
+const codeLine = (target) => target.locator(".cm-content > .cm-line").first();
 
 const lineCell = (target, n) => target
   .locator(".cm-lineNumbers .cm-gutterElement:visible")
   .filter({ hasText: new RegExp(`^${n}$`) })
   .first();
 
-async function openLineMenu(target, n, { button = "left" } = {}) {
+async function openLineMenu(target, n) {
   await sleep(400);
-  await lineCell(target, n).click({ button });
+  await lineCell(target, n).click({ button: "right" });
   await target.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
+}
+
+// addInline writes a note into the field the cursor line's Ctrl+Alt+C opens
+// and saves it with Ctrl+Enter, the thread then unfolding under its line.
+async function addInline(target, line, text) {
+  await target.keyboard.press("Control+Alt+C");
+  const field = L.lineField(target, line);
+  await field.waitFor({ timeout: 6000 });
+  await target.waitForFunction(() => document.activeElement?.matches("[data-line-comment-text]"), null, { timeout: 6000 });
+  await target.keyboard.insertText(text);
+  await target.keyboard.press("Control+Enter");
+  await L.lineThread(target, text).waitFor({ timeout: 6000 });
+  assert(await field.count() === 0, "the field stands after its add");
 }
 
 const menuLabels = (target) => target.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => (e.querySelector(".dc-menu-label-head") || e).textContent.trim()));
@@ -182,29 +209,47 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await openFile(page);
   });
 
-  await run("a plain click on the line number opens the menu and adds a note", async () => {
+  await run("a plain click on a bare line number opens the field under it, Add stores the note and unfolds its thread, a click folds it", async () => {
     assert(await badgeHidden(page), "the empty count badge is not hidden");
     const cursor = await page.locator(".cm-gutters").first().evaluate((el) => getComputedStyle(el).cursor);
     assert(cursor === "pointer", `the gutter cursor is ${cursor}`);
-    await openLineMenu(page, 2);
-    const labels = await menuLabels(page);
-    assert(labels.join("|") === "Add line comment|Copy path:line", `bare line menu reads ${labels.join(", ")}`);
-    await pickMenuItem(page, "Add line comment");
-    await commentDialogShown(page);
-    assert(await page.locator("[data-editor-comment-title]").textContent() === "Line comment", "dialog title");
-    assert(await page.locator("[data-editor-comment-place]").textContent() === `${FILE}:2`, "dialog does not name file and line");
-    assert(await page.locator("[data-editor-comment-modal] .form-hint").textContent() ===
+    await L.pressLine(page, 2);
+    const field = L.lineField(page, 2);
+    await field.waitFor({ timeout: 6000 });
+    assert(await L.seen(field), "the field does not show under line 2");
+    assert(await page.locator("[data-editor-comment-modal].show").count() === 0, "a dialog opened for the line");
+    const under = await page.evaluate(() => {
+      const block = document.querySelector(".cm-content [data-line-block]");
+      return block?.previousElementSibling?.textContent === "two" && block.nextElementSibling?.textContent === "three";
+    });
+    assert(under, "the field does not stand between line 2 and line 3");
+    assert(await field.locator("[data-line-comment-hint]").textContent() ===
       "The comment follows this line as the file changes, but works best when the line keeps its content. The assistant can read and manage all line comments.",
-      "the dialog hint is missing or off");
-    await page.click("[data-editor-comment-save]");
-    assert(await page.locator("[data-editor-comment-text].is-invalid").count() === 1, "an empty save does not mark the field");
-    assert(await page.locator("[data-editor-comment-modal].show").count() === 1, "an empty save closed the dialog");
-    await page.fill("[data-editor-comment-text]", "needs a guard");
-    await page.click("[data-editor-comment-save]");
-    await commentDialogGone(page);
+      "the field's hint is missing or off");
+    await field.locator("[data-line-comment-add]").click();
+    assert(await field.locator("[data-line-comment-text].is-invalid").count() === 1, "an empty add does not mark the field");
+    assert(await field.locator(".invalid-feedback").textContent() === "A comment is required." && await L.seen(field.locator(".invalid-feedback")), "the empty add's message does not show");
+    await field.locator("[data-line-comment-text]").fill("needs a guard");
+    await field.locator("[data-line-comment-add]").click();
+    const card = L.lineThread(page, "needs a guard");
+    await card.waitFor({ timeout: 6000 });
+    assert(await field.count() === 0, "the field stands after the add");
+    assert(await L.seen(card) && await card.evaluate((el) => el.closest("[data-line-block]").dataset.lineBlock) === "2", "the new thread does not unfold under line 2");
     await waitMarked(page, "2");
     assert(await page.locator(".cm-line-comments").count() === 0, "a comment gutter column of its own exists");
     assert(!(await badgeHidden(page)) && await badge(page) === "1", "the menu badge does not count the note");
+    await L.pressLine(page, 2);
+    await page.waitForFunction(() => !document.querySelector(".cm-content [data-line-thread]"), null, { timeout: 6000 });
+    await L.pressLine(page, 2);
+    await card.waitFor({ timeout: 6000 });
+    assert(await L.seen(card), "a second click does not unfold the thread again");
+    await L.pressLine(page, 2);
+    await page.waitForFunction(() => !document.querySelector(".cm-content [data-line-block]"), null, { timeout: 6000 });
+    await openLineMenu(page, 1);
+    const labels = await menuLabels(page);
+    assert(labels.join("|") === "Add line comment|Copy path:line", `the right click's bare line menu reads ${labels.join(", ")}`);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
   });
 
   await run("the highlight tints every gutter of the line, the fold gutter too", async () => {
@@ -239,7 +284,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   });
 
   await run("editing above moves the highlight with the line and syncs the move", async () => {
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.type("zero");
     await page.keyboard.press("Enter");
@@ -255,7 +300,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   });
 
   await run("an unsaved move keeps gutter, sheet and jump on the same line", async () => {
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.press("Enter");
     await waitMarked(page, "4");
@@ -281,7 +326,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   });
 
   await run("deleting the commented line reads outdated at once, undo heals it", async () => {
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
@@ -302,7 +347,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     const data = await getComments(page);
     assert(data.comments.length === 1 && data.comments[0].lineText === "two" && !data.comments[0].outdated,
       `the orphan wrote a new quote to the server: ${JSON.stringify(data.comments)}`);
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+z");
     await page.waitForFunction(() => document.querySelectorAll(".cm-lineNumbers .cm-comment-line-outdated").length === 0, null, { timeout: 6000 });
     await waitMarked(page, "3");
@@ -311,7 +356,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   });
 
   await run("cut and paste elsewhere drags the marker along without a save", async () => {
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
@@ -346,7 +391,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   });
 
   await run("an orphan past the file end leaves the gutter, the sheet keeps it", async () => {
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Shift+Control+End");
@@ -358,7 +403,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     assert(cellText.includes("Outdated") && cellText.includes("was: two"), `the sheet lost the over-the-end orphan: ${cellText}`);
     await page.keyboard.press("Control+Shift+C");
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+z");
     await page.waitForFunction(() => document.querySelectorAll(".cm-lineNumbers .cm-comment-line-outdated").length === 0, null, { timeout: 6000 });
     await waitMarked(page, "3");
@@ -375,50 +420,45 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     assert(await badge(page) === "1", "the badge does not survive the reload");
   });
 
-  await run("Ctrl+Alt+C comments the cursor line", async () => {
-    await page.click(".cm-content");
+  await run("Ctrl+Alt+C opens the field on the cursor line", async () => {
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
-    await page.keyboard.press("Control+Alt+C");
-    await commentDialogShown(page);
-    assert(await page.locator("[data-editor-comment-title]").textContent() === "Line comment", "the shortcut does not open the add dialog");
-    await page.fill("[data-editor-comment-text]", "cursor note");
-    await page.click("[data-editor-comment-save]");
-    await commentDialogGone(page);
+    await addInline(page, 1, "cursor note");
     await waitMarked(page, "1,3");
     assert(await badge(page) === "2", "the badge does not count both notes");
   });
 
-  await run("Ctrl+Alt+C opens the existing note's thread, a right click opens the menu too", async () => {
-    await page.click(".cm-content");
+  await run("Ctrl+Alt+C opens the reply of the existing note's thread, a right click opens the menu too", async () => {
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.press("Control+Alt+C");
-    await commentDialogShown(page);
-    assert(await page.locator("[data-editor-comment-title]").textContent() === "Line comment", "the shortcut does not open the existing note");
-    assert(await page.locator("[data-editor-comment-thread] [data-comment-note-text]").allTextContents().then((t) => t.join("|")) === "cursor note", "the thread does not hold the note");
-    assert(await page.locator("[data-editor-comment-text]").inputValue() === "" && await page.locator("[data-editor-comment-save]").textContent() === "Reply", "the thread does not offer a reply");
-    await page.click("[data-editor-comment-cancel]");
-    await commentDialogGone(page);
-    await openLineMenu(page, 1, { button: "right" });
+    const card = L.lineThread(page, "cursor note");
+    await page.waitForFunction(() => document.activeElement?.matches("[data-line-thread-reply-text]"), null, { timeout: 6000 });
+    assert(await card.locator("[data-comment-note-text]").allTextContents().then((t) => t.join("|")) === "cursor note", "the thread does not hold the note");
+    assert(await L.seen(card.locator("[data-line-thread-reply]")) && await card.locator("[data-line-thread-reply-text]").inputValue() === "" && await card.locator("[data-line-thread-reply-send]").textContent() === "Reply", "the thread does not offer its reply");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.activeElement?.matches(".cm-content"), null, { timeout: 6000 });
+    assert(!(await L.seen(card.locator("[data-line-thread-reply]"))), "Escape left the empty reply open");
+    await openLineMenu(page, 1);
     const labels = await menuLabels(page);
     assert(labels.join("|") === "Open thread|Delete comment|Copy path:line", `marked line menu reads ${labels.join(", ")}`);
     await page.keyboard.press("Escape");
     await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
   });
 
-  await run("the pencil edits the note and saves on Ctrl+Enter, the line menu's Delete comment confirms and removes", async () => {
-    await openLineMenu(page, 1);
-    await pickMenuItem(page, "Open thread");
-    await commentDialogShown(page);
-    assert(await page.locator("[data-editor-comment-delete]").count() === 0, "the dialog still carries a Delete button");
-    await page.click('[data-editor-comment-thread] button[aria-label="Edit comment"]');
-    assert(await page.locator("[data-editor-comment-title]").textContent() === "Edit line comment", "the pencil does not edit the note");
-    assert(await page.locator("[data-editor-comment-text]").inputValue() === "cursor note" && await page.locator("[data-editor-comment-save]").textContent() === "Save", "the field does not hold the note to edit");
-    await page.fill("[data-editor-comment-text]", "cursor note, edited");
-    await page.locator("[data-editor-comment-text]").press("Control+Enter");
-    await commentDialogGone(page);
-    await sleep(400);
+  await run("the pencil edits the note in place and saves on Ctrl+Enter, the line menu's Delete comment confirms and removes", async () => {
+    const card = L.lineThread(page, "cursor note");
+    if (!(await L.seen(card))) await L.pressLine(page, 1);
+    await card.waitFor({ timeout: 6000 });
+    assert(await card.locator("[data-line-thread-delete]").count() === 1, "the thread's head carries no bin");
+    await card.locator('button[aria-label="Edit comment"]').click();
+    const text = card.locator("[data-comment-note-field]");
+    assert(await L.seen(text) && await text.inputValue() === "cursor note" && !(await L.seen(card.locator("[data-comment-note-text]"))) && !(await L.seen(card.locator("[data-line-thread-reply]"))), "the note's text did not turn into its field");
+    await text.fill("cursor note, edited");
+    await text.press("Control+Enter");
+    await page.waitForFunction(() => [...document.querySelectorAll(".cm-content [data-comment-note-text]")].some((el) => el.textContent === "cursor note, edited" && el.getClientRects().length), null, { timeout: 6000 });
     let data = await getComments(page);
-    assert(data.comments.some((c) => c.text === "cursor note, edited"), "the Ctrl+Enter save did not land");
+    assert(data.comments.some((c) => c.text === "cursor note, edited") && !(await L.seen(text)), "the Ctrl+Enter save did not land in place");
     await openLineMenu(page, 1);
     await pickMenuItem(page, "Delete comment");
     await page.waitForSelector(".swal2-confirm", { timeout: 6000 });
@@ -430,6 +470,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await page.click(".swal2-confirm");
     await confirmDialogGone(page);
     await waitMarked(page, "3");
+    await page.waitForFunction(() => !document.querySelector(".cm-content [data-line-thread]"), null, { timeout: 6000 });
     await sleep(400);
     data = await getComments(page);
     assert(data.comments.length === 1 && data.comments[0].text === "needs a guard", "Delete removed the wrong note");
@@ -468,14 +509,12 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await page.waitForFunction(() => (document.querySelector("[data-editor-pos]")?.textContent || "").startsWith("3:"), null, { timeout: 6000 });
   });
 
-  await run("the cell menu edits and deletes with the sheet standing, Enter opens it too", async () => {
-    await page.click(".cm-content");
+  await run("the cell menu opens the thread under its line and deletes with the sheet standing, Enter opens it too", async () => {
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
-    await page.keyboard.press("Control+Alt+C");
-    await commentDialogShown(page);
-    await page.fill("[data-editor-comment-text]", "temp note");
-    await page.click("[data-editor-comment-save]");
-    await commentDialogGone(page);
+    await addInline(page, 1, "temp note");
+    await L.pressLine(page, 1);
+    await page.waitForFunction(() => !document.querySelector(".cm-content [data-line-thread]"), null, { timeout: 6000 });
     await waitMarked(page, "1,3");
     await openSheet(page);
     // The sheet opens on its filter with the first head action marked, so
@@ -490,12 +529,12 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await sheetCell(page, "temp note").click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     await pickMenuItem(page, "Open thread");
-    await commentDialogShown(page);
-    assert(await page.locator("[data-editor-comment-thread] [data-comment-note-text]").first().textContent() === "temp note", "Open thread does not hold the note");
-    await page.click("[data-editor-comment-cancel]");
-    await commentDialogGone(page);
-    assert(await page.locator("[data-editor-sheet]:not([hidden])").count() === 1, "the sheet went away under the dialog");
-    await sleep(400);
+    await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
+    const card = L.lineThread(page, "temp note");
+    await card.waitFor({ timeout: 6000 });
+    assert(await L.seen(card) && await card.evaluate((el) => el.closest("[data-line-block]").dataset.lineBlock) === "1", "Open thread does not unfold the thread under line 1");
+    assert(await page.locator("[data-editor-comment-modal].show").count() === 0, "Open thread opened a dialog");
+    await openSheet(page);
     await sheetCell(page, "temp note").click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     await pickMenuItem(page, "Delete");
@@ -529,13 +568,9 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   // hit's menu, and Escape in the field clears the query before the sheet's
   // own Escape closes it.
   await run("the sheet's filter narrows the cells, Enter opens the first hit's menu", async () => {
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
-    await page.keyboard.press("Control+Alt+C");
-    await commentDialogShown(page);
-    await page.fill("[data-editor-comment-text]", "second thought");
-    await page.click("[data-editor-comment-save]");
-    await commentDialogGone(page);
+    await addInline(page, 1, "second thought");
     await waitMarked(page, "1,3");
     await openSheet(page);
     const shown = () => page.evaluate(() =>
@@ -676,7 +711,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   await run("a comment pinned elsewhere lands on the locally shifted line", async () => {
     await openEditor(page);
     await openFile(page);
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.press("Enter");
     const added = await addComment(2, "from device b");
@@ -701,16 +736,13 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
   await run("a note born in a dirty buffer quotes the buffer, the save heals it", async () => {
     await openEditor(page);
     await openFile(page);
-    await page.click(".cm-content");
+    await codeLine(page).click();
     await page.keyboard.press("Control+Home");
     await page.keyboard.insertText("fresh\n");
     await page.keyboard.press("Control+Home");
-    await page.keyboard.press("Control+Alt+C");
-    await commentDialogShown(page);
-    await page.fill("[data-editor-comment-text]", "dirty born");
-    await page.click("[data-editor-comment-save]");
-    await commentDialogGone(page);
+    await addInline(page, 1, "dirty born");
     await waitMarked(page, "1");
+    assert(!(await L.seen(L.lineThread(page, "dirty born").locator("[data-line-thread-outdated]"))), "the born note's card reads outdated in its own buffer");
     await sleep(600);
     assert(await page.locator(".cm-lineNumbers .cm-comment-line-outdated").count() === 0, "the born note reads outdated in its own buffer");
     let data = await getComments(page);
@@ -792,21 +824,40 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
 
   await threadChecks({ page, run, scratch, file: FILE, openEditor, openFile, openLineMenu, menuLabels, pickMenuItem, waitMarked, getComments, openSheet, sheetCell, commentDialogShown, commentDialogGone, confirmDialogGone });
 
+  await inlineChecks({ page, run, mobilePage, scratch, file: FILE, saveFile, openEditor, openFile, waitMarked, getComments, openSheet, sheetCell, pickMenuItem });
+  await editChecks({ page, run, mobilePage, scratch, file: FILE, saveFile, openEditor, openFile, waitMarked, getComments });
+
   await guestChecks({ engine, browser, page, run, mobilePage, bag, scratch, file: FILE, openEditor, openFile, openSheet, commentDialogShown, commentDialogGone });
 
-  await run("phone: tapping a line number opens the menu, the sheet reads on touch", async () => {
+  await run("phone: a tap on a line number opens the field, a typed note adds on Add, a tap folds its thread, the sheet reads on touch", async () => {
     const mp = await mobilePage();
     await sleep(600);
     await openEditor(mp);
     await openFile(mp);
-    await lineCell(mp, 2).tap();
-    await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
-    await mp.locator(".dc-context-menu .dropdown-item", { hasText: "Add line comment" }).click();
-    await commentDialogShown(mp);
-    await mp.fill("[data-editor-comment-text]", "phone note");
-    await mp.click("[data-editor-comment-save]");
-    await commentDialogGone(mp);
+    await L.pressLine(mp, 2, { tap: true });
+    const field = L.lineField(mp, 2);
+    await field.waitFor({ timeout: 6000 });
+    assert(await L.seen(field), "the tap opened no field under line 2");
+    const box = await field.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, right: r.right, width: innerWidth };
+    });
+    assert(box.left >= 0 && box.right <= box.width + 0.5, `the field leaves the phone's width: ${JSON.stringify(box)}`);
+    await field.locator("[data-line-comment-text]").tap();
+    await mp.keyboard.type("phone note");
+    await field.locator("[data-line-comment-add]").tap();
+    const card = L.lineThread(mp, "phone note");
+    await card.waitFor({ timeout: 6000 });
     await waitMarked(mp, "2");
+    await L.pressLine(mp, 2, { tap: true });
+    await mp.waitForFunction(() => !document.querySelector(".cm-content [data-line-thread]"), null, { timeout: 6000 });
+    await sleep(400);
+    await L.longPress(mp, lineCell(mp, 2));
+    const held = await menuLabels(mp);
+    assert(held[0] === "Open thread" && held.includes("Copy path:line"), `the long press opened ${held.join(", ")}`);
+    assert(await mp.locator(".cm-content [data-line-thread], .cm-content [data-line-comment-form]").count() === 0, "the long press also unfolded the line");
+    await mp.keyboard.press("Escape");
+    await mp.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
     await openMenu(mp);
     await mp.click("[data-editor-comments-item]");
     await mp.waitForSelector("[data-editor-sheet]:not([hidden])", { timeout: 6000 });

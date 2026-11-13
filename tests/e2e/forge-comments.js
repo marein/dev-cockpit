@@ -14,7 +14,8 @@ const { assert, sleep, BASE } = L;
 // detached HEAD, the token removed. GitLab's quote is the line at the commit
 // the thread stands on, read from the local repository, GitHub's the last
 // line of the thread's diff hunk; the thread follows its line like any
-// comment and reads outdated where its text is gone. Nobody edits or deletes
+// comment and reads outdated where its text is gone, every line number and
+// mark beside its code with the threads of a line unfolded. Nobody edits or deletes
 // one here, Delete all comments keeps them, a guest of a shared link reads
 // them like every thread and answers none. A thread that goes with the
 // binding comes back under the id it had; GitHub's conversation comments and
@@ -29,6 +30,7 @@ const { assert, sleep, BASE } = L;
 // push is read on the poller's own pace, about a minute per engine.
 
 const { startFakeForge, addHost, gitlabNote, gitlabDiscussion, EARLIER_HEAD } = require("./forge-fake");
+const { alignedGutter } = require("./editor-comments-inline");
 
 const FAKE_PORT = Number(process.env.FORGE_PORT || 3157);
 const FAKE_TLS_PORT = Number(process.env.FORGE_TLS_PORT || 3158);
@@ -120,6 +122,7 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
     const items = await p.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => ({ label: (e.querySelector(".dc-menu-label-head") || e).textContent.trim(), href: e.getAttribute("href") || "" })));
     await p.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
     await modalShown(p);
+    await L.threadCard(p, text).waitFor({ timeout: 6000 });
     return items;
   };
   const replies = (c) => (c.replies || []).map((r) => `${r.id} ${r.author}: ${r.text}`).join(" | ");
@@ -149,7 +152,7 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
   const lineCell = (p, n) => p.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first();
   const lineMenu = async (p, n) => {
     await sleep(400);
-    await lineCell(p, n).click();
+    await lineCell(p, n).click({ button: "right" });
     await p.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     return p.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((e) => ({
       label: (e.querySelector(".dc-menu-label-head") || e).textContent.trim(),
@@ -167,26 +170,16 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
     await p.waitForSelector("[data-editor-comment-modal].show", { timeout: 6000 });
     await sleep(500);
   };
-  const modal = (p) => p.evaluate(() => {
-    const shown = (el) => !!el && el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== "none";
-    const q = (sel) => document.querySelector(sel);
-    const a = q("[data-editor-comment-link]");
-    return {
-      title: q("[data-editor-comment-title]").textContent.trim(),
-      place: q("[data-editor-comment-place]").textContent.trim(),
-      author: shown(q("[data-editor-comment-author]")) ? q("[data-editor-comment-author]").textContent.trim() : "",
-      text: q("[data-editor-comment-text]").value,
-      field: shown(q("[data-editor-comment-text]")) && !q("[data-editor-comment-text]").readOnly,
-      save: shown(q("[data-editor-comment-save]")) ? q("[data-editor-comment-save]").textContent.trim() : "",
-      cancel: q("[data-editor-comment-cancel]").textContent.trim(),
-      hint: shown(q("[data-editor-comment-hint]")) ? q("[data-editor-comment-hint]").textContent.trim() : "",
-      resolve: shown(q("[data-editor-comment-resolve-row]")),
-      notes: [...(shown(q("[data-editor-comment-thread]")) ? document.querySelectorAll("[data-editor-comment-thread] [data-comment-note]") : [])].map((n) => `${n.querySelector("[data-comment-note-author]").textContent.trim()}: ${n.querySelector("[data-comment-note-text]").textContent}${n.querySelector("button") ? " +buttons" : ""}`),
-      link: shown(a) ? { text: a.textContent.trim(), href: a.getAttribute("href"), target: a.getAttribute("target") } : null,
-    };
-  });
+  // thread reads the card of the thread a note with text opens, see
+  // L.readThread, its reply form opened first where it offers one.
+  const thread = async (p, text, { reply = false } = {}) => {
+    const card = L.threadCard(p, text);
+    await card.waitFor({ timeout: 8000 });
+    if (reply && await card.locator("[data-line-thread-reply-open]").count()) await card.locator("[data-line-thread-reply-open]").click();
+    return L.readThread(p, text);
+  };
   const closeModal = async (p) => {
-    await p.click("[data-editor-comment-cancel]");
+    await p.click("[data-editor-comment-modal] .btn-close");
     await p.waitForSelector("[data-editor-comment-modal].show", { state: "detached", timeout: 6000 });
   };
   const openSheet = async (p) => {
@@ -259,29 +252,44 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       assert(items[0].icon === "ti-brand-gitlab" && items[1].icon === "ti-brand-gitlab" && items[1].hint === "", `the thread's entries read ${JSON.stringify(items)}`);
       assert(!labels.some((l) => /Delete comment|Publish comment|^Reply|^Resolve/.test(l)), `the menu offers to change a thread of the forge here: ${labels}`);
       await page.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
-      await modalShown(page);
-      const got = await modal(page);
-      assert(got.title === "Line comment" && got.place === `${FILE}:4` && got.author === "" && JSON.stringify(got.notes) === JSON.stringify(["root: New name bb?", "alice: Reply: yes, bb."]), `the dialog reads ${JSON.stringify(got)}`);
-      assert(got.field && got.save === "Reply" && got.resolve && got.hint === "It is posted on merge request !4 on GitLab, for everybody who can read it there.", `the dialog's reply reads ${JSON.stringify(got)}`);
+      const got = await thread(page, "New name bb?", { reply: true });
+      assert(got.title === "Line comment" && got.line === "4" && got.author === "" && JSON.stringify(got.notes) === JSON.stringify(["root: New name bb?", "alice: Reply: yes, bb."]), `the thread reads ${JSON.stringify(got)}`);
+      assert(got.field && got.save === "Reply" && got.resolve && got.hint === "It is posted on merge request !4 on GitLab, for everybody who can read it there.", `the thread's reply reads ${JSON.stringify(got)}`);
       assert(got.link && got.link.text === "Open the thread on GitLab" && got.link.href === `${mrPage}#note_29` && got.link.target === "_blank", `the link reads ${JSON.stringify(got.link)}`);
-      await closeModal(page);
+      await L.threadCard(page, "New name bb?").locator("[data-line-thread-reply-cancel]").click();
       await lineMenu(page, 4);
       await page.locator(".dc-context-menu .dropdown-item", { hasText: "Add line comment" }).click();
-      await modalShown(page);
-      const fresh = await modal(page);
-      assert(fresh.author === "" && fresh.link === null && fresh.field && fresh.save === "Add" && fresh.notes.length === 0, `the new comment's dialog reads ${JSON.stringify(fresh)}`);
-      await page.fill("[data-editor-comment-text]", "mine on the same line");
-      await page.click("[data-editor-comment-save]");
-      await page.waitForSelector("[data-editor-comment-modal].show", { state: "detached", timeout: 6000 });
+      const field = L.lineField(page, 4);
+      await field.waitFor({ timeout: 6000 });
+      assert(await L.seen(field) && await field.locator("[data-line-comment-add]").textContent() === "Add" && await field.locator("[data-comment-note]").count() === 0, "the new comment's field is not a bare field under line 4");
+      await field.locator("[data-line-comment-text]").fill("mine on the same line");
+      await field.locator("[data-line-comment-add]").click();
+      await L.lineThread(page, "mine on the same line").waitFor({ timeout: 6000 });
       await page.waitForFunction(() => document.querySelector("[data-editor-comments-count]")?.textContent.trim() === "5", null, { timeout: 8000 });
       const items2 = await lineMenu(page, 4);
       const labels2 = items2.map((i) => i.label);
       assert(JSON.stringify(labels2.slice(0, 2)) === JSON.stringify(["Open your thread: mine on the same line", "Open root's thread: New name bb?"]) && items2[0].hint === "Ctrl+Alt+C" && items2[0].icon === "ti-messages" && items2[1].icon === "ti-brand-gitlab", `with an own comment the menu reads ${JSON.stringify(items2)}`);
       assert(labels2.includes("Delete comment") && !labels2.some((l) => l.startsWith("Comment by") || l === "Add line comment"), `with an own comment the menu reads ${labels2}`);
       await page.locator(".dc-context-menu .dropdown-item", { hasText: "Open root's thread" }).click();
-      await modalShown(page);
-      assert((await modal(page)).notes[0] === "root: New name bb?", "the second entry opened another thread");
-      await closeModal(page);
+      assert((await thread(page, "New name bb?")).notes[0] === "root: New name bb?", "the second entry opened another thread");
+      await L.pressLine(page, 4);
+      await page.waitForFunction(() => !document.querySelector(".cm-content [data-line-thread]"), null, { timeout: 6000 });
+      const onFour = (await comments(page)).filter((c) => c.path === FILE && c.line === 4).length;
+      // Each card after the first joins the line's block once that stood, so
+      // the block grows after its placement.
+      let pulled = 0;
+      const stagger = async (route) => {
+        await sleep(700 * pulled++);
+        await route.continue();
+      };
+      await page.route(/\/comments\/thread\?/, stagger);
+      await L.pressLine(page, 4);
+      await page.waitForFunction((n) => [...document.querySelectorAll(".cm-content [data-line-thread]")].filter((card) => card.querySelector("[data-comment-note-text]")).length === n, onFour, { timeout: 8000 });
+      await page.unroute(/\/comments\/thread\?/, stagger);
+      assert(pulled === onFour, `the ${onFour} threads of line 4 pulled ${pulled} cards`);
+      await alignedGutter(page, `the ${onFour} threads of line 4 unfolded one after the other`);
+      await L.pressLine(page, 4);
+      await page.waitForFunction(() => !document.querySelector(".cm-content [data-line-thread]"), null, { timeout: 6000 });
     });
 
     await run("the sheet heads each thread with the forge and its author, offers no edit or delete, and Delete all keeps the threads", async () => {
@@ -303,7 +311,7 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       await closeMenu(page);
       const general = await openProjectThread(page, "General thread");
       assert(general.map((i) => i.label).join("|") === "Open thread|Open the thread on GitLab" && general[1].href === `${mrPage}#note_34`, `the general thread's menu reads ${JSON.stringify(general)}`);
-      const got = await modal(page);
+      const got = await thread(page, "General thread", { reply: true });
       assert(got.title === "Project comment" && got.place === "" && JSON.stringify(got.notes) === JSON.stringify(["root: General thread"]), `the general thread's dialog reads ${JSON.stringify(got)}`);
       assert(got.field && got.save === "Reply" && got.resolve && got.hint === "It is posted on merge request !4 on GitLab, for everybody who can read it there." && got.link?.href === `${mrPage}#note_34`, `the general thread's reply reads ${JSON.stringify(got)}`);
       await closeModal(page);
@@ -357,10 +365,10 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       await page.keyboard.press("Escape");
       await lineMenu(page, 6);
       await page.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
-      await modalShown(page);
-      const got = await modal(page);
-      assert(got.author === "Resolved" && got.field && got.save === "Reply" && !got.resolve, `the resolved thread's dialog reads ${JSON.stringify(got)}`);
-      await closeModal(page);
+      const got = await thread(page, "Is c needed?", { reply: true });
+      assert(got.author === "Resolved" && got.field && got.save === "Reply" && !got.resolve && !got.resolveButton, `the resolved thread reads ${JSON.stringify(got)}`);
+      await L.threadCard(page, "Is c needed?").locator("[data-line-thread-reply-cancel]").click();
+      await L.pressLine(page, 6);
       await notReloaded(page);
       return `read after ${Date.now() - at} ms`;
     });
@@ -392,10 +400,8 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
         const labels = items.map((i) => i.label);
         assert(labels[0] === "Comment by root" && labels[1] === "Open thread" && labels[2] === "Add line comment" && !labels.some((l) => /Delete comment|Publish/.test(l)), `the guest's menu reads ${labels}`);
         await guest.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
-        await modalShown(guest);
-        const got = await modal(guest);
-        assert(JSON.stringify(got.notes) === JSON.stringify(["root: New name bb?", "bob: Also rename the variable."]) && !got.field && !got.save && got.cancel === "Close" && !got.resolve && got.link?.href === `${mrPage}#note_29`, `the guest's dialog reads ${JSON.stringify(got)}`);
-        await closeModal(guest);
+        const got = await thread(guest, "New name bb?");
+        assert(JSON.stringify(got.notes) === JSON.stringify(["root: New name bb?", "bob: Also rename the variable."]) && got.line === "5" && !got.reply && !got.field && !got.save && !got.resolve && !got.resolveButton && !got.remove && got.link?.href === `${mrPage}#note_29`, `the guest's thread reads ${JSON.stringify(got)}`);
         const id = ofForge(list).note_29.id;
         const prefix = new URL(link).pathname;
         const edit = await postJSON(guest, `${prefix}/projects/${project}/editor/comments`, { id, path: FILE, line: 5, text: "the guest's" });
@@ -404,8 +410,8 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
         assert(reply.status === 403, `the guest's reply to a thread of the forge answered ${reply.status} ${reply.text}`);
         const items2 = await openProjectThread(guest, "General thread");
         assert(items2.map((i) => i.label).join("|") === "Open thread|Open the thread on GitLab", `the guest's menu of the general thread reads ${JSON.stringify(items2)}`);
-        const general = await modal(guest);
-        assert(general.title === "Project comment" && JSON.stringify(general.notes) === JSON.stringify(["root: General thread"]) && !general.field && !general.save && general.cancel === "Close" && !general.resolve && !general.hint && general.link?.href === `${mrPage}#note_34`, `the guest's dialog of the general thread reads ${JSON.stringify(general)}`);
+        const general = await thread(guest, "General thread");
+        assert(general.title === "Project comment" && JSON.stringify(general.notes) === JSON.stringify(["root: General thread"]) && !general.reply && !general.field && !general.save && !general.resolve && !general.hint && general.link?.href === `${mrPage}#note_34`, `the guest's dialog of the general thread reads ${JSON.stringify(general)}`);
         await closeModal(guest);
         const generalID = ofForge(list).note_34.id;
         for (const [route, body] of [["", { id: generalID, project: true, text: "the guest's" }], ["/reply", { thread: generalID, text: "the guest's" }], ["/resolve", { id: generalID, resolved: true }]]) {
@@ -435,8 +441,8 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       assert(JSON.stringify(comment.forge) === JSON.stringify({ kind: "github", label: "GitHub", icon: "ti-brand-github", url: `${prPage}#issuecomment-11`, unresolvable: true }), `the conversation comment's forge reads ${JSON.stringify(comment.forge)}`);
       const items = await openProjectThread(page, "Please rename");
       assert(items.map((i) => i.label).join("|") === "Open thread|Open the thread on GitHub", `the review body's menu reads ${JSON.stringify(items)}`);
-      const got = await modal(page);
-      assert(got.title === "Project comment" && JSON.stringify(got.notes) === JSON.stringify(["octocat: Please rename"]) && !got.field && !got.save && got.cancel === "Close" && !got.resolve && got.link?.href === `${prPage}#pullrequestreview-80`, `the review body's dialog reads ${JSON.stringify(got)}`);
+      const got = await thread(page, "Please rename");
+      assert(got.title === "Project comment" && JSON.stringify(got.notes) === JSON.stringify(["octocat: Please rename"]) && !got.reply && !got.field && !got.save && !got.resolve && !got.resolveButton && got.link?.href === `${prPage}#pullrequestreview-80`, `the review body's dialog reads ${JSON.stringify(got)}`);
       await closeModal(page);
       assert(by.discussion_r1.line === 5 && by.discussion_r1.lineText === "\tname := bb" && !by.discussion_r1.outdated && by.discussion_r1.author === "octocat", `the thread on its line reads ${JSON.stringify(by.discussion_r1)}`);
       assert(JSON.stringify(by.discussion_r1.forge) === JSON.stringify({ kind: "github", label: "GitHub", icon: "ti-brand-github", url: `${prPage}#discussion_r1`, thread: "PRRT_kwDOe2e1" }), `its forge reads ${JSON.stringify(by.discussion_r1.forge)}`);
@@ -446,7 +452,7 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       await notReloaded(page);
     });
 
-    await run("phone: the sheet's threads and a thread's dialog stand within 390px", async () => {
+    await run("phone: the sheet's threads and a thread unfolded under its line stand within 390px", async () => {
       const phone = await mobilePage();
       await openEditor(phone);
       await openSheet(phone).catch(async () => {
@@ -457,7 +463,7 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       await phone.waitForSelector("[data-editor-sheet-body] [data-comment-author]", { timeout: 10000 });
       const fits = () => phone.evaluate(() => {
         const inner = window.innerWidth;
-        const boxes = [...document.querySelectorAll("[data-editor-sheet-body] [data-comment-author], [data-editor-comment-modal].show .modal-content")]
+        const boxes = [...document.querySelectorAll("[data-editor-sheet-body] [data-comment-author], .cm-content [data-line-thread]")]
           .map((el) => el.getBoundingClientRect()).filter((b) => b.width > 0);
         return { inner, scroll: document.documentElement.scrollWidth, out: boxes.filter((b) => b.left < 0 || b.right > inner).length, count: boxes.length };
       });
@@ -465,9 +471,10 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       assert(w.count >= 3 && w.out === 0 && w.scroll <= w.inner, `the sheet on the phone: ${JSON.stringify(w)}`);
       await phone.locator("[data-editor-sheet-body] .row .dropdown-item", { hasText: "New name bb?" }).tap();
       await phone.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).tap();
-      await modalShown(phone);
+      await L.threadCard(phone, "New name bb?").waitFor({ timeout: 8000 });
+      await sleep(400);
       w = await fits();
-      assert(w.out === 0 && w.scroll <= w.inner, `the dialog on the phone: ${JSON.stringify(w)}`);
+      assert(w.count === 1 && w.out === 0 && w.scroll <= w.inner, `the thread on the phone: ${JSON.stringify(w)}`);
       assert(!(await phone.evaluate(() => document.activeElement?.matches("textarea:not([readonly]), input") || false)), "a writable field took the focus on touch");
     });
 

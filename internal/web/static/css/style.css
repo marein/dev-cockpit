@@ -1217,7 +1217,7 @@ body .swal2-styled.swal2-deny {
    that: the composer would tear apart under one, and the trigger's task
    would pull itself wider than the dialog it stands in. */
 textarea[data-assistant-input], textarea[data-trigger-task],
-textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment-text], [data-assistant-project-comment] textarea { resize: none; }
+textarea[data-line-thread-reply-text], textarea[data-line-comment-text], [data-assistant-project-comment] textarea { resize: none; }
 .dc-assistant-aside, .dc-assistant-memory { --tblr-offcanvas-width: 420px; }
 .dc-assistant-aside .dc-assistant-aside-body { display: flex; flex-direction: column; }
 .dc-assistant-aside .card { box-shadow: none; }
@@ -2101,22 +2101,34 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
 [data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedText {
   background: rgba(var(--tblr-green-rgb), 0.42);
 }
-/* What stands under a line of the aside's inline diff, its threads and the
-   field of a new comment, reads as the page does, not as code. */
-.dc-inline-diff .dc-inline-diff-block {
+/* What stands under a line of the editor or the aside's inline diff, its
+   threads and the field of a new comment, reads as the page does, not as
+   code, shows the caret CodeMirror hides in its content outside iOS, and
+   stays in the visible width beside the gutters while long lines scroll the
+   code sideways (@dc/line-blocks measures both), on a large screen no wider
+   than a comment reads well. */
+.cm-editor .dc-line-block {
+  position: sticky;
+  left: var(--dc-line-block-left, 0);
+  width: var(--dc-line-block-width, auto);
   font-family: var(--tblr-body-font-family);
   font-size: var(--tblr-body-font-size);
   line-height: var(--tblr-body-line-height);
+  white-space: normal;
+  caret-color: auto;
   cursor: auto;
+}
+@media (min-width: 1200px) {
+  .cm-editor .dc-line-block { max-width: 48rem; }
+}
+.cm-editor .dc-line-block [data-line-thread-quote] {
+  white-space: normal;
 }
 /* The wrapped content is a flex item, the widest text in a block that does
    not wrap would set its width and scroll the diff sideways. A quote cut in
    Reviews wraps here. */
 .dc-inline-diff .cm-content {
   min-width: 0;
-}
-.dc-inline-diff .dc-inline-diff-block [data-assistant-thread-quote] {
-  white-space: normal;
 }
 .editor-placeholder {
   display: flex;

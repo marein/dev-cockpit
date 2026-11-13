@@ -133,23 +133,23 @@ func TestAProjectViewListsTheReviewThreadsOfItsBranch(t *testing.T) {
 		`data-assistant-project-back>`,
 		`data-assistant-project-change="open" data-assistant-project-draft>`,
 		`data-assistant-project-reviews="8" data-thread-url="/projects/app/forge/thread" data-branch="feature" data-comments-url="/projects/app/editor/comments">`,
-		`<div class="card" data-assistant-thread="`,
-		`data-thread="d1" data-assistant-thread-path="a.txt" data-assistant-thread-line="1" data-assistant-thread-mark="open">`,
-		`href="/projects/app/editor?file=a.txt&amp;line=1" title="a.txt:1" data-file-link data-assistant-thread-file>a.txt:1</a>`,
-		`title="A review thread on GitLab" data-assistant-thread-origin="forge"><i class="ti ti-brand-gitlab me-1" aria-hidden="true"></i>GitLab</span>`,
-		`<div class="card" data-assistant-thread="` + mine.ID + `" data-assistant-thread-local data-assistant-thread-path="a.txt" data-assistant-thread-line="1" data-assistant-thread-mark="open">`,
-		`data-assistant-thread-origin="local">local</span>`,
+		`<div class="card" data-line-thread="`,
+		`data-thread="d1" data-line-thread-path="a.txt" data-line-thread-line="1" data-line-thread-mark="open">`,
+		`href="/projects/app/editor?file=a.txt&amp;line=1" title="a.txt:1" data-file-link data-line-thread-file>a.txt:1</a>`,
+		`title="A review thread on GitLab" data-line-thread-origin="forge"><i class="ti ti-brand-gitlab me-1" aria-hidden="true"></i>GitLab</span>`,
+		`<div class="card" data-line-thread="` + mine.ID + `" data-line-thread-local data-line-thread-path="a.txt" data-line-thread-line="1" data-line-thread-mark="open">`,
+		`data-line-thread-origin="local">local</span>`,
 		`<template data-assistant-diff-comment="/projects/app/editor/comments">`,
-		"data-assistant-thread-handoff=\"Line comment " + mine.ID + " in project app on branch feature at a.txt:1.\n\"",
-		`data-assistant-thread-quote>a</div>`,
+		"data-line-thread-handoff=\"Line comment " + mine.ID + " in project app on branch feature at a.txt:1.\n\"",
+		`data-line-thread-quote>a</div>`,
 		`data-comment-note-author>root</span>`,
 		`data-comment-note-text>Why d1?</div>`,
 		`data-comment-note-author>GitLab</span>`,
 		`href="https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_d1" target="_blank" rel="noopener" title="Open the thread on GitLab"`,
-		"data-assistant-thread-handoff=\"Review thread d1 in project app on branch feature at a.txt:1.\n\"",
-		`data-assistant-thread-reply-open>`,
-		`data-assistant-thread-resolve>`,
-		`<form class="px-3 pb-2" hidden novalidate data-assistant-thread-reply data-thread="d1">`,
+		"data-line-thread-handoff=\"Review thread d1 in project app on branch feature at a.txt:1.\n\"",
+		`data-line-thread-reply-open>`,
+		`data-line-thread-resolve>`,
+		`<form class="px-3 pb-2" hidden novalidate data-line-thread-reply data-thread="d1">`,
 		`It is posted on merge request !4 on GitLab, for everybody who can read it there.`,
 		`data-assistant-project-unpublished-box="3"`,
 		`2 line comments and 1 project comment not published`,
@@ -161,50 +161,50 @@ func TestAProjectViewListsTheReviewThreadsOfItsBranch(t *testing.T) {
 		}
 	}
 	open, resolved, _ := strings.Cut(html, "data-assistant-project-threads-resolved")
-	if strings.Contains(open, `data-thread="d2"`) || !strings.Contains(resolved, `data-thread="d2"`) || strings.Count(resolved, "data-assistant-thread-resolve>") != 0 {
+	if strings.Contains(open, `data-thread="d2"`) || !strings.Contains(resolved, `data-thread="d2"`) || strings.Count(resolved, "data-line-thread-resolve>") != 0 {
 		t.Fatalf("the resolved thread stands among the open ones or offers a resolve:\n%s", html)
 	}
 	local := func(id string) string {
-		at := html[strings.Index(html, `data-assistant-thread="`+id+`"`):]
-		if end := strings.Index(at[1:], `<div class="card" data-assistant-thread=`); end >= 0 {
+		at := html[strings.Index(html, `data-line-thread="`+id+`"`):]
+		if end := strings.Index(at[1:], `<div class="card" data-line-thread=`); end >= 0 {
 			return at[:end+1]
 		}
 		return at
 	}
 	for id, want := range map[string][]string{
-		mine.ID:     {`data-comment-note-author>You</span>`, `data-comment-note-text>mine</div>`, `data-assistant-thread-reply-open>`, `data-assistant-thread-resolve>`, `<form class="px-3 pb-2" hidden novalidate data-assistant-thread-reply>`, `value="1" data-assistant-thread-reply-resolve><span class="form-check-label">Resolve the thread</span>`},
-		answered.ID: {`data-comment-note-text>yes</div>`, `data-assistant-thread-resolve>`, `<span class="ms-auto d-flex gap-1 me-n2">`, `title="Delete reply" aria-label="Delete reply" data-comment-note-drop>`},
-		done.ID:     {`data-assistant-thread-reopen>`, `value="0" data-assistant-thread-reply-resolve><span class="form-check-label">Reopen the thread</span>`},
+		mine.ID:     {`data-comment-note-author>You</span>`, `data-comment-note-text>mine</div>`, `data-line-thread-reply-open>`, `data-line-thread-resolve>`, `<form class="px-3 pb-2" hidden novalidate data-line-thread-reply>`, `value="1" data-line-thread-reply-resolve><span class="form-check-label">Resolve the thread</span>`, `title="Edit comment" aria-label="Edit comment" data-comment-note-edit>`, `<form class="mt-1" hidden novalidate data-comment-note-form>`, `aria-label="Edit comment" data-comment-note-field></textarea>`},
+		answered.ID: {`data-comment-note-text>yes</div>`, `data-line-thread-resolve>`, `<span class="ms-auto d-flex gap-1 me-n2">`, `title="Delete reply" aria-label="Delete reply" data-comment-note-drop>`, `title="Edit reply" aria-label="Edit reply" data-comment-note-edit>`, `<div class="invalid-feedback">A reply is required.</div>`},
+		done.ID:     {`data-line-thread-reopen>`, `value="0" data-line-thread-reply-resolve><span class="form-check-label">Reopen the thread</span>`},
 	} {
 		chunk := local(id)
-		for _, w := range append(want, `title="Delete comment" aria-label="Delete comment" data-assistant-thread-delete>`) {
+		for _, w := range append(want, `title="Delete comment" aria-label="Delete comment" data-line-thread-delete>`) {
 			if !strings.Contains(chunk, w) {
 				t.Fatalf("the local thread lacks %s:\n%s", w, chunk)
 			}
 		}
-		if strings.Contains(chunk, "form-hint") || strings.Contains(chunk, "data-thread=") || strings.Contains(chunk, "data-assistant-thread-forge") {
+		if strings.Contains(chunk, "form-hint") || strings.Contains(chunk, "data-thread=") || strings.Contains(chunk, "data-line-thread-forge") {
 			t.Fatalf("a local thread speaks of the forge:\n%s", chunk)
 		}
-		head, rest, _ := strings.Cut(chunk, "data-assistant-thread-notes")
-		_, bin, _ := strings.Cut(head, `data-assistant-thread-origin="local">local</span>`)
-		if !strings.Contains(bin, "data-assistant-thread-delete>") || strings.Contains(rest, "data-assistant-thread-delete") {
+		head, rest, _ := strings.Cut(chunk, "data-line-thread-notes")
+		_, bin, _ := strings.Cut(head, `data-line-thread-origin="local">local</span>`)
+		if !strings.Contains(bin, "data-line-thread-delete>") || strings.Contains(rest, "data-line-thread-delete") {
 			t.Fatalf("the bin of a local thread does not stand in its head after the badge:\n%s", chunk)
 		}
 	}
-	card := func(id string) string { return `data-assistant-thread="` + id + `"` }
+	card := func(id string) string { return `data-line-thread="` + id + `"` }
 	if strings.Contains(open, card(done.ID)) || !strings.Contains(resolved, card(done.ID)) || strings.Contains(resolved, card(answered.ID)) {
 		t.Fatalf("the resolved local thread stands among the open ones:\n%s", html)
 	}
-	firstLine := strings.Index(open, "data-assistant-thread-file")
+	firstLine := strings.Index(open, "data-line-thread-file")
 	for id, want := range map[string][]string{
-		whole.ID: {`data-assistant-thread-local>`, `title="In the cockpit only" data-assistant-thread-origin="local">local</span>`, `data-comment-note-text>whole</div>`,
-			`data-assistant-thread-reply-open>`, `data-assistant-thread-resolve>`, "data-assistant-thread-handoff=\"Project comment " + whole.ID + " in project app on branch feature.\n\""},
-		"g1": {`data-thread="g1">`, `title="A general comment on GitLab" data-assistant-thread-origin="forge">`, `data-comment-note-text>General g1</div>`, `data-assistant-thread-forge>`,
-			`data-assistant-thread-reply-open>`, `data-assistant-thread-resolve>`, "data-assistant-thread-handoff=\"General thread g1 in project app on branch feature.\n\""},
-		"g2": {`data-thread="g2">`, `data-assistant-thread-reply-open>`, "data-assistant-thread-handoff=\"General thread g2 in project app on branch feature.\n\""},
-		lone: {`data-comment-note-text>General </div>`, "data-assistant-thread-handoff=\"Project comment " + lone + " in project app on branch feature.\n\""},
+		whole.ID: {`data-line-thread-local>`, `title="In the cockpit only" data-line-thread-origin="local">local</span>`, `data-comment-note-text>whole</div>`,
+			`data-line-thread-reply-open>`, `data-line-thread-resolve>`, "data-line-thread-handoff=\"Project comment " + whole.ID + " in project app on branch feature.\n\""},
+		"g1": {`data-thread="g1">`, `title="A general comment on GitLab" data-line-thread-origin="forge">`, `data-comment-note-text>General g1</div>`, `data-line-thread-forge>`,
+			`data-line-thread-reply-open>`, `data-line-thread-resolve>`, "data-line-thread-handoff=\"General thread g1 in project app on branch feature.\n\""},
+		"g2": {`data-thread="g2">`, `data-line-thread-reply-open>`, "data-line-thread-handoff=\"General thread g2 in project app on branch feature.\n\""},
+		lone: {`data-comment-note-text>General </div>`, "data-line-thread-handoff=\"Project comment " + lone + " in project app on branch feature.\n\""},
 	} {
-		at := strings.Index(open, `data-assistant-thread="`+id+`"`)
+		at := strings.Index(open, `data-line-thread="`+id+`"`)
 		if id == "g1" || id == "g2" {
 			at = strings.LastIndex(open[:strings.Index(open, `data-thread="`+id+`"`)], `<div class="card"`)
 		}
@@ -212,37 +212,40 @@ func TestAProjectViewListsTheReviewThreadsOfItsBranch(t *testing.T) {
 			t.Fatalf("the project comment %s does not stand before the line comments:\n%s", id, html)
 		}
 		chunk := open[at:]
-		if end := strings.Index(chunk[1:], `<div class="card" data-assistant-thread=`); end >= 0 {
+		if end := strings.Index(chunk[1:], `<div class="card" data-line-thread=`); end >= 0 {
 			chunk = chunk[:end+1]
 		}
-		for _, w := range append(want, `data-assistant-thread-project>Project comment</span>`) {
+		for _, w := range append(want, `data-line-thread-project>Project comment</span>`) {
 			if !strings.Contains(chunk, w) {
 				t.Fatalf("the project comment %s lacks %s:\n%s", id, w, chunk)
 			}
 		}
-		if strings.Contains(chunk, "data-assistant-thread-file") || strings.Contains(chunk, "data-assistant-thread-quote") || strings.Contains(chunk, "data-assistant-thread-outdated") {
+		if strings.Contains(chunk, "data-line-thread-file") || strings.Contains(chunk, "data-line-thread-quote") || strings.Contains(chunk, "data-line-thread-outdated") {
 			t.Fatalf("the project comment %s names a place:\n%s", id, chunk)
 		}
-		if id == "g2" && strings.Contains(chunk, "data-assistant-thread-resolve") {
+		if id == "g2" && strings.Contains(chunk, "data-line-thread-resolve") {
 			t.Fatalf("a general note the forge does not resolve offers a resolve:\n%s", chunk)
 		}
-		if id == lone && (strings.Contains(chunk, "data-thread=") || strings.Contains(chunk, "data-assistant-thread-reply") || strings.Contains(chunk, "data-assistant-thread-resolve")) {
+		if id == lone && (strings.Contains(chunk, "data-thread=") || strings.Contains(chunk, "data-line-thread-reply") || strings.Contains(chunk, "data-line-thread-resolve")) {
 			t.Fatalf("a note the forge keeps alone takes a write:\n%s", chunk)
 		}
 	}
 	d3 := html[strings.Index(html, `data-thread="d3"`):]
-	if !strings.Contains(d3[:strings.Index(d3, "data-comment-note")], "data-assistant-thread-outdated>outdated</span>") {
+	if !strings.Contains(d3[:strings.Index(d3, "data-comment-note")], "data-line-thread-outdated>outdated</span>") {
 		t.Fatalf("the thread whose line is gone is not outdated:\n%s", html)
 	}
-	if strings.Count(open, "data-assistant-thread-outdated") != 1 || strings.Contains(html, "data-comment-note-edit") {
-		t.Fatalf("a thread that stands is outdated or a note offers an edit:\n%s", html)
+	if strings.Count(open, "data-line-thread-outdated") != 1 {
+		t.Fatalf("a thread that stands is outdated:\n%s", html)
 	}
-	if strings.Count(html, "data-assistant-thread-delete>") != 4 || strings.Count(html, "data-comment-note-drop>") != 1 {
+	if strings.Count(html, "data-comment-note-edit>") != 5 || strings.Count(html, "data-comment-note-form>") != 5 {
+		t.Fatalf("a note of the forge offers an edit or a local one none:\n%s", html)
+	}
+	if strings.Count(html, "data-line-thread-delete>") != 4 || strings.Count(html, "data-comment-note-drop>") != 1 {
 		t.Fatalf("a thread of the forge or its note offers a delete:\n%s", html)
 	}
 	for at, mark := range map[string]string{card(mine.ID): "open", `data-thread="d2"`: "resolved", `data-thread="d3"`: "outdated", card(done.ID): "resolved"} {
 		rest := html[strings.Index(html, at):]
-		if head := rest[:strings.Index(rest, ">")]; !strings.Contains(head, `data-assistant-thread-mark="`+mark+`"`) {
+		if head := rest[:strings.Index(rest, ">")]; !strings.Contains(head, `data-line-thread-mark="`+mark+`"`) {
 			t.Fatalf("the thread %s is not marked %s for the diff:\n%s", at, mark, head)
 		}
 	}
@@ -360,8 +363,8 @@ func TestAProjectViewShowsTheChangesOfItsBranch(t *testing.T) {
 	for _, want := range []string{
 		`data-assistant-project-switch="reviews"`,
 		`data-assistant-project-reviews="1" data-comments-url="/projects/app/editor/comments">`,
-		`<div class="card" data-assistant-thread="` + here.ID + `" data-assistant-thread-local data-assistant-thread-path="a.txt" data-assistant-thread-line="1" data-assistant-thread-mark="open">`,
-		"data-assistant-thread-handoff=\"Line comment " + here.ID + " in project app on branch feature at a.txt:1.\n\"",
+		`<div class="card" data-line-thread="` + here.ID + `" data-line-thread-local data-line-thread-path="a.txt" data-line-thread-line="1" data-line-thread-mark="open">`,
+		"data-line-thread-handoff=\"Line comment " + here.ID + " in project app on branch feature at a.txt:1.\n\"",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("the reviews of a project without a forge lack %s:\n%s", want, html)
@@ -738,15 +741,15 @@ func TestAGuestReadsAProjectViewReadOnly(t *testing.T) {
 		return rec.Body.String()
 	}
 	shop, blog := read("shop"), read("blog")
-	for _, want := range []string{`href="` + base + `/projects/shop/editor?file=README.md&amp;line=1" title="README.md:1" data-file-link`, `data-comment-note-author>root</span>`, `data-comment-note-text>Why d1?</div>`, `<div class="card" data-assistant-thread="` + mine.ID + `" data-assistant-thread-local data-assistant-thread-path="README.md" data-assistant-thread-line="1" data-assistant-thread-mark="`, `data-comment-note-author>Owner</span>`, `data-comment-note-text>local note</div>`} {
+	for _, want := range []string{`href="` + base + `/projects/shop/editor?file=README.md&amp;line=1" title="README.md:1" data-file-link`, `data-comment-note-author>root</span>`, `data-comment-note-text>Why d1?</div>`, `<div class="card" data-line-thread="` + mine.ID + `" data-line-thread-local data-line-thread-path="README.md" data-line-thread-line="1" data-line-thread-mark="`, `data-comment-note-author>Owner</span>`, `data-comment-note-text>local note</div>`} {
 		if !strings.Contains(shop, want) {
 			t.Fatalf("the guest's view lacks %s:\n%s", want, shop)
 		}
 	}
-	if !strings.Contains(blog, `<span class="text-truncate min-w-0 font-monospace" title="notes.md:1" data-assistant-thread-file>notes.md:1</span>`) || !strings.Contains(blog, `data-assistant-thread-origin="local"`) || strings.Contains(blog, "/projects/blog/editor") {
+	if !strings.Contains(blog, `<span class="text-truncate min-w-0 font-monospace" title="notes.md:1" data-line-thread-file>notes.md:1</span>`) || !strings.Contains(blog, `data-line-thread-origin="local"`) || strings.Contains(blog, "/projects/blog/editor") {
 		t.Fatalf("a project the link does not grant leads somewhere:\n%s", blog)
 	}
-	for _, never := range []string{"data-thread=", "data-assistant-thread-handoff", "data-assistant-thread-reply", "data-assistant-thread-resolve", "data-assistant-thread-reopen", "data-comments-url", "data-comment-note-edit", "data-comment-note-drop", "data-assistant-thread-delete", "data-assistant-project-publish", "data-assistant-diff-comment", "data-assistant-project-comment", "data-project-comment", `href="/projects`, "<form", "csrf_token"} {
+	for _, never := range []string{"data-thread=", "data-line-thread-handoff", "data-line-thread-reply", "data-line-thread-resolve", "data-line-thread-reopen", "data-comments-url", "data-comment-note-edit", "data-comment-note-drop", "data-line-thread-delete", "data-assistant-project-publish", "data-assistant-diff-comment", "data-assistant-project-comment", "data-project-comment", `href="/projects`, "<form", "csrf_token"} {
 		if strings.Contains(shop+blog, never) {
 			t.Fatalf("the guest's view carries %s:\n%s", never, shop+blog)
 		}
@@ -801,10 +804,12 @@ func TestAGuestReadsTheDiffOfAListedFile(t *testing.T) {
 	sa.notFound(t, "another assistant's project", ask(sa.other, "shop", render.ChangesUncommitted, "README.md"))
 }
 
-// The notes of a thread are one rendering the editor's dialog pulls: each
-// note by who wrote it in the reader's words with the edit and the delete of
-// what the reader may change, a thread of the forge by its authors there and
-// with neither. A thread nobody holds is a 404.
+// A thread is one rendering the editor pulls, under its line and in its
+// dialog: each note by who wrote it in the reader's words with the edit and
+// the delete of what the reader may change, a reply for whoever writes
+// comments, a resolve for whoever may change the thread, a thread of the
+// forge by its authors there and with neither. A thread nobody holds is a
+// 404.
 func TestTheThreadNotesNameTheirWritersForEachReader(t *testing.T) {
 	f := newCommentGuests(t)
 	f.r.GET("/projects/:name/editor/comments/thread", f.s.handleEditorCommentThread)
@@ -845,8 +850,26 @@ func TestTheThreadNotesNameTheirWritersForEachReader(t *testing.T) {
 			t.Fatalf("%s reads %d %q, want %q:\n%s", c.who, code, shape(html), c.want, html)
 		}
 	}
-	if code, html := notes("", f.owner.ID); !strings.Contains(html, `title="Edit comment" aria-label="Edit comment"`) || !strings.Contains(html, `title="Delete reply" aria-label="Delete reply"`) || !strings.Contains(html, `<dc-time class="text-nowrap" datetime="`) || strings.Contains(html, "me-n2") || code != http.StatusOK {
-		t.Fatalf("the owner's notes lack their labels or times, or their buttons leave the dialog's inset:\n%s", html)
+	if code, html := notes("", f.owner.ID); !strings.Contains(html, `title="Edit comment" aria-label="Edit comment"`) || !strings.Contains(html, `title="Delete reply" aria-label="Delete reply"`) || !strings.Contains(html, `<dc-time class="text-nowrap" datetime="`) || code != http.StatusOK {
+		t.Fatalf("the owner's notes lack their labels or times:\n%s", html)
+	}
+	actions := func(html string) string {
+		var out []string
+		for _, mark := range []string{"data-line-thread-reply-open", "data-line-thread-resolve", "data-line-thread-delete", "data-line-thread-file", "data-line-thread-kind>Line comment"} {
+			if strings.Contains(html, mark) {
+				out = append(out, mark)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	for _, c := range []struct{ who, token, want string }{
+		{"the owner", "", "data-line-thread-reply-open data-line-thread-resolve data-line-thread-delete data-line-thread-kind>Line comment"},
+		{"Anna", f.anna, "data-line-thread-reply-open data-line-thread-kind>Line comment"},
+		{"Bert", f.bert, "data-line-thread-kind>Line comment"},
+	} {
+		if _, html := notes(c.token, f.owner.ID); actions(html) != c.want {
+			t.Fatalf("%s's card offers %q, want %q:\n%s", c.who, actions(html), c.want, html)
+		}
 	}
 	thread := forgeThreadAt("d1", "one", false, time.Now())
 	f.s.lineComments.SyncForge("shop", f.s.projects.Root+"/shop", []linecomment.ForgeThread{thread}, true)
@@ -856,8 +879,8 @@ func TestTheThreadNotesNameTheirWritersForEachReader(t *testing.T) {
 			forgeID = c.ID
 		}
 	}
-	if code, html := notes("", forgeID); code != http.StatusOK || shape(html) != "root | gitlab" {
-		t.Fatalf("the forge's thread reads %d %q:\n%s", code, shape(html), html)
+	if code, html := notes("", forgeID); code != http.StatusOK || shape(html) != "root | gitlab" || actions(html) != "data-line-thread-kind>Line comment" {
+		t.Fatalf("the forge's thread reads %d %q and offers %q:\n%s", code, shape(html), actions(html), html)
 	}
 	if code, _ := notes("", "nobody"); code != http.StatusNotFound {
 		t.Fatalf("a thread nobody holds answered %d", code)

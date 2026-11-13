@@ -723,12 +723,74 @@ function answerSTT(route) {
   });
 }
 
+// The editor's line comment threads stand under their lines
+// (@dc/editor-threads): a press on a line number folds the line's threads in
+// or out, or opens the field of a new comment there. A click right after a
+// menu closed is swallowed, so a press waits a beat first. lineThread is the
+// card under a line of the thread a note with text belongs to, lineField the
+// field of a new comment under line n, seen what really shows: a box and no
+// style hiding it.
+const lineNumber = (page, n) => page.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first();
+async function pressLine(page, n, { tap = false } = {}) {
+  await sleep(400);
+  if (tap) await lineNumber(page, n).tap();
+  else await lineNumber(page, n).click();
+}
+const lineThread = (page, text) => page.locator(".cm-content [data-line-thread]").filter({ has: page.locator("[data-comment-note-text]", { hasText: text }) });
+const lineField = (page, n) => page.locator(`.cm-content [data-line-block="${n}"] [data-line-comment-form]`);
+const seen = (locator) => locator.first().evaluate((el) => {
+  const box = el.getBoundingClientRect();
+  return box.width > 0 && box.height > 0 && !!el.checkVisibility?.({ visibilityProperty: true, opacityProperty: true });
+}, null, { timeout: 2000 }).catch(() => false);
+
+// longPress holds a finger on what locator names until the row menus' long
+// press opens the menu (@dc/contextmenu wireRowMenus), then lifts it. It goes
+// by pointer events alone, WebKit constructs no Touch.
+async function longPress(page, locator) {
+  const fire = (type) => locator.evaluate((el, t) => {
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: 4, pointerType: "touch", isPrimary: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
+  }, type);
+  await fire("pointerdown");
+  await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+  await fire("pointerup");
+}
+
+// threadCard reads the card of the thread a note with text belongs to, under
+// its line or in the editor's dialog, every part by its box: where it stands,
+// its title, Resolved, its notes (" +buttons" where a note offers any), what
+// it offers (Reply, Resolve, the reply form with its button, hint and switch)
+// and its forge link.
+const threadCard = (page, text) => page.locator("[data-line-thread]").filter({ has: page.locator("[data-comment-note-text]", { hasText: text }) }).first();
+const readThread = (page, text) => threadCard(page, text).evaluate((c) => {
+  const shown = (el) => !!el && getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().height > 0;
+  const q = (sel) => c.querySelector(sel);
+  const dialog = c.closest("[data-editor-comment-modal]");
+  const row = q("[data-line-thread-reply-resolve]")?.closest("label");
+  const box = c.getBoundingClientRect();
+  return {
+    open: shown(c), line: c.closest("[data-line-block]")?.dataset.lineBlock || "",
+    title: dialog ? dialog.querySelector("[data-editor-comment-title]").textContent.trim() : q("[data-line-thread-kind]")?.textContent.trim() || "",
+    place: dialog && shown(dialog.querySelector("[data-editor-comment-place]")) ? dialog.querySelector("[data-editor-comment-place]").textContent.trim() : "",
+    author: shown(q("[data-line-thread-resolved]")) ? "Resolved" : "",
+    notes: [...c.querySelectorAll("[data-comment-note]")].map((n) => `${n.querySelector("[data-comment-note-author]").textContent.trim()}: ${n.querySelector("[data-comment-note-text]").textContent}${n.querySelector("button") ? " +buttons" : ""}`),
+    reply: shown(q("[data-line-thread-reply-open]")), resolveButton: shown(q("[data-line-thread-resolve]")), remove: shown(q("[data-line-thread-delete]")),
+    field: shown(q("[data-line-thread-reply-text]")), text: q("[data-line-thread-reply-text]")?.value || "", invalid: !!q("[data-line-thread-reply-text].is-invalid"),
+    save: shown(q("[data-line-thread-reply]")) ? q("[data-line-thread-reply-send]").textContent.trim() : "",
+    hint: shown(q("[data-line-thread-reply] .form-hint")) ? q("[data-line-thread-reply] .form-hint").textContent.trim() : "",
+    resolve: shown(row), resolveRight: row ? row.getBoundingClientRect().right : 0,
+    link: shown(q("[data-line-thread-forge]")) ? { text: q("[data-line-thread-forge]").getAttribute("aria-label"), href: q("[data-line-thread-forge]").getAttribute("href"), target: q("[data-line-thread-forge]").getAttribute("target") } : null,
+    left: box.left, right: box.right, inner: window.innerWidth,
+  };
+});
+
 module.exports = {
   caretWalk, stubMicrophone, answerSTT,
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, openPicked, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
   iconSpin, spinning, still,
+  lineNumber, pressLine, lineThread, lineField, seen, threadCard, readThread, longPress,
   makeRunner, report, assert, assertNoLogin, recordCopies,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

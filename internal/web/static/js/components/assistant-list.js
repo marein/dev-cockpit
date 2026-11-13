@@ -1,9 +1,9 @@
-import { FLASH_MS, el, flash, growTextarea, isModEnter, keepGrown, syncAnimations } from "@dc/dom";
+import { FLASH_MS, el, flash, isModEnter, keepGrown, syncAnimations } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 import { getJSON, getText, postForm, postJSON, ensureOk } from "@dc/http";
 import { confirm } from "@dc/dialog";
 import { openMenu, wireRowMenus } from "@dc/contextmenu";
-import { deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, mayDelete, postForgeThread, publishComments, publishQuestion, writeLineComment } from "@dc/editor-comments";
+import { THREAD_FIELDS, answerLocal, closeNoteEdit, closeReply, deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, growField, mayDelete, noteEditOf, openNoteEdit, openReply, paintReply, placeChildren, postForgeThread, publishComments, publishQuestion, refuse, replyOf, typingIn, writeLineComment } from "@dc/editor-comments";
 import { inlineDiff } from "@dc/inline-diff";
 import { retryPipeline } from "@dc/project-actions";
 import * as assistantActions from "@dc/assistant-actions";
@@ -141,41 +141,52 @@ class AssistantList extends HTMLElement {
         void this.addProjectComment(add.closest("[data-assistant-project-comment]"));
         return;
       }
-      const drop = event.target.closest("[data-assistant-diff-comment-cancel]");
+      const drop = event.target.closest("[data-line-comment-cancel]");
       if (drop) {
         event.preventDefault();
-        this.dropField(drop.closest("[data-assistant-diff-comment-form]"));
+        this.dropField(drop.closest("[data-line-comment-form]"));
         return;
       }
-      const action = event.target.closest("[data-assistant-thread-reply-open], [data-assistant-thread-reply-cancel], [data-assistant-thread-resolve], [data-assistant-thread-reopen], [data-assistant-thread-handoff], [data-assistant-thread-delete], [data-comment-note-drop], [data-assistant-project-publish]");
+      const action = event.target.closest("[data-line-thread-reply-open], [data-line-thread-reply-cancel], [data-line-thread-resolve], [data-line-thread-reopen], [data-line-thread-handoff], [data-line-thread-delete], [data-comment-note-drop], [data-comment-note-edit], [data-comment-note-cancel], [data-assistant-project-publish]");
       if (!action) return;
       event.preventDefault();
       void this.threadAction(action);
     }, { signal });
     this.addEventListener("submit", (event) => {
-      const form = event.target instanceof HTMLFormElement && event.target.closest("[data-assistant-thread-reply], [data-assistant-diff-comment-form]");
+      const form = event.target instanceof HTMLFormElement && event.target.closest("[data-line-thread-reply], [data-line-comment-form], [data-comment-note-form]");
       if (!form) return;
       event.preventDefault();
       event.stopPropagation();
-      if (form.matches("[data-assistant-diff-comment-form]")) void this.addComment(form);
+      if (form.matches("[data-line-comment-form]")) void this.addComment(form);
+      else if (form.matches("[data-comment-note-form]")) void this.saveNote(form);
       else void this.sendReply(form);
     }, { signal });
     this.addEventListener("input", (event) => {
       if (!event.target.matches?.(FIELDS)) return;
       event.target.classList.remove("is-invalid");
       growField(event.target);
+      if (event.target.form?.matches("[data-line-thread-reply]")) paintReply(event.target.form);
+    }, { signal });
+    this.addEventListener("change", (event) => {
+      if (event.target.matches?.("[data-line-thread-reply-resolve]")) paintReply(event.target.form);
     }, { signal });
     keepGrown(this.viewBox(), () => this.viewBox()?.querySelectorAll(FIELDS).forEach(growField), signal);
     this.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && event.target.matches?.("[data-comment-note-field]")) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.endNote(event.target.form);
+        return;
+      }
       if (!isModEnter(event)) return;
       if (event.target.matches?.("[data-assistant-project-comment] [data-project-comment-text]")) {
         event.preventDefault();
         void this.addProjectComment(event.target.closest("[data-assistant-project-comment]"));
         return;
       }
-      if (!event.target.matches?.("[data-assistant-thread-reply-text], [data-assistant-diff-comment-text]")) return;
+      if (!event.target.matches?.(THREAD_FIELDS)) return;
       event.preventDefault();
-      event.target.form?.querySelector("[data-assistant-thread-reply-send], [data-assistant-diff-comment-add]")?.click();
+      event.target.form?.querySelector("[data-line-thread-reply-send], [data-line-comment-add], [data-comment-note-save]")?.click();
     }, { signal });
     this.addEventListener("shown.bs.tab", (event) => {
       const section = event.target.closest?.("[data-assistant-project-switch]")?.dataset.assistantProjectSwitch;
@@ -296,15 +307,15 @@ class AssistantList extends HTMLElement {
     this.scroller().scrollTop = Number(view.dataset.listScroll) || 0;
   }
 
-  // A reply being typed in Reviews holds the view still: a swap would take
-  // the words from under the hand. The pull it held back runs once the form
+  // A reply or a note being edited in Reviews holds the view still: a swap
+  // would take the words from under the hand. The pull it held back runs once the form
   // closes, a rest unfolded meanwhile takes its rows alone. An open diff and
   // the field of a new project comment go over into the swapped view with
   // what is typed in them, the field keeping the focus the move takes. A
   // section picked or a list unfolded or folded while a pull ran makes that
   // pull stale, it runs again.
   replying() {
-    return Array.from(this.viewBox()?.querySelectorAll("[data-assistant-thread-reply]:not([hidden])") || []).some((form) => !form.closest("[data-assistant-diff]"));
+    return Array.from(this.viewBox()?.querySelectorAll("[data-line-thread]") || []).some((card) => !card.closest("[data-assistant-diff]") && typingIn(card));
   }
 
   waitingRests() {
@@ -478,35 +489,39 @@ class AssistantList extends HTMLElement {
   }
 
   async threadAction(button) {
-    const thread = button.closest("[data-assistant-thread]");
-    const form = thread?.querySelector("[data-assistant-thread-reply]");
-    if (button.matches("[data-assistant-thread-reply-open]")) {
-      if (!form) return;
-      form.hidden = false;
-      button.setAttribute("aria-expanded", "true");
-      growField(form.querySelector("textarea"));
-      if (matchMedia("(pointer: fine)").matches) form.querySelector("textarea")?.focus();
+    const thread = button.closest("[data-line-thread]");
+    const form = thread?.querySelector("[data-line-thread-reply]");
+    if (button.matches("[data-line-thread-reply-open]")) {
+      openReply(thread);
       return;
     }
-    if (button.matches("[data-assistant-thread-reply-cancel]")) {
+    if (button.matches("[data-line-thread-reply-cancel]")) {
       this.closeReply(form);
       return;
     }
-    if (button.matches("[data-assistant-thread-handoff]")) {
-      this.handOff(button.dataset.assistantThreadHandoff);
+    if (button.matches("[data-line-thread-handoff]")) {
+      this.handOff(button.dataset.lineThreadHandoff);
+      return;
+    }
+    if (button.matches("[data-comment-note-edit]")) {
+      openNoteEdit(button.closest("[data-comment-note]"));
+      return;
+    }
+    if (button.matches("[data-comment-note-cancel]")) {
+      this.endNote(button.closest("form"));
       return;
     }
     const reviews = this.reviewsOf(button);
-    if (button.matches("[data-assistant-thread-delete], [data-comment-note-drop]")) {
+    if (button.matches("[data-line-thread-delete], [data-comment-note-drop]")) {
       button.disabled = true;
       await this.deleteNote(reviews, thread, button.matches("[data-comment-note-drop]") ? button.closest("[data-comment-note]")?.dataset.commentNote : "");
       button.disabled = false;
       return;
     }
-    if (button.matches("[data-assistant-thread-resolve], [data-assistant-thread-reopen]")) {
+    if (button.matches("[data-line-thread-resolve], [data-line-thread-reopen]")) {
       button.disabled = true;
-      const resolve = button.matches("[data-assistant-thread-resolve]");
-      if (thread.hasAttribute("data-assistant-thread-local")) await this.resolveLocal(reviews, thread, resolve);
+      const resolve = button.matches("[data-line-thread-resolve]");
+      if (thread.hasAttribute("data-line-thread-local")) await this.resolveLocal(reviews, thread, resolve);
       else await postForgeThread(reviews.dataset.threadUrl, { thread: thread.dataset.thread, branch: reviews.dataset.branch, resolve: true });
       button.disabled = false;
       void this.refreshView();
@@ -525,49 +540,81 @@ class AssistantList extends HTMLElement {
 
   closeReply(form) {
     if (!form) return;
-    form.reset();
-    form.querySelector("textarea")?.classList.remove("is-invalid");
-    form.hidden = true;
-    form.closest("[data-assistant-thread]")?.querySelector("[data-assistant-thread-reply-open]")?.setAttribute("aria-expanded", "false");
+    closeReply(form);
     const record = this.recordOf(form);
     if (record) this.syncThreads(record);
     if (this.viewDirty) void this.refreshView();
   }
 
   async sendReply(form) {
-    const text = form.querySelector("textarea");
-    const body = text.value.trim();
-    const toggle = form.querySelector("[data-assistant-thread-reply-resolve]");
-    const toggles = !!toggle?.checked;
-    if (!body && !toggles) {
-      refuse(text);
-      return;
-    }
+    const answer = replyOf(form);
+    if (!answer) return;
     const reviews = this.reviewsOf(form);
-    const thread = form.closest("[data-assistant-thread]");
+    const thread = form.closest("[data-line-thread]");
     const buttons = Array.from(form.querySelectorAll("button"));
     buttons.forEach((button) => { button.disabled = true; });
-    const done = thread.hasAttribute("data-assistant-thread-local")
-      ? await this.answerLocal(reviews, thread, body, toggles ? toggle.value === "1" : null)
-      : await postForgeThread(reviews.dataset.threadUrl, { thread: form.dataset.thread, branch: reviews.dataset.branch, body, resolve: toggles });
+    const done = thread.hasAttribute("data-line-thread-local")
+      ? await answerLocal(answer, {
+        reply: (body) => writeLineComment(`${reviews.dataset.commentsUrl}/reply`, { thread: thread.dataset.lineThread, text: body }, "The reply could not be saved."),
+        toggle: (resolve) => this.resolveLocal(reviews, thread, resolve),
+      })
+      : await postForgeThread(reviews.dataset.threadUrl, { thread: form.dataset.thread, branch: reviews.dataset.branch, body: answer.body, resolve: answer.toggles });
     buttons.forEach((button) => { button.disabled = false; });
     if (!done) return;
     this.viewDirty = true;
     this.closeReply(form);
   }
 
-  // A local thread is written through the editor's line comments, the way
-  // its thread dialog writes it: the reply first, then the resolve or the
-  // reopen. A toggle refused after the reply went still closes the form, a
-  // second Reply would post the words twice.
-  async answerLocal(reviews, thread, body, resolve) {
-    if (body && !(await writeLineComment(`${reviews.dataset.commentsUrl}/reply`, { thread: thread.dataset.assistantThread, text: body }, "The reply could not be saved."))) return false;
-    if (resolve !== null && !(await this.resolveLocal(reviews, thread, resolve))) return !!body;
-    return true;
+  // A note edits in place, its pencil putting its field where its text
+  // stood. Save writes it the way the editor does, a reply by its id and the
+  // first note at the place the comments hold for it, so the edit moves
+  // nothing, and its new text shows at once in Reviews and in every copy
+  // under a diff's line. A thread gone meanwhile takes the edit along.
+  async saveNote(form) {
+    const edit = noteEditOf(form);
+    const url = this.reviewsOf(form)?.dataset.commentsUrl;
+    const id = form.closest("[data-line-thread]")?.dataset.lineThread;
+    if (!edit || !url || !id) return;
+    if (!edit.same) {
+      const field = form.querySelector("textarea");
+      const refused = (sentence) => refuse(field, sentence);
+      const buttons = Array.from(form.querySelectorAll("button"));
+      buttons.forEach((button) => { button.disabled = true; });
+      const saved = edit.id
+        ? await writeLineComment(`${url}/reply`, { thread: id, id: edit.id, text: edit.body }, "The reply could not be saved.", refused)
+        : await this.saveFirstNote(url, id, edit.body, refused);
+      buttons.forEach((button) => { button.disabled = false; });
+      if (!saved) return;
+      this.viewDirty = true;
+    }
+    const texts = `[data-line-thread="${CSS.escape(id)}"] [data-comment-note="${CSS.escape(edit.id)}"] > [data-comment-note-text]`;
+    for (const text of this.viewBox()?.querySelectorAll(texts) || []) text.textContent = edit.body;
+    this.endNote(form, edit.body);
+  }
+
+  async saveFirstNote(url, id, text, refused) {
+    let comment;
+    try {
+      comment = ((await getJSON(url)).comments || []).find((c) => c.id === id);
+    } catch (err) {
+      refused(err?.message || "The comment could not be read.");
+      return null;
+    }
+    if (!comment) return { gone: true };
+    const place = comment.project ? { project: true } : { path: comment.path, line: comment.line, lineText: comment.lineText || "" };
+    return writeLineComment(url, { id, ...place, text }, "The comment could not be saved.", refused);
+  }
+
+  endNote(form, saved) {
+    if (!form) return;
+    closeNoteEdit(form, saved);
+    const record = this.recordOf(form);
+    if (record) this.syncThreads(record);
+    if (this.viewDirty) void this.refreshView();
   }
 
   resolveLocal(reviews, thread, resolve) {
-    return writeLineComment(`${reviews.dataset.commentsUrl}/resolve`, { id: thread.dataset.assistantThread, resolved: resolve }, resolve ? "The thread could not be resolved." : "The thread could not be reopened.");
+    return writeLineComment(`${reviews.dataset.commentsUrl}/resolve`, { id: thread.dataset.lineThread, resolved: resolve }, resolve ? "The thread could not be resolved." : "The thread could not be reopened.");
   }
 
   // A thread or one of its replies goes the way the editor deletes it: the
@@ -576,7 +623,7 @@ class AssistantList extends HTMLElement {
   // elsewhere holds the rest of the view until it closes.
   async deleteNote(reviews, thread, reply) {
     const url = reviews?.dataset.commentsUrl;
-    const id = thread?.dataset.assistantThread;
+    const id = thread?.dataset.lineThread;
     if (!url || !id || reply === undefined) return;
     let comment;
     try {
@@ -598,7 +645,7 @@ class AssistantList extends HTMLElement {
       if (!(await deleteLineComments(`${url}/delete`, { ids: [id] }))) return;
     }
     const view = this.viewBox();
-    const card = `[data-assistant-thread="${CSS.escape(id)}"]`;
+    const card = `[data-line-thread="${CSS.escape(id)}"]`;
     for (const node of view?.querySelectorAll(reply ? `${card} [data-comment-note="${CSS.escape(reply)}"]` : card) || []) node.remove();
     for (const record of this.diffs.values()) this.syncThreads(record);
     void this.refreshView();
@@ -617,26 +664,26 @@ class AssistantList extends HTMLElement {
 
   threadCards(record) {
     const path = record.box.dataset.path;
-    return Array.from(this.viewBox()?.querySelectorAll("[data-assistant-project-reviews] [data-assistant-thread-path]") || []).filter((card) => card.dataset.assistantThreadPath === path);
+    return Array.from(this.viewBox()?.querySelectorAll("[data-assistant-project-reviews] [data-line-thread-path]") || []).filter((card) => card.dataset.lineThreadPath === path);
   }
 
   // A diff marks the lines of its file's threads in Reviews and holds under a
   // line the threads unfolded there and the field of a new comment. A copy
-  // whose reply is being typed stays as it is until the form closes, the
-  // others follow their cards. A line unfolded for a comment just added waits
+  // whose reply or note is being typed stays as it is until the form closes,
+  // the others follow their cards. A line unfolded for a comment just added waits
   // for its card.
   syncThreads(record) {
     const { handle } = record;
     if (!handle) return;
     const cards = this.threadCards(record);
     handle.setComments(cards.map((card) => ({
-      line: Number(card.dataset.assistantThreadLine),
-      outdated: card.dataset.assistantThreadMark === "outdated",
-      resolved: card.dataset.assistantThreadMark === "resolved",
+      line: Number(card.dataset.lineThreadLine),
+      outdated: card.dataset.lineThreadMark === "outdated",
+      resolved: card.dataset.lineThreadMark === "resolved",
     })));
     const byLine = new Map();
     for (const card of cards) {
-      const line = Number(card.dataset.assistantThreadLine);
+      const line = Number(card.dataset.lineThreadLine);
       byLine.set(line, [...(byLine.get(line) || []), card]);
     }
     for (const line of [...record.open]) {
@@ -645,14 +692,14 @@ class AssistantList extends HTMLElement {
     }
     const blocks = new Map();
     for (const line of new Set([...record.open, ...record.fields.keys(), ...record.wraps.keys()])) {
-      const wrap = record.wraps.get(line) || el("div", { class: "dc-inline-diff-block d-flex flex-column gap-2 p-2 text-wrap", "data-assistant-diff-line": line });
-      const held = new Map(Array.from(wrap.querySelectorAll(":scope > [data-assistant-thread]"), (copy) => [copy.dataset.assistantThread, copy]));
+      const wrap = record.wraps.get(line) || el("div", { class: "dc-line-block d-flex flex-column gap-2 p-2 text-wrap", "data-line-block": line });
+      const held = new Map(Array.from(wrap.querySelectorAll(":scope > [data-line-thread]"), (copy) => [copy.dataset.lineThread, copy]));
       const want = [];
       for (const card of record.open.has(line) ? byLine.get(line) || [] : []) {
-        const copy = held.get(card.dataset.assistantThread);
-        held.delete(card.dataset.assistantThread);
+        const copy = held.get(card.dataset.lineThread);
+        held.delete(card.dataset.lineThread);
         const source = threadSource(card);
-        if (copy && (replyOpen(copy) || copy.dcSource === source)) {
+        if (copy && (typingIn(copy) || copy.dcSource === source)) {
           want.push(copy);
           continue;
         }
@@ -660,7 +707,7 @@ class AssistantList extends HTMLElement {
         fresh.dcSource = source;
         want.push(fresh);
       }
-      want.push(...[...held.values()].filter(replyOpen));
+      want.push(...[...held.values()].filter(typingIn));
       const field = record.fields.get(line);
       if (field) want.push(field.form);
       if (!want.length) {
@@ -679,7 +726,7 @@ class AssistantList extends HTMLElement {
   // there, where a press again closes it while it holds no words.
   pressLine(record, line) {
     if (!record.handle || ![...this.diffs.values()].includes(record)) return;
-    if (this.threadCards(record).some((card) => Number(card.dataset.assistantThreadLine) === line)) {
+    if (this.threadCards(record).some((card) => Number(card.dataset.lineThreadLine) === line)) {
       if (!record.open.delete(line)) record.open.add(line);
       record.waiting.delete(line);
       this.syncThreads(record);
@@ -798,7 +845,7 @@ class AssistantList extends HTMLElement {
       this.landing = null;
       return;
     }
-    const node = root.querySelector(`[data-assistant-thread="${CSS.escape(landing.id)}"]`);
+    const node = root.querySelector(`[data-line-thread="${CSS.escape(landing.id)}"]`);
     if (!node) return;
     if (!landing.at) {
       landing.at = performance.now();
@@ -1159,33 +1206,18 @@ function showDiff(box, part, note = "") {
   if (part !== "view") view.replaceChildren();
 }
 
-const FIELDS = "[data-assistant-thread-reply-text], [data-assistant-diff-comment-text], [data-assistant-project-comment] [data-project-comment-text]";
+const FIELDS = `${THREAD_FIELDS}, [data-assistant-project-comment] [data-project-comment-text]`;
 
-const growField = (text) => growTextarea(text, () => window.innerHeight);
-
-const requiredText = new WeakMap();
-
-// refuse marks a field and says why under it, the server's sentence or the
-// one the field is required with.
-function refuse(text, sentence = "") {
-  const feedback = text.parentElement?.querySelector(":scope > .invalid-feedback");
-  if (feedback) {
-    if (!requiredText.has(feedback)) requiredText.set(feedback, feedback.textContent);
-    feedback.textContent = sentence || requiredText.get(feedback);
-  }
-  text.classList.add("is-invalid");
-  text.focus();
-}
-
-const replyOpen = (copy) => !!copy.querySelector("[data-assistant-thread-reply]:not([hidden])");
-
-// copyOf is a thread's card as its copy in a diff starts, with its reply
-// closed whatever the card in Reviews holds open.
+// copyOf is a thread's card as its copy in a diff starts, with its reply and
+// its notes' edits closed whatever the card in Reviews holds open.
 function copyOf(card) {
   const copy = card.cloneNode(true);
-  copy.querySelector("[data-assistant-thread-reply]")?.setAttribute("hidden", "");
-  copy.querySelector("[data-assistant-thread-reply-text]")?.removeAttribute("style");
-  copy.querySelector("[data-assistant-thread-reply-open]")?.setAttribute("aria-expanded", "false");
+  copy.querySelector("[data-line-thread-reply]")?.setAttribute("hidden", "");
+  for (const form of copy.querySelectorAll("[data-comment-note-form]")) closeNoteEdit(form);
+  for (const field of copy.querySelectorAll(THREAD_FIELDS)) field.removeAttribute("style");
+  copy.querySelector("[data-line-thread-reply-open]")?.setAttribute("aria-expanded", "false");
+  const form = copy.querySelector("[data-line-thread-reply]");
+  if (form) paintReply(form);
   return copy;
 }
 
@@ -1195,13 +1227,6 @@ function threadSource(card) {
   const copy = copyOf(card);
   for (const time of copy.querySelectorAll("dc-time")) time.replaceChildren();
   return copy.outerHTML;
-}
-
-function placeChildren(box, nodes) {
-  nodes.forEach((node, i) => {
-    if (box.children[i] !== node) box.insertBefore(node, box.children[i] || null);
-  });
-  while (box.children.length > nodes.length) box.lastElementChild.remove();
 }
 
 function withAll(path, all) {

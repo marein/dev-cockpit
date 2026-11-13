@@ -179,22 +179,64 @@ func (s *Server) handleEditorComments(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"comments": list})
 }
 
-// handleEditorCommentThread answers the notes of the thread with the id as the
-// thread dialog shows them, the one rendering of a thread's notes. A thread
-// deleted meanwhile answers 404, the dialog keeps what it showed.
+// handleEditorCommentThread answers the thread with the id as the editor
+// shows it, under its line or in its dialog, the one rendering of a thread:
+// its notes and what the reader may do with it there, a thread of the forge
+// for the owner where the forge takes a reply or a resolve. A thread deleted meanwhile answers 404, the editor keeps what it
+// showed.
 func (s *Server) handleEditorCommentThread(c *gin.Context) {
 	p, ok := s.editorProject(c)
 	if !ok {
 		return
 	}
 	id := c.Query("id")
-	for _, comment := range s.lineComments.List(p.Name) {
-		if comment.ID == id {
-			c.HTML(http.StatusOK, "line_comment_notes.gohtml", gin.H{"Notes": s.lineNotes(c, comment)})
-			return
+	for _, v := range s.reconciledLineComments(p) {
+		if v.ID != id {
+			continue
 		}
+		var offer *render.ForgeThreadsOffer
+		if v.Forge != nil && commentWriterOf(c).Link == "" {
+			if b, polled, bound := s.forgePolledOf(p); bound {
+				replies, resolves := s.forge.AnswersThreads(b)
+				offer = render.NewForgeThreadsOffer(b, polled, replies, resolves)
+			}
+		}
+		c.HTML(http.StatusOK, "line_thread.gohtml", gin.H{"Thread": s.lineThread(c, v), "Offer": offer, "Inline": true})
+		return
 	}
 	c.String(http.StatusNotFound, "The thread is gone.")
+}
+
+// lineThread is the judged thread v as the request's writer reads it in the
+// editor: its notes by their writers, the forge it came from with its id
+// there for the owner alone, a reply to a local thread wherever the request
+// writes comments, a resolve and a reopen of one it may change, and the
+// delete under the editor's rule.
+func (s *Server) lineThread(c *gin.Context, v linecomment.View) render.LineThread {
+	w := commentWriterOf(c)
+	t := render.LineThread{
+		ID:       v.ID,
+		Project:  v.Project,
+		Path:     v.Path,
+		Line:     v.Line,
+		Quote:    strings.TrimSpace(v.LineText),
+		Outdated: v.Outdated,
+		Resolved: v.Resolved,
+		Notes:    s.lineNotes(c, v.Comment),
+		Deletes:  mayDeleteThread(c, v.Comment),
+	}
+	if f := v.Forge; f != nil {
+		kind := s.forgeKind(f.Kind)
+		t.ForgeURL, t.ForgeLabel, t.ForgeIcon, t.Unresolvable = f.URL, kind.Label, kind.Icon, f.Unresolvable
+		if w.Link == "" {
+			t.Thread = f.Thread
+		}
+		return t
+	}
+	t.Local = true
+	t.Answers = writesComments(c)
+	t.Writes = t.Answers && w.May(v.Comment)
+	return t
 }
 
 // lineNotes are the notes of comment as the request's writer reads them: a

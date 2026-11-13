@@ -11,7 +11,7 @@ const { assert, sleep, BASE } = L;
 // poller read an open change request (data-forge-publish in the forge
 // fragment). A comment published becomes the thread of the forge it opened
 // (internal/linecomment Published) under the id that thread comes back under,
-// the one it had as was, which an open thread of it follows, with the forge's
+// the one it had as was, which a thread unfolded under its line follows, with the forge's
 // icon, its author and the link to its thread, and the poller's next read
 // keeps it as it stands, its id too. On GitLab a line the change adds names its new line, one both
 // sides share its old one too; on a GitHub Enterprise Server it is a review
@@ -46,7 +46,6 @@ const FAKE_ADDR = process.env.FORGE_ADDR || "127.0.0.1";
 const APISOCK = process.env.APISOCK || "/apisock/s";
 const TOKEN = `glpat-e2e${Date.now().toString(36)}Pb7uK3wQ5xZ1`;
 const DIALOG = ".swal2-popup:not(.swal2-toast)";
-const MODAL = "[data-editor-comment-modal]";
 const FILE = "src/login.go";
 const CONTENT = "package login\n\nfunc login() {\n\tname := bb\n\tc := 3\n\td := 4\n\treturn\n}\n\nfunc logout() {\n\treturn\n}\n";
 const PATCH = "@@ -1,8 +1,8 @@\n package login\n \n func login() {\n-\tname := b\n+\tname := bb\n \tc := 3\n \td := 4\n \treturn\n }";
@@ -225,7 +224,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
   };
   const lineMenu = async (p, n) => {
     await sleep(400);
-    await p.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first().click();
+    await p.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first().click({ button: "right" });
     await p.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     return menuItems(p);
   };
@@ -322,18 +321,17 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       await openSheet(page);
       await cellMenu(page, "Why bb?");
       await page.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
-      await page.waitForFunction((sel) => document.querySelector(sel)?.classList.contains("show"), MODAL, { timeout: 6000 });
-      const named = () => page.$$eval(`${MODAL} [data-comment-note-author]`, (els) => els.map((e) => e.textContent.trim()).join("|"));
-      assert(await named() === "You", `the open thread names ${await named()}`);
+      await L.lineThread(page, "Why bb?").waitFor({ timeout: 8000 });
+      const named = () => page.$$eval(".cm-content [data-line-thread] [data-comment-note-author]", (els) => els.map((e) => e.textContent.trim()).join("|"));
+      assert(await named() === "You", `the unfolded thread names ${await named()}`);
       const published = await post(`/projects/${project}/forge/publish`, { id: ids.added });
       assert(published.status === 200 && published.json.message === "The comment is published on merge request !4.", `the publish answered ${published.status} ${published.text}`);
       try {
-        await page.waitForFunction((sel) => [...document.querySelectorAll(`${sel} [data-comment-note-author]`)].map((e) => e.textContent.trim()).join("|") === "root", MODAL, { timeout: 15000 });
+        await page.waitForFunction(() => [...document.querySelectorAll(".cm-content [data-line-thread] [data-comment-note-author]")].map((e) => e.textContent.trim()).join("|") === "root", null, { timeout: 15000 });
       } catch {
-        throw new Error(`after the publish the open thread names ${await named()}`);
+        throw new Error(`after the publish the unfolded thread names ${await named()}`);
       }
-      await page.click(`${MODAL} [data-editor-comment-cancel]`);
-      await page.waitForFunction((sel) => !document.querySelector(sel)?.classList.contains("show") && getComputedStyle(document.querySelector(sel)).display === "none", MODAL, { timeout: 6000 });
+      assert(await L.lineThread(page, "Why bb?").locator("[data-line-thread-origin=\"forge\"]").count() === 1, "the published thread does not wear the forge's mark");
       await openSheet(page);
       const sent = posts();
       assert(sent.length === 1 && sent[0].path === discussions && sent[0].query === "" && sent[0].auth === `Bearer ${TOKEN}`, `the forge was asked ${JSON.stringify(sent)}`);

@@ -583,8 +583,8 @@ type AssistantProjectReviews struct {
 	Owner              string
 	Project            string
 	Branch             string
-	Open               []AssistantThread
-	Resolved           []AssistantThread
+	Open               []LineThread
+	Resolved           []LineThread
 	Unpublished        []string
 	UnpublishedGeneral int
 	Publish            *ForgePublishOffer
@@ -592,53 +592,6 @@ type AssistantProjectReviews struct {
 	Threads            *ForgeThreadsOffer
 	ThreadURL          string
 	CommentsURL        string
-}
-
-// AssistantThread is one line comment thread: where it stands, on a line or
-// with Project on the whole project, the code line it quotes, whether that
-// line is gone from the file, its notes and what the reader may do with it. A
-// thread of the forge carries the forge's name and icon, its page there,
-// whether the forge resolves it and its id there in Thread, empty for a guest
-// and where the forge keeps no thread to answer. Local marks a thread that
-// stands in the cockpit alone, Writes says the reader answers, resolves and
-// reopens it there, Deletes that the reader deletes it as the editor does.
-// FileURL opens the editor at its line, empty for a project comment and for a
-// guest whose link does not grant the project. Handoff is the draft the hand
-// off puts into the composer.
-type AssistantThread struct {
-	ID           string
-	Thread       string
-	Project      bool
-	Path         string
-	Line         int
-	Quote        string
-	Outdated     bool
-	FileURL      string
-	ForgeURL     string
-	ForgeLabel   string
-	ForgeIcon    string
-	Unresolvable bool
-	Local        bool
-	Writes       bool
-	Deletes      bool
-	Notes        []LineNote
-	Handoff      string
-}
-
-// Place is where the thread stands, file and line.
-func (t AssistantThread) Place() string {
-	return fmt.Sprintf("%s:%d", t.Path, t.Line)
-}
-
-// Origin says where the thread lives, the title of its local or forge mark.
-func (t AssistantThread) Origin() string {
-	switch {
-	case t.Local:
-		return "In the cockpit only"
-	case t.Project:
-		return "A general comment on " + t.ForgeLabel
-	}
-	return "A review thread on " + t.ForgeLabel
 }
 
 // Count is the number of open threads, the section's count.

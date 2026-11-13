@@ -17,7 +17,8 @@ const { startFakeForge, addHost, gitlabNote, gitlabDiscussion } = require("./for
 // GitLab does not resolve takes Reply alone, a comment of GitHub's
 // conversation, which is no thread, takes neither. A local project comment
 // resolves, reopens and takes replies through the editor's line comment
-// routes, Publish asks in the words of a general comment and posts it as one.
+// routes, its note edits in place there as a project comment's, and Publish
+// asks in the words of a general comment and posts it as one.
 // The field on top of Reviews, with Add alone under it on its right edge,
 // makes a local project comment through the editor's route with Add,
 // Ctrl+Enter and Cmd+Enter, an empty one marked invalid, the comment showing
@@ -84,18 +85,18 @@ const view = (p) => p.evaluate((pane) => {
   const list = root?.querySelector("[data-assistant-project-threads-open]");
   const thread = (el) => ({
     id: el.dataset.thread || "",
-    cid: el.dataset.assistantThread || "",
-    local: el.hasAttribute("data-assistant-thread-local"),
-    head: text(el.querySelector("[data-assistant-thread-project]")),
-    headTitle: el.querySelector("[data-assistant-thread-project]")?.getAttribute("title") || "",
-    origin: text(el.querySelector("[data-assistant-thread-origin]")),
-    file: !!el.querySelector("[data-assistant-thread-file], [data-assistant-thread-quote], [data-assistant-thread-outdated]"),
+    cid: el.dataset.lineThread || "",
+    local: el.hasAttribute("data-line-thread-local"),
+    head: text(el.querySelector("[data-line-thread-project]")),
+    headTitle: el.querySelector("[data-line-thread-project]")?.getAttribute("title") || "",
+    origin: text(el.querySelector("[data-line-thread-origin]")),
+    file: !!el.querySelector("[data-line-thread-file], [data-line-thread-quote], [data-line-thread-outdated]"),
     shown: shown(el),
     notes: [...el.querySelectorAll("[data-comment-note]")].filter(shown).map((n) => `${text(n.querySelector("[data-comment-note-author]"))}: ${text(n.querySelector("[data-comment-note-text]"))}`),
     when: text(el.querySelector("[data-comment-note] dc-time")),
-    actions: [...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => text(b) || b.getAttribute("aria-label")),
-    bin: (() => { const b = el.querySelector("[data-assistant-thread-head] [data-assistant-thread-delete]"); const o = el.querySelector("[data-assistant-thread-head] [data-assistant-thread-origin]"); return shown(b) && !!o && b.getBoundingClientRect().left >= o.getBoundingClientRect().right; })(),
-    oneLine: new Set([...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => Math.round(b.getBoundingClientRect().top))).size <= 1,
+    actions: [...el.querySelectorAll("[data-line-thread-actions] button")].filter(shown).map((b) => text(b) || b.getAttribute("aria-label")),
+    bin: (() => { const b = el.querySelector("[data-line-thread-head] [data-line-thread-delete]"); const o = el.querySelector("[data-line-thread-head] [data-line-thread-origin]"); return shown(b) && !!o && b.getBoundingClientRect().left >= o.getBoundingClientRect().right; })(),
+    oneLine: new Set([...el.querySelectorAll("[data-line-thread-actions] button")].filter(shown).map((b) => Math.round(b.getBoundingClientRect().top))).size <= 1,
     right: el.getBoundingClientRect().right,
     flash: el.classList.contains("dc-flash"),
     inView: (() => { const s = el.closest(".dc-assistant-aside-body")?.getBoundingClientRect(); const b = el.getBoundingClientRect(); return !!s && b.top >= s.top - 1 && b.bottom <= s.bottom + 1; })(),
@@ -106,8 +107,8 @@ const view = (p) => p.evaluate((pane) => {
     name: root?.dataset.assistantProjectViewBody || "",
     count: text(root?.querySelector("[data-assistant-project-reviews-count]")),
     unpublished: text(root?.querySelector("[data-assistant-project-unpublished-box]")),
-    threads: [...(root?.querySelectorAll("[data-assistant-project-threads-open] [data-assistant-thread]") || [])].map(thread),
-    resolved: [...(root?.querySelectorAll("[data-assistant-project-threads-resolved] [data-assistant-thread]") || [])].map(thread),
+    threads: [...(root?.querySelectorAll("[data-assistant-project-threads-open] [data-line-thread]") || [])].map(thread),
+    resolved: [...(root?.querySelectorAll("[data-assistant-project-threads-resolved] [data-line-thread]") || [])].map(thread),
     controls: root ? [...root.querySelectorAll("button, form, textarea, input")].filter((el) => !el.matches("[data-assistant-project-back], [data-assistant-project-switch], [data-assistant-project-resolved-toggle], [data-assistant-changed-toggle], [data-assistant-changed-more], [data-assistant-changes-older]")).length : 0,
     field: shown(input),
     fieldValue: input ? input.value : null,
@@ -150,8 +151,8 @@ const byId = (v, id) => all(v).find((t) => t.id === id);
 const byCid = (v, cid) => all(v).find((t) => t.cid === cid);
 const byNote = (v, words) => all(v).find((t) => t.notes.some((n) => n.includes(words)));
 const notesOf = (t) => JSON.stringify(t?.notes || []);
-const threadSel = (id) => `${PANE} [data-assistant-thread][data-thread="${id}"]`;
-const localSel = (cid) => `${PANE} [data-assistant-thread="${cid}"][data-assistant-thread-local]`;
+const threadSel = (id) => `${PANE} [data-line-thread][data-thread="${id}"]`;
+const localSel = (cid) => `${PANE} [data-line-thread="${cid}"][data-line-thread-local]`;
 const toast = (p, words) => p.waitForFunction((w) => [...document.querySelectorAll(".dc-toast")].some((el) => el.textContent.includes(w)), words, { timeout: 15000 });
 const reviewLine = (p, want) => p.waitForFunction(({ pane, name, want }) => document.querySelector(`${pane} [data-assistant-project="${name}"] [data-assistant-project-review]`)?.textContent.replace(/\s+/g, " ").trim() === want, { pane: PANE, name: REPO, want }, { timeout: 30000 });
 
@@ -302,20 +303,20 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
 
     await run("a note GitLab does not resolve takes a reply alone, a general thread a reply with its resolve, live", async () => {
       await page.evaluate(() => { window.__noReload = 1; });
-      await page.click(`${threadSel("g2pc")} [data-assistant-thread-reply-open]`);
-      const lone = `${threadSel("g2pc")} [data-assistant-thread-reply]`;
+      await page.click(`${threadSel("g2pc")} [data-line-thread-reply-open]`);
+      const lone = `${threadSel("g2pc")} [data-line-thread-reply]`;
       await page.waitForSelector(`${lone} textarea`, { state: "visible", timeout: 5000 });
-      assert(!(await page.locator(`${lone} [data-assistant-thread-reply-resolve]`).count()), "the note GitLab does not resolve offers a resolve");
+      assert(!(await page.locator(`${lone} [data-line-thread-reply-resolve]`).count()), "the note GitLab does not resolve offers a resolve");
       await page.fill(`${lone} textarea`, "Thanks.");
-      await page.click(`${lone} [data-assistant-thread-reply-send]`);
+      await page.click(`${lone} [data-line-thread-reply-send]`);
       await toast(page, "The reply is posted on merge request !4.");
       assert(state.replies.some((r) => r.thread === "g2pc" && r.body === "Thanks."), `the forge holds ${JSON.stringify(state.replies)}`);
       await until(page, (w) => notesOf(byId(w, "g2pc")).includes("Thanks."), "the reply to the note did not reach the view");
-      await page.click(`${threadSel("g1pc")} [data-assistant-thread-reply-open]`);
-      const form = `${threadSel("g1pc")} [data-assistant-thread-reply]`;
+      await page.click(`${threadSel("g1pc")} [data-line-thread-reply-open]`);
+      const form = `${threadSel("g1pc")} [data-line-thread-reply]`;
       await page.fill(`${form} textarea`, "Shipped.");
-      await page.check(`${form} [data-assistant-thread-reply-resolve]`);
-      await page.click(`${form} [data-assistant-thread-reply-send]`);
+      await page.check(`${form} [data-line-thread-reply-resolve]`);
+      await page.click(`${form} [data-line-thread-reply-send]`);
       await toast(page, "The reply is posted on merge request !4, the thread is resolved.");
       assert(state.resolved.includes("g1pc") && state.replies.some((r) => r.thread === "g1pc" && r.body === "Shipped."), `the forge holds ${JSON.stringify(state)}`);
       const v = await until(page, (w) => w.count === "4" && w.resolved.some((t) => t.id === "g1pc") && !w.threads.some((t) => t.id === "g1pc"), "the resolved general thread did not fold away");
@@ -323,22 +324,34 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       assert(await page.evaluate(() => window.__noReload === 1), "the page reloaded");
     });
 
-    await run("a local project comment resolves, reopens and takes a reply through the editor's line comments, live", async () => {
+    await run("a local project comment resolves, reopens, takes a reply and edits its note in place through the editor's line comments, live", async () => {
       await page.evaluate(() => { window.__noReload = 1; });
       const sel = localSel(keepId);
-      await page.click(`${sel} [data-assistant-thread-resolve]`);
+      await page.click(`${sel} [data-line-thread-resolve]`);
       let v = await until(page, (w) => w.count === "3" && w.resolved.some((t) => t.cid === keepId) && !w.threads.some((t) => t.cid === keepId), "the resolved project comment did not fold away");
       await page.click(`${PANE} [data-assistant-project-resolved-toggle]`);
       v = await until(page, (w) => byCid(w, keepId)?.shown && JSON.stringify(byCid(w, keepId).actions) === JSON.stringify(["Reply", "Hand off", "Reopen"]) && byCid(w, keepId).bin, "the resolved project comment offers no reopen");
       assert(byCid(v, keepId).head === "Project comment" && !byCid(v, keepId).file, `the resolved project comment reads ${JSON.stringify(byCid(v, keepId))}`);
-      await page.click(`${sel} [data-assistant-thread-reopen]`);
+      await page.click(`${sel} [data-line-thread-reopen]`);
       await until(page, (w) => w.count === "4" && w.threads.some((t) => t.cid === keepId), "the reopened project comment did not come back");
-      await page.click(`${sel} [data-assistant-thread-reply-open]`);
-      await page.fill(`${sel} [data-assistant-thread-reply] textarea`, "Noted.");
-      await page.click(`${sel} [data-assistant-thread-reply-send]`);
+      await page.click(`${sel} [data-line-thread-reply-open]`);
+      await page.fill(`${sel} [data-line-thread-reply] textarea`, "Noted.");
+      await page.click(`${sel} [data-line-thread-reply-send]`);
       v = await until(page, (w) => notesOf(byCid(w, keepId)) === JSON.stringify(["You: Keep in mind", "You: Noted."]) && w.unpublished === "1 project comment not published Publish", "the reply did not reach the view");
-      const stored = await page.evaluate(async ({ project, id }) => (await (await fetch(`/projects/${project}/editor/comments`)).json()).comments.find((c) => c.id === id), { project: REPO, id: keepId });
+      const read = () => page.evaluate(async ({ project, id }) => (await (await fetch(`/projects/${project}/editor/comments`)).json()).comments.find((c) => c.id === id), { project: REPO, id: keepId });
+      let stored = await read();
       assert(stored && stored.project && !stored.resolved && stored.replies.length === 1, `the editor's comments hold ${JSON.stringify(stored)}`);
+      const note = `${sel} [data-comment-note]:nth-child(1)`;
+      for (const [text, key] of [["Keep it in mind", "Control+Enter"], ["Keep in mind", ""]]) {
+        await page.click(`${note} [data-comment-note-edit]`);
+        assert(await page.isVisible(`${note} [data-comment-note-field]`) && !(await page.isVisible(`${note} [data-comment-note-text]`)), "the pencil did not turn the project comment's note into its field");
+        await page.fill(`${note} [data-comment-note-field]`, text);
+        if (key) await page.press(`${note} [data-comment-note-field]`, key);
+        else await page.click(`${note} [data-comment-note-save]`);
+        await until(page, (w) => notesOf(byCid(w, keepId)) === JSON.stringify([`You: ${text}`, "You: Noted."]), "the edit does not show in place");
+        stored = await read();
+        assert(stored.text === text && stored.project && !stored.path && !stored.line && stored.replies.length === 1, `the edit is stored as ${JSON.stringify(stored)}`);
+      }
       await reviewLine(page, "4 open threads · 1 unpublished comment");
       assert(v.open && await page.evaluate(() => window.__noReload === 1), "the view closed or the page reloaded");
     });
@@ -363,11 +376,11 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       await page.fill(input, "");
       await sleep(700);
       const sent = await messages();
-      await page.click(`${localSel(keepId)} [data-assistant-thread-handoff]`);
+      await page.click(`${localSel(keepId)} [data-line-thread-handoff]`);
       const local = `Project comment ${keepId} in project ${REPO} on branch feature.\n`;
       await page.waitForFunction(([sel, w]) => document.querySelector(sel)?.value === w, [input, local], { timeout: 5000 });
       await page.fill(input, "");
-      await page.click(`${threadSel("g2pc")} [data-assistant-thread-handoff]`);
+      await page.click(`${threadSel("g2pc")} [data-line-thread-handoff]`);
       const general = `General thread g2pc in project ${REPO} on branch feature.\n`;
       await page.waitForFunction(([sel, w]) => document.querySelector(sel)?.value === w, [input, general], { timeout: 5000 });
       await sleep(700);
@@ -401,7 +414,7 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       await mp.tap(FIELD_ADD);
       const sent = await until(mp, (w) => w.threads.length === 5 && w.fieldValue === "" && byNote(w, "From the phone")?.local && byNote(w, "From the phone").flash, "a tap on Add did not make the project comment marked");
       assert(byNote(sent, "From the phone").inView, `the phone's comment landed as ${JSON.stringify(byNote(sent, "From the phone"))}`);
-      const mark = await mp.evaluate((sel) => getComputedStyle(document.querySelector(sel)).boxShadow, `${PANE} [data-assistant-thread="${byNote(sent, "From the phone").cid}"]`);
+      const mark = await mp.evaluate((sel) => getComputedStyle(document.querySelector(sel)).boxShadow, `${PANE} [data-line-thread="${byNote(sent, "From the phone").cid}"]`);
       assert(/inset/.test(mark), `the dark mark reads ${mark}`);
       if (SHOTS_DIR) await mp.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-comments-phone-landed.png") });
       await mp.emulateMedia({ colorScheme: "light" });
@@ -418,8 +431,8 @@ L.runFeature("assistant-projects-comments", async ({ browser, page, run, mobileP
       const lone = byNote(v, "Looks good");
       assert(lone.head === "Project comment" && !lone.file && !lone.id && notesOf(lone) === JSON.stringify(["hubot: Looks good but see the threads"]), `the conversation comment reads ${JSON.stringify(lone)}`);
       assert(JSON.stringify(lone.actions) === JSON.stringify(["Hand off"]), `the conversation comment offers ${JSON.stringify(lone.actions)}`);
-      assert(!(await page.locator(`${PANE} [data-assistant-thread="${lone.cid}"] [data-assistant-thread-reply]`).count()), "the conversation comment has a reply form");
-      await page.click(`${PANE} [data-assistant-thread="${lone.cid}"] [data-assistant-thread-handoff]`);
+      assert(!(await page.locator(`${PANE} [data-line-thread="${lone.cid}"] [data-line-thread-reply]`).count()), "the conversation comment has a reply form");
+      await page.click(`${PANE} [data-line-thread="${lone.cid}"] [data-line-thread-handoff]`);
       await page.waitForFunction(([sel, w]) => document.querySelector(sel)?.value === w, ["[data-assistant-input]", `Project comment ${lone.cid} in project ${REPO} on branch feature.\n`], { timeout: 5000 });
       await page.fill("[data-assistant-input]", "");
       await sleep(700);

@@ -7,17 +7,20 @@ const { assert, sleep, BASE } = L;
 // (POST /projects/:name/forge/thread, internal/forge reply.go) from its line
 // comment thread: Open thread in its entry of the Line comments sheet and in
 // the line's menu, two threads on one line each by whose it is and how it
-// opens, shows the reply field and, while the thread is unresolved, Resolve
-// the thread, offered once the forge poller read the change request
-// (data-forge-threads in the forge fragment) and only where a read named the
-// thread. The switch resolves the thread after the reply, or alone with the
-// field empty. A general thread of the merge request takes both from its
-// project comment, a comment that started no thread a reply alone. The forge
+// opens, unfolds the thread under its line (data-line-thread, the server's
+// card), whose Reply opens the reply field with the hint naming the change
+// request and, while the thread is unresolved, Resolve the thread, offered
+// once the forge poller read the change request (the forge's threads offer of
+// the card's route) and only where a read named the thread. The switch
+// resolves the thread after the reply, or alone with the field empty, Resolve
+// beside Reply alone. A general thread of the merge request takes both from
+// its project comment, whose thread stands in the dialog, a comment that
+// started no thread a reply alone. The forge
 // is read again first; a thread it does not hold, a resolve of a comment the
 // forge does not resolve or of a resolved thread and a write on a comment of
 // GitHub's conversation, which is no thread, are refused, a token without
 // the right to write in the forge's words, and a resolve refused after the
-// reply went closes the dialog all the same, the reply posted once. The line
+// reply went closes the reply all the same, the reply posted once. The line
 // comments follow with the poller's read right after the write: the reply
 // stands under the thread, a resolved thread turns green. On GitLab a reply is a note of the discussion and a resolve a PUT of
 // it, on a GitHub Enterprise Server both go over GraphQL, a reply GitHub puts
@@ -26,8 +29,8 @@ const { assert, sleep, BASE } = L;
 // under Settings › Assistants › Approvals): the dialog names the thread with
 // its opening note, the reply, the change request, branch, forge and project,
 // Approve writes it and the note links the reply, a thread gone meanwhile
-// fails it. A guest of a shared link sees no thread id, no reply field and
-// reaches no write.
+// fails it. A guest of a shared link sees no thread id, no Reply, no reply
+// field and reaches no write.
 //
 // The forge is the runner's own fake (forge-fake.js) on FORGE_PORT (default
 // 3157), published on the host's loopback, where the instance reaches it at
@@ -111,6 +114,7 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
     gitlabDiscussion("t2e2e", false, [gitlabNote(30, "alice", "Return early?", { resolvable: true, at: { head: s.head, newLine: 7 } })]),
     gitlabDiscussion("t3e2e", false, [gitlabNote(31, "bob", "Or call it auth?", { resolvable: true, at: { head: s.head, newLine: 4 } })]),
     gitlabDiscussion("t4e2e", false, [gitlabNote(32, "alice", "Is c needed?", { resolvable: true, at: { head: s.head, newLine: 5 } })]),
+    gitlabDiscussion("t5e2e", false, [gitlabNote(33, "bob", "Why d?", { resolvable: true, at: { head: s.head, newLine: 6 } })]),
     gitlabDiscussion("g1e2e", false, [gitlabNote(34, "alice", "General thread", { resolvable: true })]),
     gitlabDiscussion("g2e2e", true, [gitlabNote(35, "bob", "Just a comment")]),
   ];
@@ -193,7 +197,7 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
   };
   const lineMenu = async (p, n) => {
     await sleep(400);
-    await p.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first().click();
+    await p.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first().click({ button: "right" });
     await p.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     return menuItems(p);
   };
@@ -204,40 +208,33 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       throw new Error(`no toast "${text}", the toasts read ${JSON.stringify(await p.$$eval(".dc-toast", (els) => els.map((e) => e.textContent.trim())))}`);
     }
   };
-  // modal reads the comment dialog the way it shows, every part by its box.
-  const modal = (p) => p.evaluate((sel) => {
-    const m = document.querySelector(sel);
-    const shown = (el) => !!el && getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().height > 0;
-    const box = m.querySelector(".modal-dialog").getBoundingClientRect();
-    const row = m.querySelector("[data-editor-comment-resolve-row]");
-    return {
-      open: m.classList.contains("show") && shown(m),
-      title: m.querySelector("[data-editor-comment-title]").textContent.trim(),
-      author: shown(m.querySelector("[data-editor-comment-author]")) ? m.querySelector("[data-editor-comment-author]").textContent.trim() : "",
-      notes: [...(shown(m.querySelector("[data-editor-comment-thread]")) ? m.querySelectorAll("[data-editor-comment-thread] [data-comment-note]") : [])].map((n) => `${n.querySelector("[data-comment-note-author]").textContent.trim()}: ${n.querySelector("[data-comment-note-text]").textContent}`),
-      field: shown(m.querySelector("[data-editor-comment-text]")) && !m.querySelector("[data-editor-comment-text]").readOnly,
-      save: shown(m.querySelector("[data-editor-comment-save]")) ? m.querySelector("[data-editor-comment-save]").textContent.trim() : "",
-      text: m.querySelector("[data-editor-comment-text]").value,
-      readOnly: m.querySelector("[data-editor-comment-text]").readOnly,
-      invalid: m.querySelector("[data-editor-comment-text]").classList.contains("is-invalid"),
-      hint: shown(m.querySelector("[data-editor-comment-hint]")) ? m.querySelector("[data-editor-comment-hint]").textContent.trim() : "",
-      resolve: shown(row),
-      resolveRight: row ? row.getBoundingClientRect().right : 0,
-      left: box.left, right: box.right, inner: window.innerWidth,
-    };
-  }, MODAL);
-  const waitModal = async (p) => {
-    await p.waitForFunction((sel) => document.querySelector(sel)?.classList.contains("show"), MODAL, { timeout: 6000 });
-    await sleep(400);
-  };
-  // openFromCell opens the thread of the sheet's entry holding text.
+  const cardOf = L.threadCard;
+  const card = L.readThread;
+  // openFromCell opens the thread of the sheet's entry holding text: a line
+  // comment's unfolds under its line with the sheet gone, a project
+  // comment's stands in the dialog.
   const openFromCell = async (p, text) => {
     await openSheet(p);
     await cellMenu(p, text);
     await clickItem(p, "Open thread");
-    await waitModal(p);
+    await cardOf(p, text).waitFor({ timeout: 8000 });
+    await sleep(300);
   };
-  const waitModalGone = (p) => p.waitForFunction((sel) => !document.querySelector(sel)?.classList.contains("show") && getComputedStyle(document.querySelector(sel)).display === "none", MODAL, { timeout: 6000 });
+  const reply = async (p, text) => {
+    await cardOf(p, text).locator("[data-line-thread-reply-open]").click();
+    await cardOf(p, text).locator("[data-line-thread-reply-text]").waitFor({ timeout: 4000 });
+  };
+  const field = (p, text) => cardOf(p, text).locator("[data-line-thread-reply-text]");
+  const send = (p, text) => cardOf(p, text).locator("[data-line-thread-reply-send]").click();
+  const replyClosed = (p, text) => p.waitForFunction(([t]) => {
+    const c = [...document.querySelectorAll("[data-line-thread]")].find((el) => [...el.querySelectorAll("[data-comment-note-text]")].some((n) => n.textContent.includes(t)));
+    const form = c?.querySelector("[data-line-thread-reply]");
+    return !form || getComputedStyle(form).display === "none";
+  }, [text], { timeout: 8000 });
+  const closeDialog = async (p) => {
+    await p.click(`${MODAL} .btn-close`);
+    await p.waitForFunction((sel) => !document.querySelector(sel)?.classList.contains("show") && getComputedStyle(document.querySelector(sel)).display === "none", MODAL, { timeout: 6000 });
+  };
   const dialogRows = () => page.locator(`${DIALOG} dl[data-approval-details]`).evaluate((list) => {
     const labels = [...list.querySelectorAll("dt")].map((dt) => dt.textContent.trim());
     return [...list.querySelectorAll("dd")].map((dd, i) => [labels[i], dd.textContent.trim()]);
@@ -292,10 +289,10 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       }, alias);
       assert(hostEdit, "the added host has no Edit on the list");
       await openEditor(page);
-      await waitFor(async () => (await comments()).filter((c) => c.forge?.thread).length === 6, "the notes of the four threads on the diff and the two general ones with their threads", 30000);
+      await waitFor(async () => (await comments()).filter((c) => c.forge?.thread).length === 7, "the notes of the five threads on the diff and the two general ones with their threads", 30000);
       const list = await comments();
       const by = Object.fromEntries(list.filter((c) => c.forge).map((c) => [c.text, `${c.project ? "project " : ""}${c.forge.thread}${c.forge.unresolvable ? " unresolvable" : ""}`]));
-      assert(JSON.stringify(by) === JSON.stringify({ "General thread": "project g1e2e", "Just a comment": "project g2e2e unresolvable", "New name bb?": "t1e2e", "Or call it auth?": "t3e2e", "Is c needed?": "t4e2e", "Return early?": "t2e2e" }), `the notes read ${JSON.stringify(list)}`);
+      assert(JSON.stringify(by) === JSON.stringify({ "General thread": "project g1e2e", "Just a comment": "project g2e2e unresolvable", "New name bb?": "t1e2e", "Or call it auth?": "t3e2e", "Is c needed?": "t4e2e", "Why d?": "t5e2e", "Return early?": "t2e2e" }), `the notes read ${JSON.stringify(list)}`);
     });
 
     await run("a thread of the forge opens from its entry and from the line's menu, two threads on one line each by whose it is and how it opens, nothing written", async () => {
@@ -317,60 +314,66 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       await notReloaded(page);
     });
 
-    await run("Open thread shows the thread with a reply field, an empty one stays, the reply posts and stands under the thread, without a reload", async () => {
+    await run("Open thread unfolds the thread under its line, Reply opens the field, an empty one stays, the reply posts and stands under the thread, without a reload", async () => {
       await openFromCell(page, "Return early?");
-      let m = await modal(page);
-      assert(m.open && m.title === "Line comment" && m.author === "" && JSON.stringify(m.notes) === JSON.stringify(["alice: Return early?"]) && m.save === "Reply" && m.text === "" && m.field && m.resolve && m.hint === "It is posted on merge request !4 on GitLab, for everybody who can read it there.", `the dialog reads ${JSON.stringify(m)}`);
-      await page.click(`${MODAL} [data-editor-comment-save]`);
-      m = await modal(page);
-      assert(m.open && m.invalid && writes().length === 0, `an empty reply left ${JSON.stringify(m)}`);
-      await page.fill(`${MODAL} [data-editor-comment-text]`, "fixed in abc123");
-      await page.click(`${MODAL} [data-editor-comment-save]`);
+      let m = await card(page, "Return early?");
+      assert(m.open && m.line === "7" && m.title === "Line comment" && m.author === "" && JSON.stringify(m.notes) === JSON.stringify(["alice: Return early?"]) && m.reply && m.resolveButton && !m.field && m.link?.href === `${mrPage}#note_30`, `the thread reads ${JSON.stringify(m)}`);
+      assert(await page.locator(`${MODAL}.show`).count() === 0, "Open thread opened a dialog for a line's thread");
+      await reply(page, "Return early?");
+      m = await card(page, "Return early?");
+      assert(m.save === "Reply" && m.text === "" && m.field && m.resolve && m.hint === "It is posted on merge request !4 on GitLab, for everybody who can read it there.", `the reply reads ${JSON.stringify(m)}`);
+      await send(page, "Return early?");
+      m = await card(page, "Return early?");
+      assert(m.field && m.invalid && writes().length === 0, `an empty reply left ${JSON.stringify(m)}`);
+      await field(page, "Return early?").fill("fixed in abc123");
+      await send(page, "Return early?");
       await toast(page, "The reply is posted on merge request !4.");
-      await waitModalGone(page);
+      await replyClosed(page, "Return early?");
       const sent = writes();
       assert(sent.length === 1 && sent[0].path === `${discussions}/t2e2e/notes` && sent[0].query === "" && sent[0].auth === `Bearer ${TOKEN}` && JSON.stringify(sent[0].body) === JSON.stringify({ body: "fixed in abc123" }), `the forge was asked ${JSON.stringify(sent)}`);
       await waitFor(async () => replyTexts(await ofThread("t2e2e")).length === 1, "the reply under the thread", 30000);
       const thread = await ofThread("t2e2e");
       assert(thread.line === 7 && thread.replies[0].id === "70" && thread.replies[0].author === "root" && thread.replies[0].text === "fixed in abc123" && !thread.resolved, `the thread reads ${JSON.stringify(thread)}`);
+      await page.waitForFunction(() => [...document.querySelectorAll(".cm-content [data-line-thread] [data-comment-note-text]")].some((e) => e.textContent === "fixed in abc123"), null, { timeout: 10000 });
+      m = await card(page, "Return early?");
+      assert(JSON.stringify(m.notes) === JSON.stringify(["alice: Return early?", "root: fixed in abc123"]), `the unfolded thread reads ${JSON.stringify(m)}`);
+      await openSheet(page);
       await page.waitForFunction(() => [...document.querySelectorAll("[data-editor-sheet-body] .row .dropdown-item")].some((e) => e.textContent.includes(":7 · 1 reply")), null, { timeout: 10000 });
-      await openFromCell(page, "Return early?");
-      m = await modal(page);
-      assert(JSON.stringify(m.notes) === JSON.stringify(["alice: Return early?", "root: fixed in abc123"]), `the thread's dialog reads ${JSON.stringify(m)}`);
-      await page.click(`${MODAL} [data-editor-comment-cancel]`);
-      await waitModalGone(page);
+      await closeSheet(page);
       await notReloaded(page);
     });
 
     await run("the switch alone resolves the thread, it turns green and offers no switch any more", async () => {
       await openFromCell(page, "Return early?");
-      await page.check(`${MODAL} [data-editor-comment-resolve]`);
-      assert((await modal(page)).save === "Resolve", "the button does not read Resolve with the switch on and the field empty");
-      await page.click(`${MODAL} [data-editor-comment-save]`);
+      await reply(page, "Return early?");
+      await cardOf(page, "Return early?").locator("[data-line-thread-reply-resolve]").check();
+      assert((await card(page, "Return early?")).save === "Resolve", "the button does not read Resolve with the switch on and the field empty");
+      await send(page, "Return early?");
       await toast(page, "The thread is resolved on merge request !4.");
-      await waitModalGone(page);
+      await replyClosed(page, "Return early?");
       assert(JSON.stringify(writesAfter(1)) === JSON.stringify(["PUT /t2e2e?resolved=true {}"]), `the forge was asked ${JSON.stringify(writesAfter(1))}`);
       await waitFor(async () => (await ofThread("t2e2e"))?.resolved, "the thread resolved", 30000);
       await page.waitForFunction(() => [...document.querySelectorAll(".cm-lineNumbers .cm-comment-line")].some((el) => el.textContent.trim() === "7" && el.classList.contains("cm-comment-line-resolved")), null, { timeout: 10000 });
-      await openFromCell(page, "Return early?");
-      const m = await modal(page);
-      assert(m.open && m.author === "Resolved" && !m.resolve && m.field && m.save === "Reply", `the dialog of a resolved thread reads ${JSON.stringify(m)}`);
-      await page.click(`${MODAL} [data-editor-comment-cancel]`);
-      await waitModalGone(page);
-      assert(writes().length === 2, "a cancelled dialog wrote something");
-      await closeSheet(page);
+      await page.waitForFunction(() => [...document.querySelectorAll(".cm-content [data-line-thread]")].some((c) => c.textContent.includes("Return early?") && c.querySelector("[data-line-thread-resolved]")), null, { timeout: 10000 });
+      await reply(page, "Return early?");
+      const m = await card(page, "Return early?");
+      assert(m.open && m.author === "Resolved" && !m.resolve && !m.resolveButton && m.field && m.save === "Reply", `the resolved thread reads ${JSON.stringify(m)}`);
+      await cardOf(page, "Return early?").locator("[data-line-thread-reply-cancel]").click();
+      assert(writes().length === 2, "a cancelled reply wrote something");
     });
 
     await run("a reply with Resolve the thread checked posts the reply and then resolves the thread, from the line's menu", async () => {
       await lineMenu(page, 4);
       await clickItem(page, "Open bob's thread: Or call it auth?");
-      await waitModal(page);
-      const m = await modal(page);
-      assert(JSON.stringify(m.notes) === JSON.stringify(["bob: Or call it auth?"]) && m.resolve, `the dialog reads ${JSON.stringify(m)}`);
-      await page.check(`${MODAL} [data-editor-comment-resolve]`);
-      await page.fill(`${MODAL} [data-editor-comment-text]`, "Renamed to auth.");
-      assert((await modal(page)).save === "Reply", "the button does not read Reply with text in the field");
-      await page.keyboard.press("Control+Enter");
+      await cardOf(page, "Or call it auth?").waitFor({ timeout: 8000 });
+      const m = await card(page, "Or call it auth?");
+      assert(JSON.stringify(m.notes) === JSON.stringify(["bob: Or call it auth?"]) && m.line === "4" && m.resolveButton, `the thread reads ${JSON.stringify(m)}`);
+      assert(await cardOf(page, "New name bb?").count() === 0, "the other thread on the line unfolded with it");
+      await reply(page, "Or call it auth?");
+      await cardOf(page, "Or call it auth?").locator("[data-line-thread-reply-resolve]").check();
+      await field(page, "Or call it auth?").fill("Renamed to auth.");
+      assert((await card(page, "Or call it auth?")).save === "Reply", "the button does not read Reply with text in the field");
+      await field(page, "Or call it auth?").press("Control+Enter");
       await toast(page, "The reply is posted on merge request !4, the thread is resolved.");
       assert(JSON.stringify(writesAfter(2)) === JSON.stringify(["POST /t3e2e/notes {\"body\":\"Renamed to auth.\"}", "PUT /t3e2e?resolved=true {}"]), `the forge was asked ${JSON.stringify(writesAfter(2))}`);
       await waitFor(async () => {
@@ -380,47 +383,59 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       assert(!(await ofThread("t1e2e")).resolved, "the other thread on the line turned resolved");
     });
 
+    await run("Resolve beside Reply resolves a thread of the forge alone", async () => {
+      await openFromCell(page, "Why d?");
+      const sent = writes().length;
+      await cardOf(page, "Why d?").locator("[data-line-thread-resolve]").click();
+      await waitFor(async () => writesAfter(sent).length > 0, "the resolve at the forge", 15000);
+      await toast(page, "The thread is resolved on merge request !4.");
+      assert(JSON.stringify(writesAfter(sent)) === JSON.stringify(["PUT /t5e2e?resolved=true {}"]), `the forge was asked ${JSON.stringify(writesAfter(sent))}`);
+      await waitFor(async () => (await ofThread("t5e2e"))?.resolved, "the thread resolved", 30000);
+    });
+
     await run("a general thread answers and resolves from its project comment, a comment that started no thread answers without the switch", async () => {
       await openFromCell(page, "General thread");
-      let m = await modal(page);
+      await reply(page, "General thread");
+      let m = await card(page, "General thread");
       assert(m.open && m.title === "Project comment" && JSON.stringify(m.notes) === JSON.stringify(["alice: General thread"]) && m.field && m.save === "Reply" && m.resolve && m.hint === "It is posted on merge request !4 on GitLab, for everybody who can read it there.", `the general thread's dialog reads ${JSON.stringify(m)}`);
       const sent = writes().length;
-      await page.check(`${MODAL} [data-editor-comment-resolve]`);
-      await page.fill(`${MODAL} [data-editor-comment-text]`, "Done in abc123.");
-      await page.keyboard.press("Control+Enter");
+      await cardOf(page, "General thread").locator("[data-line-thread-reply-resolve]").check();
+      await field(page, "General thread").fill("Done in abc123.");
+      await field(page, "General thread").press("Control+Enter");
+      await waitFor(async () => writesAfter(sent).length >= 2, "the reply and the resolve at the forge", 15000);
       await toast(page, "The reply is posted on merge request !4, the thread is resolved.");
-      await waitModalGone(page);
+      await replyClosed(page, "General thread");
       assert(JSON.stringify(writesAfter(sent)) === JSON.stringify(["POST /g1e2e/notes {\"body\":\"Done in abc123.\"}", "PUT /g1e2e?resolved=true {}"]), `the forge was asked ${JSON.stringify(writesAfter(sent))}`);
       await waitFor(async () => {
         const thread = await ofThread("g1e2e");
         return thread?.project && thread.resolved && JSON.stringify(replyTexts(thread)) === JSON.stringify(["Done in abc123."]);
       }, "the reply and the resolve on the general thread", 30000);
+      await closeDialog(page);
       await openFromCell(page, "Just a comment");
-      m = await modal(page);
-      assert(m.open && m.title === "Project comment" && m.field && m.save === "Reply" && !m.resolve && m.hint, `the comment's dialog reads ${JSON.stringify(m)}`);
-      await page.click(`${MODAL} [data-editor-comment-cancel]`);
-      await waitModalGone(page);
+      await reply(page, "Just a comment");
+      m = await card(page, "Just a comment");
+      assert(m.open && m.title === "Project comment" && m.field && m.save === "Reply" && !m.resolve && !m.resolveButton && m.hint, `the comment's dialog reads ${JSON.stringify(m)}`);
+      await closeDialog(page);
       assert(writes().length === sent + 2, "the comment's dialog wrote something");
-      await closeSheet(page);
       await notReloaded(page);
     });
 
-    await run("a token without the right to write is refused in GitLab's words and the reply stays in its dialog, a thread the forge does not hold, a resolve it does not offer and a bad id are refused before it is asked", async () => {
+    await run("a token without the right to write is refused in GitLab's words and the reply stays in its field, a thread the forge does not hold, a resolve it does not offer and a bad id are refused before it is asked", async () => {
       await openSheet(page);
       state.readOnly = true;
       const replies = state.replies.length;
       try {
         await openFromCell(page, "New name bb?");
-        await page.fill(`${MODAL} [data-editor-comment-text]`, "no right");
-        await page.click(`${MODAL} [data-editor-comment-save]`);
+        await reply(page, "New name bb?");
+        await field(page, "New name bb?").fill("no right");
+        await send(page, "New name bb?");
         await toast(page, "The token may not write to GitLab: give it the scope api.");
       } finally {
         state.readOnly = false;
       }
-      const kept = await modal(page);
-      assert(kept.open && kept.text === "no right" && !kept.readOnly, `after the refusal the dialog reads ${JSON.stringify(kept)}`);
-      await page.click(`${MODAL} [data-editor-comment-cancel]`);
-      await waitModalGone(page);
+      const kept = await card(page, "New name bb?");
+      assert(kept.open && kept.field && kept.text === "no right", `after the refusal the thread reads ${JSON.stringify(kept)}`);
+      await cardOf(page, "New name bb?").locator("[data-line-thread-reply-cancel]").click();
       assert(state.replies.length === replies && !(await comments()).some((c) => replyTexts(c).includes("no right")), "the refused reply stands");
       await closeSheet(page);
       const sent = writes().length;
@@ -437,17 +452,18 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       assert(writes().length === sent, "a refused write reached the forge");
     });
 
-    await run("a resolve refused after the reply went closes the dialog, the reply is posted once and a second Reply cannot post it again", async () => {
+    await run("a resolve refused after the reply went closes the reply, the reply is posted once and a second Reply cannot post it again", async () => {
       await openSheet(page);
       const sent = writes().length;
       state.reporter = true;
       try {
         await openFromCell(page, "New name bb?");
-        await page.check(`${MODAL} [data-editor-comment-resolve]`);
-        await page.fill(`${MODAL} [data-editor-comment-text]`, "posted once");
-        await page.click(`${MODAL} [data-editor-comment-save]`);
+        await reply(page, "New name bb?");
+        await cardOf(page, "New name bb?").locator("[data-line-thread-reply-resolve]").check();
+        await field(page, "New name bb?").fill("posted once");
+        await send(page, "New name bb?");
         await toast(page, "The reply is posted, the thread is not resolved. The token's account may not resolve threads of merge request !4");
-        await waitModalGone(page);
+        await replyClosed(page, "New name bb?");
       } finally {
         state.reporter = false;
       }
@@ -549,21 +565,21 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       }
       assert(writes().length === before, "a write on a comment of the conversation reached the forge");
       await openFromCell(page, "Looks good");
-      const lone = await modal(page);
-      assert(lone.open && lone.title === "Project comment" && !lone.field && !lone.save && !lone.resolve && !lone.hint, `the conversation comment's dialog reads ${JSON.stringify(lone)}`);
-      await page.click(`${MODAL} [data-editor-comment-cancel]`);
-      await waitModalGone(page);
+      const lone = await card(page, "Looks good");
+      assert(lone.open && lone.title === "Project comment" && !lone.reply && !lone.resolveButton && !lone.field && !lone.save && !lone.resolve && !lone.hint, `the conversation comment's dialog reads ${JSON.stringify(lone)}`);
+      await closeDialog(page);
       await openSheet(page);
       await page.waitForFunction(() => [...document.querySelectorAll("[data-editor-sheet-body] .row .dropdown-item")].some((e) => e.textContent.includes("Added e")), null, { timeout: 10000 });
       const items = await cellMenu(page, "New name bb?");
       assert(items.map((i) => i.label).join("|") === "Go to line|Open thread|Open the thread on GitHub", `the thread's menu reads ${JSON.stringify(items)}`);
       const sent = writes().length;
       await clickItem(page, "Open thread");
-      await waitModal(page);
-      const m = await modal(page);
-      assert(m.hint === "It is posted on pull request #7 on GitHub, for everybody who can read it there." && JSON.stringify(m.notes) === JSON.stringify(["octocat: New name bb?"]), `the dialog reads ${JSON.stringify(m)}`);
-      await page.fill(`${MODAL} [data-editor-comment-text]`, "fixed in abc123");
-      await page.click(`${MODAL} [data-editor-comment-save]`);
+      await cardOf(page, "New name bb?").waitFor({ timeout: 8000 });
+      await reply(page, "New name bb?");
+      const m = await card(page, "New name bb?");
+      assert(m.hint === "It is posted on pull request #7 on GitHub, for everybody who can read it there." && JSON.stringify(m.notes) === JSON.stringify(["octocat: New name bb?"]) && m.line === "4", `the thread reads ${JSON.stringify(m)}`);
+      await field(page, "New name bb?").fill("fixed in abc123");
+      await send(page, "New name bb?");
       await toast(page, "The reply is posted on pull request #7.");
       const asked = writes().slice(sent);
       assert(asked.length === 1 && asked[0].path === "/api/graphql" && asked[0].auth === `Bearer ${TOKEN}` && asked[0].mutation === "addPullRequestReviewThreadReply" && asked[0].variables.thread === "PRRT_kwDOe2e1" && asked[0].variables.body === "fixed in abc123" && Object.keys(asked[0].variables).length === 2, `the forge was asked ${JSON.stringify(asked)}`);
@@ -571,16 +587,18 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       await waitFor(async () => ((await ofThread("PRRT_kwDOe2e1"))?.replies || []).some((r) => r.id === `PRRC_kwDOe2e${id}` && r.author === "octocat" && r.text === "fixed in abc123"), "the reply under the thread", 30000);
       assert((await ofThread("PRRT_kwDOe2e1")).forge.url === `${prPage}#discussion_r1`, "the thread's link moved to the reply");
       await openFromCell(page, "New name bb?");
-      await page.check(`${MODAL} [data-editor-comment-resolve]`);
-      await page.click(`${MODAL} [data-editor-comment-save]`);
+      await reply(page, "New name bb?");
+      await cardOf(page, "New name bb?").locator("[data-line-thread-reply-resolve]").check();
+      await send(page, "New name bb?");
       await toast(page, "The thread is resolved on pull request #7.");
       assert(JSON.stringify(writesAfter(sent + 1)) === JSON.stringify(['resolveReviewThread {"thread":"PRRT_kwDOe2e1"}']), `the resolve asked ${JSON.stringify(writesAfter(sent + 1))}`);
       await waitFor(async () => (await ofThread("PRRT_kwDOe2e1"))?.resolved, "the resolved thread", 30000);
       state.ghPending = true;
       try {
         await openFromCell(page, "Added e");
-        await page.fill(`${MODAL} [data-editor-comment-text]`, "pending");
-        await page.click(`${MODAL} [data-editor-comment-save]`);
+        await reply(page, "Added e");
+        await field(page, "Added e").fill("pending");
+        await send(page, "Added e");
         await toast(page, "GitHub put the reply on pull request #7 into the token's pending review, it shows once that review is submitted.");
       } finally {
         state.ghPending = false;
@@ -589,7 +607,7 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       await notReloaded(page);
     });
 
-    await run("phone: a thread's dialog with its reply field and Resolve the thread stands within 390px", async () => {
+    await run("phone: a thread unfolded with its reply field and Resolve the thread stands within 390px", async () => {
       const phone = await mobilePage();
       await openEditor(phone);
       await openSheet(phone).catch(async () => {
@@ -601,12 +619,13 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       await phone.locator("[data-editor-sheet-body] .row .dropdown-item", { hasText: "Added e" }).tap();
       await phone.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
       await clickItem(phone, "Open thread");
-      await waitModal(phone);
-      const m = await modal(phone);
+      await cardOf(phone, "Added e").waitFor({ timeout: 8000 });
+      await cardOf(phone, "Added e").locator("[data-line-thread-reply-open]").tap();
+      await sleep(300);
+      const m = await card(phone, "Added e");
       const scroll = await phone.evaluate(() => document.documentElement.scrollWidth);
-      assert(m.open && m.field && m.resolve && m.left >= 0 && m.right <= m.inner && m.resolveRight <= m.inner && scroll <= m.inner, `the dialog on the phone: ${JSON.stringify({ ...m, scroll })}`);
-      await phone.click(`${MODAL} [data-editor-comment-cancel]`);
-      await waitModalGone(phone);
+      assert(m.open && m.field && m.resolve && m.left >= 0 && m.right <= m.inner && m.resolveRight <= m.inner && scroll <= m.inner, `the thread on the phone: ${JSON.stringify({ ...m, scroll })}`);
+      await cardOf(phone, "Added e").locator("[data-line-thread-reply-cancel]").tap();
     });
 
     await run("a guest of a shared link reads no thread id, sees no reply field or switch and reaches no write", async () => {
@@ -631,11 +650,9 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
         const items = await cellMenu(guest, "Added e");
         assert(items.some((i) => i.label === "Open thread") && !items.some((i) => /^(Reply|Resolve)/.test(i.label)), `the guest's menu reads ${JSON.stringify(items)}`);
         await clickItem(guest, "Open thread");
-        await waitModal(guest);
-        const m = await modal(guest);
-        assert(m.open && !m.field && !m.save && !m.resolve && !m.hint && m.notes.length === 1, `the guest's dialog reads ${JSON.stringify(m)}`);
-        await guest.click(`${MODAL} [data-editor-comment-cancel]`);
-        await waitModalGone(guest);
+        await cardOf(guest, "Added e").waitFor({ timeout: 8000 });
+        const m = await card(guest, "Added e");
+        assert(m.open && m.line && !m.reply && !m.resolveButton && !m.field && !m.save && !m.resolve && !m.hint && m.notes.length === 1 && await guest.locator("[data-line-thread] [data-line-thread-reply], [data-line-thread] [data-line-thread-delete]").count() === 0, `the guest's thread reads ${JSON.stringify(m)}`);
         const sent = writes().length;
         const code = await guest.evaluate(async (target) => (await fetch(target, { method: "POST", headers: { "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || "", "Content-Type": "application/x-www-form-urlencoded" }, body: "thread=PRRT_kwDOe2e2&resolve=1" })).status, `${base}/projects/${project}/forge/thread`);
         assert(code === 404, `a guest's write answered ${code}`);

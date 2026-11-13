@@ -5,56 +5,56 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const { guestPage } = require("./project-share-guest");
 const { startFakeForge, addHost, gitlabNote, gitlabDiscussion } = require("./forge-fake");
+const { editChecks } = require("./assistant-projects-edit");
 
 // The line comments in the inline diff of a file in the Changes of a project
 // opened in an assistant's aside (GET /assistants/projects/view, GET
 // /assistants/projects/diff, @dc/inline-diff over @dc/comment-gutter, the
-// editor's own gutter marks), chromium, against the fake GitLab: the
-// diff's line numbers mark the file's threads open, outdated and resolved as
-// the editor marks them (.cm-comment-line via gutterLineClass, the tint in
-// every gutter but the change gutter of @codemirror/merge, which stays plain
-// beside a commented unchanged line and keeps its colour beside a changed one,
-// in both schemes and on a phone, the editor's diff view of the file alike
-// with its fold gutter tinted), a fold of
-// unchanged lines says how many threads it hides, a press on a marked line
-// unfolds the copies of its cards in Reviews under the line (notes with author
-// and age, Reply, Hand off, Resolve), in the colours of the cards in both
-// schemes, and a second one folds them, with the gutter following the height; Reply and Resolve of a thread of the forge go
+// editor's own gutter marks), chromium, against the fake GitLab: the diff's
+// line numbers mark the file's threads open, outdated and resolved as the
+// editor marks them (.cm-comment-line via gutterLineClass, the tint in every
+// gutter but the change gutter of @codemirror/merge, which stays plain beside a
+// commented unchanged line and keeps its colour beside a changed one, in both
+// schemes and on a phone, the editor's diff view of the file alike with its
+// fold gutter tinted), a fold of unchanged lines says how many threads it
+// hides, a press on a marked line unfolds the copies of its cards in Reviews
+// under the line (notes with author and age, Reply, Hand off, Resolve), in the
+// colours of the cards in both schemes, and a second one folds them, with the
+// gutter following the height; Reply and Resolve of a thread of the forge go
 // through the forge thread route, of a local one through the editor's line
 // comment routes, live, the reply growing with its text up to 35% of the
-// window, then scrolling; a press on an unmarked line of the working copy
-// opens a field under it, growing the same way, an empty Add marked invalid,
-// a refused one standing at the field with the server's sentence and the
-// words kept, no toast, Enter a new line, Ctrl+Enter
-// and Cmd+Enter adding the comment once through the editor's route
-// (POST .../editor/comments with the line's text as its quote), which then
-// stands unfolded under its line in view, marked briefly, also on a phone,
-// Cancel and a second press closing an empty
-// field; a removed line takes none; a comment made elsewhere marks its line in
-// the open diff while a field keeps its words and its focus and an open reply
-// keeps its words; the Uncommitted list's diff against HEAD marks the same
-// threads on the file's lines; project comments and threads of other files
-// stay in Reviews alone; a guest of a link to the assistant sees the marks and
-// the threads and writes nothing; on a phone's sheet a tap on a number unfolds
-// a thread and opens a field inside the width, Add making the comment; a
-// reply past its cap keeps the caret's line in view while typing, Enter at the
-// end and in the middle, a paste, Backspace and lines set by code, desktop and
-// phone; a thread of long unbroken text with its reply open and a field keep the
-// diff's width on desktop and phone in both schemes, the quoted line wrapping;
-// the bin of a local thread in its head beside the badge and of each of its
-// replies in the diff, as far in from the right edge as the file icon from
-// the left, none on a thread of the forge, deletes them behind the
-// editor's confirm, the diff, its marks and Reviews following while a field on
-// another line keeps its words, and on a phone Reply, Hand off and Resolve on
-// one line and a tap on the bin and its confirm.
+// window, then scrolling; a press on an unmarked line of the working copy opens
+// a field under it, growing the same way, an empty Add marked invalid, a
+// refused one standing at the field with the server's sentence and the words
+// kept, no toast, Enter a new line, Ctrl+Enter and Cmd+Enter adding the comment
+// once through the editor's route (POST .../editor/comments with the line's
+// text as its quote), which then stands unfolded under its line in view, marked
+// briefly, also on a phone, Cancel and a second press closing an empty field; a
+// removed line takes none; a comment made elsewhere marks its line in the open
+// diff while a field keeps its words and its focus and an open reply keeps its
+// words; the Uncommitted list's diff against HEAD marks the same threads on the
+// file's lines; project comments and threads of other files stay in Reviews
+// alone; a guest of a link to the assistant sees the marks and the threads and
+// writes nothing; on a phone's sheet a tap on a number unfolds a thread and
+// opens a field inside the width, Add making the comment; a reply past its cap
+// keeps the caret's line in view while typing, Enter at the end and in the
+// middle, a paste, Backspace and lines set by code, desktop and phone; a thread
+// of long unbroken text with its reply open and a field keep the diff's width
+// on desktop and phone in both schemes, the quoted line wrapping; the bin of a
+// local thread in its head beside the badge and of each of its replies in the
+// diff, as far in from the right edge as the file icon from the left, none on a
+// thread of the forge, deletes them behind the editor's confirm, the diff, its
+// marks and Reviews following while a field on another line keeps its words,
+// and on a phone Reply, Hand off and Resolve on one line and a tap on the bin
+// and its confirm. A note's edit in place stands in assistant-projects-edit.js.
 //
-// Instance like assistant-projects-reviews.js's: tests/e2e/fakes first on
-// PATH, a scratch HOME, its --projects-dir mounted into the runner at the
-// same path, the fake forge's ports FORGE_PORT and FORGE_TLS_PORT (default
-// 3157 and 3158) published on the host's loopback, where the instance
-// reaches them at FORGE_ADDR (default 127.0.0.1). SHOTS_DIR with a mount
-// takes desktop, dark desktop and phone screenshots, and a desktop and a
-// phone one of the long thread. About two minutes.
+// Instance like assistant-projects-reviews.js's: tests/e2e/fakes first on PATH,
+// a scratch HOME, its --projects-dir mounted into the runner at the same path,
+// the fake forge's ports FORGE_PORT and FORGE_TLS_PORT (default 3157 and 3158)
+// published on the host's loopback, where the instance reaches them at
+// FORGE_ADDR (default 127.0.0.1). SHOTS_DIR with a mount takes desktop, dark
+// desktop and phone screenshots, and a desktop and a phone one of the long
+// thread. About two minutes.
 const TAG = Date.now().toString(36).slice(-5);
 const SHOTS_DIR = process.env.SHOTS_DIR || "";
 const FAKE_PORT = Number(process.env.FORGE_PORT || 3157);
@@ -92,7 +92,6 @@ async function postJSON(page, url, body, opts) {
 }
 
 const comment = async (page, line, text, lineText) => (await postJSON(page, `/projects/${REPO}/editor/comments`, { path: FILE, line, text, ...(lineText === undefined ? {} : { lineText }) }, { json: true })).comment?.id;
-
 const stored = (page) => page.evaluate(async (name) => (await (await fetch(`/projects/${name}/editor/comments`)).json()).comments || [], REPO);
 
 async function openPage(p, url) {
@@ -116,32 +115,32 @@ const diff = (p, file, list = "files") => p.evaluate(({ pane, file, list }) => {
   const cell = (n) => cells.find((el) => el.textContent.trim() === String(n));
   const codeLines = [...(cm?.querySelectorAll(".cm-content > .cm-line") || [])].filter(shown);
   const kind = (el) => (el.classList.contains("cm-comment-line-outdated") ? "x" : el.classList.contains("cm-comment-line-resolved") ? "r" : "o");
-  const blocks = [...(cm?.querySelectorAll("[data-assistant-diff-line]") || [])].filter(shown).map((block) => {
-    const n = Number(block.dataset.assistantDiffLine);
+  const blocks = [...(cm?.querySelectorAll("[data-line-block]") || [])].filter(shown).map((block) => {
+    const n = Number(block.dataset.lineBlock);
     const above = cell(n)?.getBoundingClientRect();
     const below = cell(n + 1)?.getBoundingClientRect();
     const box = block.getBoundingClientRect();
     const next = cell(n + 1);
     const nextLine = next ? codeLines[cells.indexOf(next)] : null;
-    const form = block.querySelector("[data-assistant-diff-comment-form]");
+    const form = block.querySelector("[data-line-comment-form]");
     return {
       line: n,
       under: !!above && box.top >= above.bottom - 2 && (!below || below.top >= box.bottom - 2),
       aligned: !next || !nextLine || Math.abs(next.getBoundingClientRect().top - nextLine.getBoundingClientRect().top) <= 2,
-      threads: [...block.querySelectorAll(":scope > [data-assistant-thread]")].filter(shown).map((t) => ({
+      threads: [...block.querySelectorAll(":scope > [data-line-thread]")].filter(shown).map((t) => ({
         id: t.dataset.thread || "",
-        cid: t.dataset.assistantThread,
+        cid: t.dataset.lineThread,
         notes: [...t.querySelectorAll("[data-comment-note]")].filter(shown).map((n) => `${text(n.querySelector("[data-comment-note-author]"))}: ${text(n.querySelector("[data-comment-note-text]"))}`),
         when: text(t.querySelector("[data-comment-note] dc-time")),
-        actions: [...t.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => text(b) || b.getAttribute("aria-label")),
-        bin: (() => { const b = t.querySelector("[data-assistant-thread-head] [data-assistant-thread-delete]"); const o = t.querySelector("[data-assistant-thread-head] [data-assistant-thread-origin]"); return shown(b) && !!o && b.getBoundingClientRect().left >= o.getBoundingClientRect().right; })(),
-        oneLine: new Set([...t.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => Math.round(b.getBoundingClientRect().top))).size <= 1,
+        actions: [...t.querySelectorAll("[data-line-thread-actions] button")].filter(shown).map((b) => text(b) || b.getAttribute("aria-label")),
+        bin: (() => { const b = t.querySelector("[data-line-thread-head] [data-line-thread-delete]"); const o = t.querySelector("[data-line-thread-head] [data-line-thread-origin]"); return shown(b) && !!o && b.getBoundingClientRect().left >= o.getBoundingClientRect().right; })(),
+        oneLine: new Set([...t.querySelectorAll("[data-line-thread-actions] button")].filter(shown).map((b) => Math.round(b.getBoundingClientRect().top))).size <= 1,
         drops: [...t.querySelectorAll("[data-comment-note]")].filter((n) => shown(n.querySelector("[data-comment-note-drop]"))).map((n) => text(n.querySelector("[data-comment-note-text]"))),
-        reply: shown(t.querySelector("[data-assistant-thread-reply]")),
+        reply: shown(t.querySelector("[data-line-thread-reply]")),
         inset: (() => {
           const card = t.getBoundingClientRect();
-          const icon = t.querySelector("[data-assistant-thread-head] > .ti");
-          const bins = [...t.querySelectorAll("[data-assistant-thread-delete] .ti, [data-comment-note-drop] .ti")].filter(shown);
+          const icon = t.querySelector("[data-line-thread-head] > .ti");
+          const bins = [...t.querySelectorAll("[data-line-thread-delete] .ti, [data-comment-note-drop] .ti")].filter(shown);
           return { start: icon ? Math.round(icon.getBoundingClientRect().left - card.left) : null, ends: bins.map((b) => Math.round(card.right - b.getBoundingClientRect().right)) };
         })(),
         flash: t.classList.contains("dc-flash"),
@@ -221,18 +220,21 @@ const gutterRow = (p, line, editor = `${rowOf(FILE)} [data-assistant-fold] .cm-e
 // change gutter, which reads as the change gutter of the plain row beside it.
 const tinted = (g, plain, change = plain.change) => !!g && g.number !== plain.number && g.beside.every((c) => c === g.number) && g.change === change;
 
-// press presses a line's number in a file's diff, by mouse or by touch.
+// press presses a line's number in a file's diff, by mouse or by touch, found by its number once it stood still for five frames: the view hands its cells to other lines.
 async function press(p, line, { list = "files", touch = false, file = FILE } = {}) {
-  const found = await p.evaluate(({ sel, line }) => {
-    for (const el of document.querySelectorAll("[data-e2e-press]")) el.removeAttribute("data-e2e-press");
-    const cell = [...document.querySelectorAll(`${sel} .cm-lineNumbers .cm-gutterElement`)].find((el) => el.textContent.trim() === String(line) && el.getClientRects().length);
-    cell?.setAttribute("data-e2e-press", "");
-    cell?.scrollIntoView({ block: "center" });
-    return !!cell;
+  const still = await p.evaluate(async ({ sel, line }) => {
+    const find = () => [...document.querySelectorAll(`${sel} .cm-lineNumbers .cm-gutterElement`)].find((el) => el.textContent.trim() === String(line) && el.getClientRects().length);
+    find()?.scrollIntoView({ block: "center" });
+    for (let i = 0, last, now, n = 0; i < 90; i += 1, last = now) {
+      await new Promise((r) => requestAnimationFrame(r));
+      now = find()?.getBoundingClientRect().y;
+      n = now !== undefined && now === last ? n + 1 : 0;
+      if (n === 5) return true;
+    }
   }, { sel: rowOf(file, list), line });
-  assert(found, `line ${line} of ${file} shows no number to press`);
-  if (touch) await p.tap("[data-e2e-press]");
-  else await p.click("[data-e2e-press]");
+  assert(still, `line ${line} of ${file} shows no number to press`);
+  const cell = p.locator(`${rowOf(file, list)} .cm-lineNumbers .cm-gutterElement`).filter({ hasText: new RegExp(`^${line}$`) }).first();
+  await (touch ? cell.tap() : cell.click());
 }
 
 async function openChanges(p) {
@@ -397,9 +399,9 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
         await page.emulateMedia({ colorScheme: scheme });
         await page.waitForFunction(({ sel, dark }) => (getComputedStyle(document.querySelector(`${sel} .cm-editor`)).backgroundColor === "rgb(40, 44, 52)") === dark, { sel: rowOf(FILE), dark: scheme === "dark" }, { timeout: 15000 });
         const read = () => page.evaluate(({ sel, id }) => {
-          const look = (card) => [card, card.querySelector("[data-comment-note-text]"), card.querySelector("[data-comment-note-author]"), card.querySelector("[data-assistant-thread-actions] button")]
+          const look = (card) => [card, card.querySelector("[data-comment-note-text]"), card.querySelector("[data-comment-note-author]"), card.querySelector("[data-line-thread-actions] button")]
             .map((el) => `${getComputedStyle(el).color}/${getComputedStyle(el).backgroundColor}/${getComputedStyle(el).fontFamily}`);
-          return { copy: look(document.querySelector(`${sel} [data-assistant-diff-line] [data-assistant-thread="${id}"]`)), card: look(document.querySelector(`[data-assistant-project-reviews] [data-assistant-thread="${id}"]`)) };
+          return { copy: look(document.querySelector(`${sel} [data-line-block] [data-line-thread="${id}"]`)), card: look(document.querySelector(`[data-assistant-project-reviews] [data-line-thread="${id}"]`)) };
         }, { sel: rowOf(FILE), id: ids.open });
         let looks = await read();
         for (let i = 0; i < 20 && JSON.stringify(looks.copy) !== JSON.stringify(looks.card); i += 1) {
@@ -416,31 +418,31 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
     });
 
     await run("Reply and Resolve in the diff write a forge thread on the forge and a local one through the line comments, live", async () => {
-      const thread = `${rowOf(FILE)} [data-assistant-diff-line="22"] [data-assistant-thread]`;
-      await page.click(`${thread} [data-assistant-thread-reply-open]`);
-      await page.fill(`${thread} [data-assistant-thread-reply-text]`, "Because 22.");
+      const thread = `${rowOf(FILE)} [data-line-block="22"] [data-line-thread]`;
+      await page.click(`${thread} [data-line-thread-reply-open]`);
+      await page.fill(`${thread} [data-line-thread-reply-text]`, "Because 22.");
       await page.keyboard.press("Control+Enter");
       await untilDiff(page, (x) => JSON.stringify(block(x, 22)?.threads[0]?.notes) === JSON.stringify(["root: Why 22?", "root: Because 22."]) && !block(x, 22).threads[0].reply, "the forge reply did not come back into the diff");
       assert(state.replies.some((r) => r.thread === "d1dc" && r.body === "Because 22."), `the forge holds ${JSON.stringify(state.replies)}`);
       await press(page, 20);
-      const local = `${rowOf(FILE)} [data-assistant-diff-line="20"] [data-assistant-thread]`;
-      await page.waitForSelector(`${local} [data-assistant-thread-reply-open]`, { state: "visible" });
-      await page.click(`${local} [data-assistant-thread-reply-open]`);
-      const rest = await grown(page, `${local} [data-assistant-thread-reply-text]`);
-      await page.fill(`${local} [data-assistant-thread-reply-text]`, rows(80));
-      const g = await grown(page, `${local} [data-assistant-thread-reply-text]`);
+      const local = `${rowOf(FILE)} [data-line-block="20"] [data-line-thread]`;
+      await page.waitForSelector(`${local} [data-line-thread-reply-open]`, { state: "visible" });
+      await page.click(`${local} [data-line-thread-reply-open]`);
+      const rest = await grown(page, `${local} [data-line-thread-reply-text]`);
+      await page.fill(`${local} [data-line-thread-reply-text]`, rows(80));
+      const g = await grown(page, `${local} [data-line-thread-reply-text]`);
       assert(rest.resize === "none" && Math.abs(g.height - g.cap) <= 1 && g.overflow === "auto" && g.scroll > g.client, `eighty rows of the reply in the diff read ${JSON.stringify(g)} from ${JSON.stringify(rest)}`);
-      await page.fill(`${local} [data-assistant-thread-reply-text]`, "It had to.");
-      assert(Math.abs((await grown(page, `${local} [data-assistant-thread-reply-text]`)).height - rest.height) <= 1, "the reply in the diff did not shrink back");
+      await page.fill(`${local} [data-line-thread-reply-text]`, "It had to.");
+      assert(Math.abs((await grown(page, `${local} [data-line-thread-reply-text]`)).height - rest.height) <= 1, "the reply in the diff did not shrink back");
       await page.keyboard.press("Meta+Enter");
       await untilDiff(page, (x) => JSON.stringify(block(x, 20)?.threads[0]?.notes) === JSON.stringify(["You: Why changed?", "You: It had to."]), "the local reply did not show in the diff");
       assert((await stored(page)).find((c) => c.id === ids.open)?.replies?.some((r) => r.text === "It had to."), "the store does not hold the local reply");
-      await page.click(`${local} [data-assistant-thread-resolve]`);
+      await page.click(`${local} [data-line-thread-resolve]`);
       await untilDiff(page, (x) => x.marks.includes("20r") && JSON.stringify(block(x, 20)?.threads[0]?.actions) === JSON.stringify(["Reply", "Hand off", "Reopen"]) && block(x, 20).threads[0].bin, "the local resolve did not mark the line resolved");
       assert((await stored(page)).find((c) => c.id === ids.open)?.resolved, "the store does not hold the resolve");
-      await page.click(`${local} [data-assistant-thread-reopen]`);
+      await page.click(`${local} [data-line-thread-reopen]`);
       await untilDiff(page, (x) => x.marks.includes("20o"), "the reopen did not mark the line open again");
-      await page.click(`${thread} [data-assistant-thread-resolve]`);
+      await page.click(`${thread} [data-line-thread-resolve]`);
       await untilDiff(page, (x) => x.marks.includes("22r"), "the forge resolve did not mark the line resolved");
       assert(state.resolved.includes("d1dc"), `the forge resolved ${JSON.stringify(state.resolved)}`);
       await press(page, 20);
@@ -452,10 +454,10 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       await press(page, 23);
       let d = await untilDiff(page, (x) => block(x, 23)?.field && block(x, 23).aligned, "no field opened under line 23");
       assert(block(d, 23).focused && block(d, 23).under && block(d, 23).aligned, `the field reads ${JSON.stringify(block(d, 23))}`);
-      await page.click(`${rowOf(FILE)} [data-assistant-diff-line="23"] [data-assistant-diff-comment-add]`);
+      await page.click(`${rowOf(FILE)} [data-line-block="23"] [data-line-comment-add]`);
       d = await untilDiff(page, (x) => block(x, 23)?.invalid, "an empty Add was not marked invalid");
       assert((await stored(page)).every((c) => c.line !== 23), "an empty Add made a comment");
-      const field = `${rowOf(FILE)} [data-assistant-diff-line="23"] [data-assistant-diff-comment-text]`;
+      const field = `${rowOf(FILE)} [data-line-block="23"] [data-line-comment-text]`;
       const rest = await grown(page, field);
       await page.fill(field, rows(8));
       let g = await grown(page, field);
@@ -466,7 +468,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       d = await untilDiff(page, (x) => block(x, 23)?.aligned, "the grown field does not keep the numbers on their lines");
       const tooLong = "\u00e4".repeat(9000);
       await page.fill(field, tooLong);
-      await page.click(`${rowOf(FILE)} [data-assistant-diff-line="23"] [data-assistant-diff-comment-add]`);
+      await page.click(`${rowOf(FILE)} [data-line-block="23"] [data-line-comment-add]`);
       d = await untilDiff(page, (x) => block(x, 23)?.feedback === "That comment is too long.", "the refusal does not stand at the field");
       assert(block(d, 23).value === tooLong && block(d, 23).field && !(await toasted(page, "too long")) && (await stored(page)).every((c) => c.line !== 23), `the refused field reads ${JSON.stringify({ ...block(d, 23), value: block(d, 23).value === tooLong })} or a toast came`);
       await page.fill(field, "");
@@ -489,7 +491,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       await untilDiff(page, (x) => !block(x, 23), "a second press did not fold the new thread");
       await press(page, 19);
       await untilDiff(page, (x) => block(x, 19)?.field, "no field opened under line 19");
-      await page.click(`${rowOf(FILE)} [data-assistant-diff-line="19"] [data-assistant-diff-comment-cancel]`);
+      await page.click(`${rowOf(FILE)} [data-line-block="19"] [data-line-comment-cancel]`);
       await untilDiff(page, (x) => !block(x, 19), "Cancel did not close the field");
       await press(page, 19);
       await untilDiff(page, (x) => block(x, 19)?.field, "no field opened again under line 19");
@@ -517,14 +519,14 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
     await run("a comment made elsewhere marks its line in the open diff, a field and an open reply keep their words", async () => {
       await press(page, 19);
       await untilDiff(page, (x) => block(x, 19)?.field, "no field opened under line 19");
-      await page.click(`${rowOf(FILE)} [data-assistant-diff-line="19"] [data-assistant-diff-comment-text]`);
+      await page.click(`${rowOf(FILE)} [data-line-block="19"] [data-line-comment-text]`);
       await page.keyboard.type("half typed");
       await press(page, 20);
-      const local = `${rowOf(FILE)} [data-assistant-diff-line="20"] [data-assistant-thread]`;
-      await page.waitForSelector(`${local} [data-assistant-thread-reply-open]`, { state: "visible" });
-      await page.click(`${local} [data-assistant-thread-reply-open]`);
-      await page.fill(`${local} [data-assistant-thread-reply-text]`, "kept reply");
-      await page.click(`${rowOf(FILE)} [data-assistant-diff-line="19"] [data-assistant-diff-comment-text]`);
+      const local = `${rowOf(FILE)} [data-line-block="20"] [data-line-thread]`;
+      await page.waitForSelector(`${local} [data-line-thread-reply-open]`, { state: "visible" });
+      await page.click(`${local} [data-line-thread-reply-open]`);
+      await page.fill(`${local} [data-line-thread-reply-text]`, "kept reply");
+      await page.click(`${rowOf(FILE)} [data-line-block="19"] [data-line-comment-text]`);
       await page.evaluate((sel) => { document.querySelector(`${sel} .cm-editor`).dataset.e2eSame = "1"; }, rowOf(FILE));
       const other = await browser.newContext({ ignoreHTTPSErrors: true });
       try {
@@ -540,11 +542,11 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       const same = await page.evaluate((sel) => document.querySelector(`${sel} .cm-editor`)?.dataset.e2eSame === "1", rowOf(FILE));
       assert(same, "the open diff was drawn anew");
       assert(block(d, 19)?.value === "half typed" && block(d, 19).focused, `the field did not keep its words and focus: ${JSON.stringify(block(d, 19))}`);
-      const kept = await page.evaluate((sel) => document.querySelector(`${sel} [data-assistant-thread-reply-text]`)?.value, local);
+      const kept = await page.evaluate((sel) => document.querySelector(`${sel} [data-line-thread-reply-text]`)?.value, local);
       assert(kept === "kept reply" && block(d, 20).threads[0].reply, `the open reply reads ${kept}`);
-      await page.click(`${local} [data-assistant-thread-reply-cancel]`);
+      await page.click(`${local} [data-line-thread-reply-cancel]`);
       await untilDiff(page, (x) => (block(x, 20)?.threads[0]?.notes || []).includes("You: Meanwhile"), "the thread did not follow once its reply closed");
-      await page.click(`${rowOf(FILE)} [data-assistant-diff-line="19"] [data-assistant-diff-comment-cancel]`);
+      await page.click(`${rowOf(FILE)} [data-line-block="19"] [data-line-comment-cancel]`);
       await press(page, 20);
       await untilDiff(page, (x) => x.blocks.length === 0, "the field and the thread did not go");
     });
@@ -563,8 +565,8 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
     await run("project comments and threads on other files stay in Reviews alone", async () => {
       const where = await page.evaluate(({ pane, project, other }) => {
         const root = document.querySelector(`${pane} [data-assistant-project-view-body]`);
-        const inReviews = (id) => !!root.querySelector(`[data-assistant-project-reviews] [data-assistant-thread="${id}"]`);
-        const inDiffs = (id) => !!root.querySelector(`[data-assistant-diff] [data-assistant-thread="${id}"]`);
+        const inReviews = (id) => !!root.querySelector(`[data-assistant-project-reviews] [data-line-thread="${id}"]`);
+        const inDiffs = (id) => !!root.querySelector(`[data-assistant-diff] [data-line-thread="${id}"]`);
         return { project: inReviews(project), other: inReviews(other), inDiffs: inDiffs(project) || inDiffs(other) };
       }, { pane: PANE, project: ids.project, other: ids.other });
       assert(where.project && where.other && !where.inDiffs, `the project and other file's threads stand ${JSON.stringify(where)}`);
@@ -615,11 +617,11 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       await press(mp, 19, { touch: true });
       d = await untilDiff(mp, (x) => block(x, 19)?.field, "the tap did not open a field");
       assert(!block(d, 19).focused && block(d, 19).right <= d.width, `the phone's field reads ${JSON.stringify(block(d, 19))}`);
-      const field = `${rowOf(FILE)} [data-assistant-diff-line="19"]`;
-      await mp.tap(`${field} [data-assistant-diff-comment-text]`);
-      await mp.fill(`${field} [data-assistant-diff-comment-text]`, "From the phone");
+      const field = `${rowOf(FILE)} [data-line-block="19"]`;
+      await mp.tap(`${field} [data-line-comment-text]`);
+      await mp.fill(`${field} [data-line-comment-text]`, "From the phone");
       if (SHOTS_DIR) await mp.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-diff-comments-phone.png") });
-      await mp.tap(`${field} [data-assistant-diff-comment-add]`);
+      await mp.tap(`${field} [data-line-comment-add]`);
       d = await untilDiff(mp, (x) => x.marks.includes("19o") && block(x, 19)?.threads.length === 1 && block(x, 19).threads[0].flash, "the phone's comment did not stand marked under its line");
       assert(block(d, 19).threads[0].inView && block(d, 19).right <= d.width, `the phone's new thread reads ${JSON.stringify(block(d, 19))}`);
       const made = (await stored(page)).filter((c) => c.path === FILE && c.line === 19);
@@ -627,7 +629,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
     });
 
     await run("a reply in the diff past its cap keeps the caret's line in view, typed, Enter at the end and in the middle, pasted, deleted and set by code, desktop and phone", async () => {
-      const thread = `${rowOf(FILE)} [data-assistant-diff-line="20"] [data-assistant-thread]`;
+      const thread = `${rowOf(FILE)} [data-line-block="20"] [data-line-thread]`;
       const seen = {};
       for (const touch of [false, true]) {
         const where = touch ? "phone" : "desktop";
@@ -644,12 +646,12 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
         }
         await unfold(p, "files", touch);
         await press(p, 20, { touch });
-        await p.waitForSelector(`${thread} [data-assistant-thread-reply-open]`, { state: "visible", timeout: 10000 });
-        if (touch) await p.tap(`${thread} [data-assistant-thread-reply-open]`);
-        else await p.click(`${thread} [data-assistant-thread-reply-open]`);
-        const walk = await L.caretWalk(p, `${thread} [data-assistant-thread-reply-text]`);
+        await p.waitForSelector(`${thread} [data-line-thread-reply-open]`, { state: "visible", timeout: 10000 });
+        if (touch) await p.tap(`${thread} [data-line-thread-reply-open]`);
+        else await p.click(`${thread} [data-line-thread-reply-open]`);
+        const walk = await L.caretWalk(p, `${thread} [data-line-thread-reply-text]`);
         assert(walk.hidden.length === 0, `${where}: ${walk.hidden.length} of ${walk.steps} steps hid the caret: ${walk.hidden.slice(0, 4).join("; ")}`);
-        await p.click(`${thread} [data-assistant-thread-reply-cancel]`);
+        await p.click(`${thread} [data-line-thread-reply-cancel]`);
         await untilDiff(p, (x) => block(x, 20)?.threads[0] && !block(x, 20).threads[0].reply, `${where}: Cancel did not close the reply`);
         await press(p, 20, { touch });
         await untilDiff(p, (x) => !block(x, 20), `${where}: a second press did not fold the thread`);
@@ -667,11 +669,11 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       // view, the diff draws only the lines near what shows.
       const fits = (p) => p.evaluate(async (sel) => {
         const row = document.querySelector(sel);
-        row.querySelector('[data-assistant-diff-line="30"]').scrollIntoView({ block: "end" });
-        for (let i = 0; i < 20 && !row.querySelector('[data-assistant-diff-line="31"] textarea'); i += 1) await new Promise((r) => requestAnimationFrame(r));
+        row.querySelector('[data-line-block="30"]').scrollIntoView({ block: "end" });
+        for (let i = 0; i < 20 && !row.querySelector('[data-line-block="31"] textarea'); i += 1) await new Promise((r) => requestAnimationFrame(r));
         const scroller = row.querySelector(".cm-scroller");
         const box = scroller.getBoundingClientRect();
-        const parts = [...row.querySelectorAll("[data-assistant-diff-line] :is([data-assistant-thread-quote], [data-comment-note-text], textarea, [data-assistant-thread-actions])")];
+        const parts = [...row.querySelectorAll("[data-line-block] :is([data-line-thread-quote], [data-comment-note-text], textarea, [data-line-thread-actions])")];
         const page = document.scrollingElement;
         let aside = scroller.parentElement;
         while (aside && !["auto", "scroll"].includes(getComputedStyle(aside).overflowY)) aside = aside.parentElement;
@@ -679,7 +681,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
           scroll: scroller.scrollWidth,
           width: scroller.clientWidth,
           parts: parts.length,
-          field: !!row.querySelector('[data-assistant-diff-line="31"] [data-assistant-diff-comment-text]'),
+          field: !!row.querySelector('[data-line-block="31"] [data-line-comment-text]'),
           outside: parts.filter((el) => el.getBoundingClientRect().right > box.right + 1 || el.scrollWidth > el.clientWidth + 1).map((el) => el.outerHTML.slice(0, 80)),
           aside: aside ? aside.scrollWidth - aside.clientWidth : 0,
           page: page.scrollWidth - page.clientWidth,
@@ -701,7 +703,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
         await untilDiff(p, (x) => block(x, 31)?.field, "no field opened under line 31");
         await press(p, 30, { touch });
         await untilDiff(p, (x) => block(x, 30)?.threads.length === 1, "the long thread did not unfold under its line");
-        const reply = `${rowOf(FILE)} [data-assistant-diff-line="30"] [data-assistant-thread-reply-open]`;
+        const reply = `${rowOf(FILE)} [data-line-block="30"] [data-line-thread-reply-open]`;
         if (touch) await p.tap(reply);
         else await p.click(reply);
         await untilDiff(p, (x) => block(x, 30)?.threads[0]?.reply, "the reply did not open");
@@ -737,7 +739,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       await unfold(page);
       await press(page, 24);
       await untilDiff(page, (x) => block(x, 24)?.field, "no field opened under line 24");
-      await page.fill(`${rowOf(FILE)} [data-assistant-diff-line="24"] [data-assistant-diff-comment-text]`, "stays");
+      await page.fill(`${rowOf(FILE)} [data-line-block="24"] [data-line-comment-text]`, "stays");
       await press(page, 22);
       await press(page, 20);
       let d = await untilDiff(page, (x) => block(x, 20)?.threads.length === 1 && block(x, 22)?.threads.length === 1, "the threads on 20 and 22 did not unfold");
@@ -746,19 +748,19 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       assert(JSON.stringify(local.actions) === JSON.stringify(["Reply", "Hand off", "Resolve"]) && local.bin && JSON.stringify(local.drops) === JSON.stringify(["It had to.", "Meanwhile"]), `the local thread in the diff offers ${JSON.stringify(local)}`);
       assert(!forge.bin && !forge.drops.length, `the forge thread in the diff offers ${JSON.stringify(forge)}`);
       assert(even(local) && local.inset.ends.length === 3, `the bins in the diff stand in from the right unlike the file icon from the left: ${JSON.stringify(local.inset)}`);
-      const copy = `${rowOf(FILE)} [data-assistant-diff-line="20"] [data-assistant-thread]`;
-      const stands = (id) => page.evaluate((id) => !!document.querySelector(`[data-assistant-project-reviews] [data-assistant-thread="${id}"]`), ids.open);
+      const copy = `${rowOf(FILE)} [data-line-block="20"] [data-line-thread]`;
+      const stands = (id) => page.evaluate((id) => !!document.querySelector(`[data-assistant-project-reviews] [data-line-thread="${id}"]`), ids.open);
       await page.locator(`${copy} [data-comment-note]`).filter({ hasText: "Meanwhile" }).locator("[data-comment-note-drop]").click();
       await page.waitForSelector(DIALOG, { state: "visible", timeout: 5000 });
       let asked = (await page.locator(DIALOG).textContent()).replace(/\s+/g, " ");
       assert(asked.includes("Delete this reply?") && asked.includes(`${FILE}:20`) && asked.includes("Meanwhile"), `the reply's confirm reads ${asked}`);
       await page.click(`${DIALOG} .swal2-confirm`);
       d = await untilDiff(page, (x) => JSON.stringify(block(x, 20)?.threads[0]?.notes) === JSON.stringify(["You: Why changed?", "You: It had to."]), "the reply did not go from the diff");
-      const card = await page.evaluate((id) => [...document.querySelectorAll(`[data-assistant-project-reviews] [data-assistant-thread="${id}"] [data-comment-note-text]`)].map((n) => n.textContent), ids.open);
+      const card = await page.evaluate((id) => [...document.querySelectorAll(`[data-assistant-project-reviews] [data-line-thread="${id}"] [data-comment-note-text]`)].map((n) => n.textContent), ids.open);
       assert(JSON.stringify(card) === JSON.stringify(["Why changed?", "It had to."]), `the card in Reviews holds ${JSON.stringify(card)}`);
       assert(JSON.stringify((await stored(page)).find((c) => c.id === ids.open)?.replies?.map((r) => r.text)) === JSON.stringify(["It had to."]), "the store still holds the deleted reply");
       assert(block(d, 24)?.value === "stays", `the field lost its words: ${JSON.stringify(block(d, 24))}`);
-      await page.click(`${copy} [data-assistant-thread-delete]`);
+      await page.click(`${copy} [data-line-thread-delete]`);
       await page.waitForSelector(DIALOG, { state: "visible", timeout: 5000 });
       asked = (await page.locator(DIALOG).textContent()).replace(/\s+/g, " ");
       assert(asked.includes("Delete this comment?") && asked.includes("Why changed?") && asked.includes("It takes its reply along."), `the thread's confirm reads ${asked}`);
@@ -777,7 +779,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       await press(mp, 23, { touch: true });
       d = await untilDiff(mp, (x) => block(x, 23)?.threads.length === 1, "the tap did not unfold the thread on 23");
       assert(block(d, 23).threads[0].bin && JSON.stringify(block(d, 23).threads[0].actions) === JSON.stringify(["Reply", "Hand off", "Resolve"]) && block(d, 23).threads[0].oneLine && even(block(d, 23).threads[0]) && block(d, 23).right <= d.width, `the phone's thread reads ${JSON.stringify(block(d, 23))}`);
-      const bin = `${rowOf(FILE)} [data-assistant-diff-line="23"] [data-assistant-thread-delete]`;
+      const bin = `${rowOf(FILE)} [data-line-block="23"] [data-line-thread-delete]`;
       const fits = await mp.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { right: r.right, width: r.width, inner: window.innerWidth }; }, bin);
       assert(fits.right <= fits.inner && fits.width >= 24, `the phone's bin reads ${JSON.stringify(fits)}`);
       await mp.tap(bin);
@@ -786,6 +788,7 @@ L.runFeature("assistant-projects-diff-comments", async ({ browser, page, run, mo
       await untilDiff(mp, (x) => !x.marks.split(",").includes("23o") && !block(x, 23), "the phone's thread did not go from the diff");
       assert(!(await stored(page)).some((c) => c.id === ids.added), "the store still holds the phone's thread");
     });
+    await editChecks({ page, run, mobilePage, owner, REPO, FILE, PANE, openPage, openChanges, unfold, press, untilDiff, block, rowOf, stored, comment, postJSON });
   } finally {
     if (guest) await guest.ctx.close().catch(() => {});
     if (linkId) await post(page, `/settings/sharing/${linkId}`, { form: "revoke" }).catch(() => {});

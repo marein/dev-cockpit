@@ -1,4 +1,5 @@
 import { commentGutter } from "@dc/comment-gutter";
+import { lineBlocks } from "@dc/line-blocks";
 import { isDark } from "@dc/theme";
 
 // How many unchanged lines stay visible around a change when the folding is
@@ -35,42 +36,15 @@ export async function inlineDiff(original, doc, { onLine } = {}) {
     import("@codemirror/merge"),
     import("@codemirror/theme-one-dark"),
   ]);
-  const { BlockType, Decoration, EditorView, ViewPlugin, WidgetType, lineNumbers } = view;
-  const { Compartment, EditorState, StateEffect, StateField } = state;
+  const { BlockType, EditorView, ViewPlugin, lineNumbers } = view;
+  const { Compartment, EditorState } = state;
   const scheme = new Compartment();
   const marks = new Compartment();
   const commentsExtension = commentGutter(state, view);
   const schemeTheme = () => (isDark() ? theme.oneDark : []);
   let threads = [];
 
-  class LineBlock extends WidgetType {
-    constructor(dom) {
-      super();
-      this.dom = dom;
-    }
-
-    eq(other) {
-      return other.dom === this.dom;
-    }
-
-    toDOM() {
-      return this.dom;
-    }
-
-    ignoreEvent() {
-      return true;
-    }
-  }
-
-  const placeBlocks = StateEffect.define();
-  const blocks = StateField.define({
-    create: () => Decoration.none,
-    update: (set, tr) => {
-      for (const effect of tr.effects) if (effect.is(placeBlocks)) return effect.value;
-      return set.map(tr.changes);
-    },
-    provide: (f) => EditorView.decorations.from(f),
-  });
+  const blocks = lineBlocks(state, view);
 
   // The fold is @codemirror/merge's own widget, its note is a child that
   // takes no pointer, so a press on it still lands where the fold reads its
@@ -112,7 +86,7 @@ export async function inlineDiff(original, doc, { onLine } = {}) {
         EditorView.lineWrapping,
         scheme.of(schemeTheme()),
         marks.of(commentsExtension(null)),
-        blocks,
+        blocks.extension,
         folds,
         unifiedDiff(merge, original, true),
       ],
@@ -130,8 +104,6 @@ export async function inlineDiff(original, doc, { onLine } = {}) {
       onLine(editor.state.doc.lineAt(block.from).number);
     }, { signal: ac.signal });
   }
-  const sizes = new ResizeObserver(() => editor.requestMeasure());
-  let placed = new Set();
   return {
     dom: editor.dom,
     get doc() {
@@ -146,22 +118,11 @@ export async function inlineDiff(original, doc, { onLine } = {}) {
       editor.dispatch({ effects: marks.reconfigure(commentsExtension(data)) });
     },
     setBlocks(byLine) {
-      const text = editor.state.doc;
-      const ranges = [];
-      const next = new Set();
-      for (const [line, dom] of byLine) {
-        if (line < 1 || line > text.lines) continue;
-        ranges.push(Decoration.widget({ widget: new LineBlock(dom), block: true, side: 1 }).range(text.line(line).to));
-        next.add(dom);
-        if (!placed.has(dom)) sizes.observe(dom);
-      }
-      for (const dom of placed) if (!next.has(dom)) sizes.unobserve(dom);
-      placed = next;
-      editor.dispatch({ effects: placeBlocks.of(Decoration.set(ranges, true)) });
+      blocks.set(editor, [...byLine].map(([line, dom]) => ({ dom, line })));
     },
     destroy() {
       ac.abort();
-      sizes.disconnect();
+      blocks.destroy();
       editor.destroy();
     },
   };

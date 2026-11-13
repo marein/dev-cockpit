@@ -111,24 +111,24 @@ const view = (p) => p.evaluate((pane) => {
   const root = document.querySelector(`${pane} [data-assistant-project-view-body]`);
   const thread = (el) => ({
     id: el.dataset.thread || "",
-    cid: el.dataset.assistantThread || "",
-    local: el.hasAttribute("data-assistant-thread-local"),
-    origin: text(el.querySelector("[data-assistant-thread-origin]")),
+    cid: el.dataset.lineThread || "",
+    local: el.hasAttribute("data-line-thread-local"),
+    origin: text(el.querySelector("[data-line-thread-origin]")),
     shown: shown(el),
-    file: text(el.querySelector("[data-assistant-thread-file]")),
-    href: el.querySelector("[data-assistant-thread-file]")?.getAttribute("href") || "",
-    quote: text(el.querySelector("[data-assistant-thread-quote]")),
-    outdated: shown(el.querySelector("[data-assistant-thread-outdated]")),
+    file: text(el.querySelector("[data-line-thread-file]")),
+    href: el.querySelector("[data-line-thread-file]")?.getAttribute("href") || "",
+    quote: text(el.querySelector("[data-line-thread-quote]")),
+    outdated: shown(el.querySelector("[data-line-thread-outdated]")),
     notes: [...el.querySelectorAll("[data-comment-note]")].filter(shown).map((n) => `${text(n.querySelector("[data-comment-note-author]"))}: ${text(n.querySelector("[data-comment-note-text]"))}`),
     when: text(el.querySelector("[data-comment-note] dc-time")),
-    actions: [...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => text(b) || b.getAttribute("aria-label")),
-    bin: (() => { const b = el.querySelector("[data-assistant-thread-head] [data-assistant-thread-delete]"); const o = el.querySelector("[data-assistant-thread-head] [data-assistant-thread-origin]"); return shown(b) && !!o && b.getBoundingClientRect().left >= o.getBoundingClientRect().right; })(),
-    oneLine: new Set([...el.querySelectorAll("[data-assistant-thread-actions] button")].filter(shown).map((b) => Math.round(b.getBoundingClientRect().top))).size <= 1,
+    actions: [...el.querySelectorAll("[data-line-thread-actions] button")].filter(shown).map((b) => text(b) || b.getAttribute("aria-label")),
+    bin: (() => { const b = el.querySelector("[data-line-thread-head] [data-line-thread-delete]"); const o = el.querySelector("[data-line-thread-head] [data-line-thread-origin]"); return shown(b) && !!o && b.getBoundingClientRect().left >= o.getBoundingClientRect().right; })(),
+    oneLine: new Set([...el.querySelectorAll("[data-line-thread-actions] button")].filter(shown).map((b) => Math.round(b.getBoundingClientRect().top))).size <= 1,
     drops: [...el.querySelectorAll("[data-comment-note]")].filter((n) => shown(n.querySelector("[data-comment-note-drop]"))).map((n) => text(n.querySelector("[data-comment-note-text]"))),
     inset: (() => {
       const card = el.getBoundingClientRect();
-      const icon = el.querySelector("[data-assistant-thread-head] > .ti");
-      const bins = [...el.querySelectorAll("[data-assistant-thread-delete] .ti, [data-comment-note-drop] .ti")].filter(shown);
+      const icon = el.querySelector("[data-line-thread-head] > .ti");
+      const bins = [...el.querySelectorAll("[data-line-thread-delete] .ti, [data-comment-note-drop] .ti")].filter(shown);
       return { start: icon ? Math.round(icon.getBoundingClientRect().left - card.left) : null, ends: bins.map((b) => Math.round(card.right - b.getBoundingClientRect().right)) };
     })(),
     right: el.getBoundingClientRect().right,
@@ -140,10 +140,10 @@ const view = (p) => p.evaluate((pane) => {
     head: text(root?.querySelector("[data-assistant-project-view-card]")),
     count: text(root?.querySelector("[data-assistant-project-reviews-count]")),
     unpublished: text(root?.querySelector("[data-assistant-project-unpublished-box]")),
-    threads: [...(root?.querySelectorAll("[data-assistant-project-threads-open] [data-assistant-thread]") || [])].map(thread),
+    threads: [...(root?.querySelectorAll("[data-assistant-project-threads-open] [data-line-thread]") || [])].map(thread),
     resolvedToggle: shown(root?.querySelector("[data-assistant-project-resolved-toggle]")) ? root.querySelector("[data-assistant-project-resolved-toggle]").innerText.replace(/\s+/g, " ").trim() : "",
     resolvedOpen: root?.querySelector("[data-assistant-project-resolved-toggle]")?.getAttribute("aria-expanded") || "",
-    resolved: [...(root?.querySelectorAll("[data-assistant-project-threads-resolved] [data-assistant-thread]") || [])].map(thread),
+    resolved: [...(root?.querySelectorAll("[data-assistant-project-threads-resolved] [data-line-thread]") || [])].map(thread),
     controls: root ? [...root.querySelectorAll("button, form, textarea, input")].filter((el) => !el.matches("[data-assistant-project-back], [data-assistant-project-switch], [data-assistant-project-resolved-toggle], [data-assistant-changed-toggle], [data-assistant-changed-more], [data-assistant-changes-older]")).length : 0,
     width: window.innerWidth,
   };
@@ -162,8 +162,8 @@ async function until(p, want, what, timeout = 30000) {
 
 const byId = (v, id) => v.threads.find((t) => t.id === id) || v.resolved.find((t) => t.id === id);
 const byCid = (v, cid) => v.threads.find((t) => t.cid === cid) || v.resolved.find((t) => t.cid === cid);
-const threadSel = (id) => `${PANE} [data-assistant-thread][data-thread="${id}"]`;
-const localSel = (cid) => `${PANE} [data-assistant-thread="${cid}"][data-assistant-thread-local]`;
+const threadSel = (id) => `${PANE} [data-line-thread][data-thread="${id}"]`;
+const localSel = (cid) => `${PANE} [data-line-thread="${cid}"][data-line-thread-local]`;
 const notesOf = (t) => JSON.stringify(t?.notes || []);
 // even says every bin of a thread stands as far in from its right edge as its
 // file icon from the left.
@@ -321,11 +321,11 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       await page.setViewportSize({ width: 1360, height: 900 });
       await openReviews(page);
       await page.evaluate(() => { window.__noReload = 1; });
-      await page.click(`${threadSel("d1rv")} [data-assistant-thread-reply-open]`);
-      const form = `${threadSel("d1rv")} [data-assistant-thread-reply]`;
+      await page.click(`${threadSel("d1rv")} [data-line-thread-reply-open]`);
+      const form = `${threadSel("d1rv")} [data-line-thread-reply]`;
       await page.waitForSelector(`${form} textarea`, { state: "visible", timeout: 5000 });
       assert(await page.evaluate((sel) => document.activeElement === document.querySelector(`${sel} textarea`), form), "the reply field has no focus");
-      await page.click(`${form} [data-assistant-thread-reply-send]`);
+      await page.click(`${form} [data-line-thread-reply-send]`);
       await page.waitForSelector(`${form} .invalid-feedback`, { state: "visible", timeout: 5000 });
       assert(state.replies.length === 0, "an empty reply was posted");
       const rest = await grown(page, `${form} textarea`);
@@ -337,7 +337,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       assert(Math.abs(g.height - g.cap) <= 1 && g.overflow === "auto" && g.scroll > g.client, `eighty rows of the reply read ${JSON.stringify(g)}`);
       state.readOnly = true;
       await page.fill(`${form} textarea`, "Renamed in abc.");
-      await page.click(`${form} [data-assistant-thread-reply-send]`);
+      await page.click(`${form} [data-line-thread-reply-send]`);
       await toast(page, "The token may not write to GitLab: give it the scope api.");
       assert(await page.locator(`${form} textarea`).inputValue() === "Renamed in abc." && await page.locator(`${form} textarea`).isVisible(), "a refused reply lost its words");
       state.readOnly = false;
@@ -354,7 +354,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
         await route.continue();
       });
       await page.press(`${form} textarea`, "Control+Enter");
-      await page.waitForFunction((sel) => document.querySelector(`${sel} [data-assistant-thread-reply-send]`)?.disabled, form, { timeout: 5000 });
+      await page.waitForFunction((sel) => document.querySelector(`${sel} [data-line-thread-reply-send]`)?.disabled, form, { timeout: 5000 });
       await page.press(`${form} textarea`, "Control+Enter");
       await sleep(500);
       release();
@@ -369,7 +369,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
 
     await run("Resolve resolves the thread on the forge, it folds under the resolved count live", async () => {
       await page.evaluate(() => { window.__noReload = 1; });
-      await page.click(`${threadSel("d1rv")} [data-assistant-thread-resolve]`);
+      await page.click(`${threadSel("d1rv")} [data-line-thread-resolve]`);
       await toast(page, "The thread is resolved on merge request !4.");
       assert(state.resolved.includes("d1rv"), `the forge resolved ${JSON.stringify(state.resolved)}`);
       const v = await until(page, (w) => w.count === "3" && w.resolvedToggle === "Show 2 resolved threads" && !w.threads.some((t) => t.id === "d1rv"), "the resolved thread did not fold away");
@@ -404,23 +404,23 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
     await run("a local thread resolves, reopens and takes replies through the editor's line comments, live", async () => {
       await page.evaluate(() => { window.__noReload = 1; });
       const sel = localSel(localId);
-      await page.click(`${sel} [data-assistant-thread-resolve]`);
+      await page.click(`${sel} [data-line-thread-resolve]`);
       let v = await until(page, (w) => w.count === "2" && w.resolvedToggle === "Hide resolved threads" && w.resolved.length === 3 && w.resolved.some((t) => t.cid === localId && t.shown), "the resolved local thread did not fold away");
       assert(JSON.stringify(byCid(v, localId).actions) === JSON.stringify(["Reply", "Hand off", "Reopen"]) && byCid(v, localId).bin, `the resolved local thread offers ${JSON.stringify(byCid(v, localId).actions)}`);
-      await page.click(`${sel} [data-assistant-thread-reopen]`);
+      await page.click(`${sel} [data-line-thread-reopen]`);
       await until(page, (w) => w.count === "3" && w.threads.some((t) => t.cid === localId), "the reopened local thread did not come back");
-      await page.click(`${sel} [data-assistant-thread-reply-open]`);
-      await page.fill(`${sel} [data-assistant-thread-reply] textarea`, "Keeping it.");
-      assert((await page.locator(`${sel} [data-assistant-thread-reply] .form-check`).textContent()).trim() === "Resolve the thread", "the local reply offers no resolve");
-      assert(!(await page.locator(`${sel} [data-assistant-thread-reply] .form-hint`).count()), "the local reply speaks of the forge");
-      await page.check(`${sel} [data-assistant-thread-reply-resolve]`);
-      await page.press(`${sel} [data-assistant-thread-reply] textarea`, "Meta+Enter");
+      await page.click(`${sel} [data-line-thread-reply-open]`);
+      await page.fill(`${sel} [data-line-thread-reply] textarea`, "Keeping it.");
+      assert((await page.locator(`${sel} [data-line-thread-reply] .form-check`).textContent()).trim() === "Resolve the thread", "the local reply offers no resolve");
+      assert(!(await page.locator(`${sel} [data-line-thread-reply] .form-hint`).count()), "the local reply speaks of the forge");
+      await page.check(`${sel} [data-line-thread-reply-resolve]`);
+      await page.press(`${sel} [data-line-thread-reply] textarea`, "Meta+Enter");
       v = await until(page, (w) => w.count === "2" && notesOf(w.resolved.find((t) => t.cid === localId)) === JSON.stringify(["You: Keep d?", "You: Yes.", "You: Keeping it."]), "the reply that resolves did not reach the view");
-      await page.click(`${sel} [data-assistant-thread-reply-open]`);
-      await page.fill(`${sel} [data-assistant-thread-reply] textarea`, "Back.");
-      assert((await page.locator(`${sel} [data-assistant-thread-reply] .form-check`).textContent()).trim() === "Reopen the thread", "the resolved local reply offers no reopen");
-      await page.check(`${sel} [data-assistant-thread-reply-resolve]`);
-      await page.click(`${sel} [data-assistant-thread-reply-send]`);
+      await page.click(`${sel} [data-line-thread-reply-open]`);
+      await page.fill(`${sel} [data-line-thread-reply] textarea`, "Back.");
+      assert((await page.locator(`${sel} [data-line-thread-reply] .form-check`).textContent()).trim() === "Reopen the thread", "the resolved local reply offers no reopen");
+      await page.check(`${sel} [data-line-thread-reply-resolve]`);
+      await page.click(`${sel} [data-line-thread-reply-send]`);
       v = await until(page, (w) => w.count === "3" && notesOf(w.threads.find((t) => t.cid === localId)) === JSON.stringify(["You: Keep d?", "You: Yes.", "You: Keeping it.", "You: Back."]), "the reply that reopens did not reach the view");
       const stored = await page.evaluate(async ({ project, id }) => (await (await fetch(`/projects/${project}/editor/comments`)).json()).comments.find((c) => c.id === id), { project: REPO, id: localId });
       assert(stored && !stored.resolved && stored.replies.length === 3 && !stored.forge, `the editor's line comments hold ${JSON.stringify(stored)}`);
@@ -433,7 +433,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       await page.fill(input, "First words");
       await sleep(700);
       const sent = await messages();
-      await page.click(`${threadSel("d2rv")} [data-assistant-thread-handoff]`);
+      await page.click(`${threadSel("d2rv")} [data-line-thread-handoff]`);
       const want = `First words\n\n${handoff("d2rv", 5)}\n`;
       await page.waitForFunction(([sel, w]) => document.querySelector(sel)?.value === w, [input, want], { timeout: 5000 });
       assert(await page.evaluate((sel) => document.activeElement === document.querySelector(sel), input), "the message box has no focus");
@@ -458,7 +458,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       await until(mp, (w) => !w.open && w.cards, "Back did not return to the phone's cards");
       await mp.tap(`${PANE} [data-assistant-project="${REPO}"] [data-assistant-project-review]`);
       await until(mp, (w) => w.open, "the project did not open again");
-      await mp.tap(`${localSel(localId)} [data-assistant-thread-handoff]`);
+      await mp.tap(`${localSel(localId)} [data-line-thread-handoff]`);
       await mp.waitForFunction(() => !document.querySelector("#assistant-aside").classList.contains("show"), null, { timeout: 5000 });
       assert(await mp.locator("[data-assistant-input]").inputValue() === `${localHandoff(localId, 6)}\n`, "the phone's message box does not hold the hand off of the local thread");
       await mp.fill("[data-assistant-input]", "");
@@ -478,7 +478,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       assert(!(await page.locator(`${PANE} [data-assistant-project-switch]`).count()), "a project without git offers a switch");
       await postJSON(page, `/projects/${PLAIN}/editor/comments`, { path: NOTE, line: 1, text: "And this" }, { json: true });
       await until(page, (w) => w.count === "2" && w.threads.length === 2, "a comment made elsewhere did not reach the view");
-      await page.click(`${localSel(plainId)} [data-assistant-thread-handoff]`);
+      await page.click(`${localSel(plainId)} [data-line-thread-handoff]`);
       await page.waitForFunction(([sel, w]) => document.querySelector(sel)?.value === w, ["[data-assistant-input]", `Line comment ${plainId} in project ${PLAIN} at ${NOTE}:1.\n`], { timeout: 5000 });
       await page.fill("[data-assistant-input]", "");
       await sleep(700);
@@ -538,13 +538,13 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       assert(JSON.stringify(mine?.actions) === JSON.stringify(["Reply", "Hand off", "Resolve"]) && mine.bin && JSON.stringify(mine.drops) === JSON.stringify(["Drop this reply", "Stay."]), `the thread to delete offers ${JSON.stringify(mine)}`);
       assert(even(mine) && mine.inset.ends.length === 3, `the bins stand in from the right unlike the file icon from the left: ${JSON.stringify(mine.inset)}`);
       assert(v.threads.filter((t) => !t.local).every((t) => !t.bin && !t.drops.length), `a thread of the forge offers a delete: ${JSON.stringify(v.threads)}`);
-      const bin = `${localSel(made)} [data-assistant-thread-delete]`;
+      const bin = `${localSel(made)} [data-line-thread-delete]`;
       const look = () => page.evaluate((sel) => {
         const box = (el) => el.getBoundingClientRect();
         const paint = (el) => `${getComputedStyle(el).color}/${getComputedStyle(el).backgroundColor}`;
-        const bin = document.querySelector(`${sel} [data-assistant-thread-delete]`);
+        const bin = document.querySelector(`${sel} [data-line-thread-delete]`);
         const drop = document.querySelector(`${sel} [data-comment-note-drop]`);
-        const badge = document.querySelector(`${sel} [data-assistant-thread-head] [data-assistant-thread-origin]`);
+        const badge = document.querySelector(`${sel} [data-line-thread-head] [data-line-thread-origin]`);
         return {
           bin: paint(bin),
           drop: paint(drop),
@@ -576,14 +576,14 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
         await settle((x) => x.bin === `${DANGER}/rgba(214, 57, 57, 0.12)` && x.icon === DANGER, `the hovered bin in ${scheme}`);
         if (SHOTS_DIR && scheme === "light") await page.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-reviews-bin.png") });
         await page.mouse.move(0, 0);
-        await page.focus(`${localSel(made)} [data-assistant-thread-file]`);
+        await page.focus(`${localSel(made)} [data-line-thread-file]`);
         await page.keyboard.press("Tab");
         await settle((x) => x.visible && x.bin === `${DANGER}/rgba(214, 57, 57, 0.12)`, `the bin focused from the keyboard in ${scheme}`);
         await page.evaluate(() => document.activeElement?.blur());
       }
       await page.emulateMedia({ colorScheme: "light" });
-      const typing = `${localSel(localId)} [data-assistant-thread-reply] textarea`;
-      await page.click(`${localSel(localId)} [data-assistant-thread-reply-open]`);
+      const typing = `${localSel(localId)} [data-line-thread-reply] textarea`;
+      await page.click(`${localSel(localId)} [data-line-thread-reply-open]`);
       await page.fill(typing, "Half typed");
       await page.click(`${localSel(made)} [data-comment-note-drop] >> nth=0`);
       await page.waitForSelector(DIALOG, { state: "visible", timeout: 5000 });
@@ -607,7 +607,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       assert(!(await stored(made)), "the store still holds the deleted thread");
       assert(await page.locator(typing).inputValue() === "Half typed", "the reply typed elsewhere lost its words");
       await page.waitForFunction(({ pane, name, want }) => Number((document.querySelector(`${pane} [data-assistant-project="${name}"] [data-assistant-project-review]`)?.textContent.match(/(\d+) open thread/) || [])[1] || 0) === want, { pane: PANE, name: REPO, want: before - 1 }, { timeout: 15000 });
-      await page.click(`${localSel(localId)} [data-assistant-thread-reply-cancel]`);
+      await page.click(`${localSel(localId)} [data-line-thread-reply-cancel]`);
       await until(page, (w) => w.count === String(before - 1), "the view's count did not follow once the reply closed");
       await page.click(`${PANE} [data-assistant-project-back]`);
       await until(page, (w) => !w.open && w.cards, "Back did not return to the cards");
@@ -621,7 +621,7 @@ L.runFeature("assistant-projects-reviews", async ({ browser, page, run, mobilePa
       await mp.tap(`${PANE} [data-assistant-project="${REPO}"] [data-assistant-project-review]`);
       const held = await until(mp, (w) => w.open && byCid(w, onPhone)?.shown, "the phone's view did not show the thread");
       assert(byCid(held, onPhone).bin && JSON.stringify(byCid(held, onPhone).actions) === JSON.stringify(["Reply", "Hand off", "Resolve"]) && byCid(held, onPhone).oneLine && even(byCid(held, onPhone)), `the phone's thread reads ${JSON.stringify(byCid(held, onPhone))}`);
-      const phoneBin = `${localSel(onPhone)} [data-assistant-thread-delete]`;
+      const phoneBin = `${localSel(onPhone)} [data-line-thread-delete]`;
       await mp.locator(phoneBin).scrollIntoViewIfNeeded();
       const fits = await mp.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { right: r.right, width: r.width, inner: window.innerWidth }; }, phoneBin);
       assert(fits.right <= fits.inner && fits.width >= 24, `the phone's bin reads ${JSON.stringify(fits)}`);
