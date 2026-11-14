@@ -112,11 +112,20 @@ func TestAssistantsEntryNamesNoneWithNoAssistant(t *testing.T) {
 func assistantPageServer(t *testing.T, ids ...string) (*gin.Engine, *recent.Store) {
 	t.Helper()
 	r, s, opened := assistantEntryServer(t, ids...)
-	stateDir := s.cfg.StateDir
 	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil)
 	if err != nil {
 		t.Fatalf("ConfigureServe() = %v", err)
 	}
+	withShell(t, r, s, serves)
+	r.GET("/assistants/:id", s.handleAssistantPage)
+	return r, opened
+}
+
+// withShell gives the server everything the layout asks for, over the
+// plugins given, so a handler that renders a whole page can run.
+func withShell(t *testing.T, r *gin.Engine, s *Server, serves []*pluginhost.Serve) {
+	t.Helper()
+	stateDir := s.cfg.StateDir
 	assets, err := newStaticAssetManifest(serves)
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
@@ -133,8 +142,6 @@ func assistantPageServer(t *testing.T, ids ...string) (*gin.Engine, *recent.Stor
 	s.backups = backup.New(stateDir, projectsDir, "test")
 	s.activity = activity.NewTracker()
 	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
-	r.GET("/assistants/:id", s.handleAssistantPage)
-	return r, opened
 }
 
 // The page pulls itself again on every assistant event, in background windows

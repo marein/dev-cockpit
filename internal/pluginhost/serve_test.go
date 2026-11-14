@@ -289,6 +289,26 @@ func TestAddCustomElementRefusesDuplicateNames(t *testing.T) {
 	t.Fatal("a duplicate element name was accepted")
 }
 
+func TestAddPageNeedsATitleAndATablerIcon(t *testing.T) {
+	refusal := func(title, icon string) (msg any) {
+		defer func() { msg = recover() }()
+		_, _ = ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "untitled", Plugin: serveFunc(func(s plugin.Serve) error {
+			s.AddPage(title, icon, "")
+			return nil
+		})}}, "", t.TempDir(), nil, nil)
+		return nil
+	}
+	for _, tc := range []struct{ title, icon string }{{"", "ti-box"}, {"Page", ""}, {"Page", "ticket"}, {"Page", "ti-box d-none"}} {
+		msg := refusal(tc.title, tc.icon)
+		if msg == nil {
+			t.Fatalf("AddPage(%q, %q) was accepted", tc.title, tc.icon)
+		}
+		if s, _ := msg.(string); !strings.Contains(s, "untitled") {
+			t.Fatalf("AddPage(%q, %q) panicked with %v, want the plugin id", tc.title, tc.icon, msg)
+		}
+	}
+}
+
 func TestSealedServeRefuses(t *testing.T) {
 	p := &recordingPlugin{}
 	configured(t, plugin.Named[plugin.ServePlugin]{ID: "kept", Plugin: p})

@@ -57,6 +57,10 @@ func TestServesHTTP(t *testing.T) {
 		plugin.Named[plugin.ServePlugin]{ID: "routed", Plugin: &testPlugin{routeBody: "answer"}},
 		plugin.Named[plugin.ServePlugin]{ID: "files", Plugin: &testPlugin{assets: fstest.MapFS{}}},
 		plugin.Named[plugin.ServePlugin]{ID: "elemental", Plugin: &testPlugin{elements: [][2]string{{"widget", "widget.js"}}}},
+		plugin.Named[plugin.ServePlugin]{ID: "paged", Plugin: serveFunc(func(s plugin.Serve) error {
+			s.AddPage("Paged", "ti-box", "")
+			return nil
+		})},
 	)
 	if ServesHTTP(serves[0]) {
 		t.Fatal("a plugin that added nothing must not mount a subtree")
@@ -129,5 +133,28 @@ func TestSlotHTML(t *testing.T) {
 	}
 	if empty := SlotHTML(serves, "unknown-slot"); empty != "" {
 		t.Fatalf("unknown slot answered %q, want empty", empty)
+	}
+}
+
+func TestPagesInPluginOrder(t *testing.T) {
+	page := func(title string) plugin.ServePlugin {
+		return serveFunc(func(s plugin.Serve) error {
+			s.AddPage("Replaced", "ti-x", "")
+			s.AddPage(title, "ti-box", "<x></x>")
+			return nil
+		})
+	}
+	serves := configured(t,
+		plugin.Named[plugin.ServePlugin]{ID: "second", Plugin: page("Second")},
+		plugin.Named[plugin.ServePlugin]{ID: "bare", Plugin: &testPlugin{}},
+		plugin.Named[plugin.ServePlugin]{ID: "first", Plugin: page("First")},
+	)
+	got := Pages(serves)
+	want := []PageLink{
+		{Title: "Second", Icon: "ti-box", URL: "/plugins/second/", Tab: "plugin-second"},
+		{Title: "First", Icon: "ti-box", URL: "/plugins/first/", Tab: "plugin-first"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Pages() = %+v, want %+v", got, want)
 	}
 }

@@ -103,6 +103,16 @@ type Serve interface {
 	// defined set panics, markup for a place no template renders would
 	// otherwise vanish silently.
 	AddSlotHTML(slot, html string)
+	// AddPage gives the plugin a page of its own: an entry in the side rail
+	// and the phone tab bar under title, with icon a Tabler icon class like
+	// "ti-ticket", leading to the root of the plugin's URL subtree. The
+	// cockpit renders that page in its own layout with html as the work
+	// surface, unescaped and as trusted as AddSlotHTML; a plugin usually
+	// mounts one of its custom elements there. The page takes GET of the
+	// subtree root, a route the plugin added there no longer answers it. A
+	// second call replaces the first, an empty title or an icon that is not
+	// one Tabler class panics.
+	AddPage(title, icon, html string)
 	// AddAssistantMemory adds top level <slug>.md files to the assistant's
 	// shared memory, a slug being lower case letters, digits and dashes,
 	// other files are skipped. Applied at serve start in plugin order,
