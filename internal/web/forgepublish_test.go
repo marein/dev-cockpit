@@ -345,16 +345,16 @@ func TestAnAssistantsPublishWaitsForTheApproval(t *testing.T) {
 		t.Fatalf("the publish answered %d %v", code, answer)
 	}
 	q := f.waitQuestion(t)
-	address := f.s.forgeByProject(f.s.projects.List())["app"].Address()
+	binding := f.s.forgeByProject(f.s.projects.List())["app"]
 	want := []askpass.Detail{
-		{Label: "Action", Value: "Publish line comments"},
-		{Label: "Comment", Value: "src/login.go:4 · Why bb?"},
-		{Label: "On", Value: "merge request !4 · Fix the login · https://gitlab.example.com/group/sub/app/-/merge_requests/4"},
-		{Label: "Branch", Value: "feature at " + forge.ShortHead(f.pushed)},
-		{Label: "Forge", Value: "GitLab · " + address},
-		{Label: "Project", Value: "app"},
+		{Label: "Project", Value: "app", As: askpass.AsProject},
+		{Label: "Branch", Value: "feature", As: askpass.AsBranch},
+		{Label: "Merge request", Value: "!4 Fix the login", As: askpass.AsLink, URL: "https://gitlab.example.com/group/sub/app/-/merge_requests/4"},
+		{Label: "Commit", Value: forge.ShortHead(f.pushed), As: askpass.AsMono},
+		{Label: "Forge", Value: "GitLab · " + binding.Address(), As: askpass.AsLink, URL: binding.WebURL()},
+		{Label: "src/login.go:4", Value: "Why bb?", As: askpass.AsQuote},
 	}
-	if q.Action != what || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.asked()) != 0 {
+	if q.Action != what || q.Title != "Publish a line comment on merge request !4" || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.asked()) != 0 {
 		t.Fatalf("the question reads %+v, posted %q", q, f.gitlab.asked())
 	}
 	if code, answer := f.publish(t, true, f.owner, url.Values{"all": {"1"}}); code != http.StatusConflict || !strings.Contains(answer["error"].(string), "already waits") {
@@ -362,7 +362,7 @@ func TestAnAssistantsPublishWaitsForTheApproval(t *testing.T) {
 	}
 	f.decide(t, q, true, false)
 	note := f.waitApprovalNotes(t, f.owner, 1)[0]
-	says := "On GitLab " + address + ` the line comment of feature in app is published on the merge request !4 "Fix the login":` + "\n- src/login.go:4 https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_301"
+	says := "On GitLab " + binding.Address() + ` the line comment of feature in app is published on the merge request !4 "Fix the login":` + "\n- src/login.go:4 https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_301"
 	if note.Note.Verdict != approval.Done || !strings.Contains(note.Content, says) || f.stored(t, c.ID).Forge == nil {
 		t.Fatalf("the approval posted %q, note %s", f.gitlab.asked(), note.Content)
 	}
@@ -389,6 +389,53 @@ func TestAnAssistantsPublishWaitsForTheApproval(t *testing.T) {
 	note = f.waitApprovalNotes(t, f.owner, 3)[2]
 	if note.Note.Verdict != approval.Failed || !strings.Contains(note.Content, `The comment at "src/login.go":2 changed since you were asked, nothing was published.`) || len(f.gitlab.asked()) != 1 {
 		t.Fatalf("the approval of a comment moved to another line posted %q, note %s", f.gitlab.asked(), note.Content)
+	}
+}
+
+// Every comment of one publish stands as a quote of its place, however many,
+// in the order of the list: nothing published is left out of the question.
+func TestAnAssistantsPublishOfSeveralCommentsListsEveryOne(t *testing.T) {
+	f := newForgePublishFixture(t)
+	var want []askpass.Detail
+	for i := range 12 {
+		line, quote := 1, "package login"
+		if i%2 == 1 {
+			line, quote = 4, "\tname := bb"
+		}
+		text := fmt.Sprintf("comment %d", i+1)
+		f.comment(t, line, quote, text, "")
+		want = append(want, askpass.Detail{Label: fmt.Sprintf("src/login.go:%d", line), Value: text, As: askpass.AsQuote})
+	}
+	slices.SortStableFunc(want, func(a, b askpass.Detail) int { return strings.Compare(a.Label, b.Label) })
+	if code, answer := f.publish(t, true, f.owner, url.Values{"all": {"1"}}); code != http.StatusOK || answer["pending"] != true {
+		t.Fatalf("the publish answered %d %v", code, answer)
+	}
+	if q := f.waitQuestion(t); len(q.Details) != 5+12 || !reflect.DeepEqual(q.Details[5:], want) {
+		t.Fatalf("the rows read %+v", q.Details)
+	}
+}
+
+// One publish of an assistant takes at most 64 KiB of comments, which its
+// question shows whole; more is refused before anybody is asked, and the
+// same comments go in parts.
+func TestAnAssistantsPublishBeyond64KiBIsRefusedBeforeItAsks(t *testing.T) {
+	f := newForgePublishFixture(t)
+	var ids []string
+	for i := range 4 {
+		ids = append(ids, f.comment(t, 1, "package login", strings.Repeat(string(rune('a'+i)), linecomment.MaxText), "").ID)
+	}
+	code, answer := f.publish(t, true, f.owner, url.Values{"all": {"1"}})
+	if code != http.StatusConflict || answer["error"] != "These 4 comments come to 65 KiB, one publish takes at most 64 KiB of them: publish them in parts by their ids." {
+		t.Fatalf("the publish answered %d %v", code, answer)
+	}
+	if len(f.broker.Questions()) != 0 || len(f.gitlab.asked()) != 0 {
+		t.Fatalf("a refused publish asked %v, posted %q", f.broker.Questions(), f.gitlab.asked())
+	}
+	if code, answer := f.publish(t, true, f.owner, url.Values{"id": ids[:3]}); code != http.StatusOK || answer["pending"] != true {
+		t.Fatalf("three of them answered %d %v", code, answer)
+	}
+	if q := f.waitQuestion(t); len(q.Details) != 5+3 || q.Details[7].Value != strings.Repeat("c", linecomment.MaxText) {
+		t.Fatalf("the rows of three read %d", len(q.Details))
 	}
 }
 

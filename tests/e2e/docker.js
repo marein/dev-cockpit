@@ -339,18 +339,13 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await dismissUpdate(mp);
     await mp.waitForSelector(`#project-${NAME} [data-chip-kind="docker"]`, { timeout: 8000 });
     // The connect snapshot swaps the chip bodies right after the load, and the
-    // press is dispatched on the element held here.
+    // press is dispatched on the element held here, by pointer events alone:
+    // WebKit constructs no Touch.
     await sleep(1200);
     await mp.locator(`#project-${NAME} [data-chip-kind="docker"]`).first().evaluate((el) => {
       const r = el.getBoundingClientRect();
-      const x = r.x + 8;
-      const y = r.y + 8;
       el.dispatchEvent(new PointerEvent("pointerdown", {
-        bubbles: true, cancelable: true, pointerId: 4, pointerType: "touch", clientX: x, clientY: y,
-      }));
-      const touch = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
-      el.dispatchEvent(new TouchEvent("touchstart", {
-        bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch],
+        bubbles: true, cancelable: true, pointerId: 4, pointerType: "touch", clientX: r.x + 8, clientY: r.y + 8,
       }));
     });
     await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
@@ -443,10 +438,11 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
     await dismissUpdate(mp);
     await mp.waitForSelector(`#project-${NAME} [data-chip-kind="docker"]`, { timeout: 8000 });
     // The connect snapshot swaps the chip bodies right after the load, and the
-    // press is dispatched on the element held here. A host far longer than the
-    // screen rides in as one more link span before the press, so the menu opens
-    // with it through the real path: addressLabel splits it and place clamps
-    // the menu, which is what the fit below measures.
+    // press is dispatched on the element held here, by pointer events alone
+    // like the long press above. A host far longer than the screen rides in as
+    // one more link span before the press, so the menu opens with it through
+    // the real path: addressLabel splits it and place clamps the menu, which is
+    // what the fit below measures.
     await sleep(1200);
     const longHost = `${"long-service-name-".repeat(6)}web.example.com`;
     await mp.locator(`#project-${NAME} [data-chip-kind="docker"]`).first().evaluate((el, host) => {
@@ -456,14 +452,8 @@ L.runFeature("DOCKER", async ({ engine, browser, page, run, mobilePage, bag }) =
       span.dataset.linkHost = host;
       el.appendChild(span);
       const r = el.getBoundingClientRect();
-      const x = r.x + 8;
-      const y = r.y + 8;
       el.dispatchEvent(new PointerEvent("pointerdown", {
-        bubbles: true, cancelable: true, pointerId: 6, pointerType: "touch", clientX: x, clientY: y,
-      }));
-      const touch = new Touch({ identifier: 2, target: el, clientX: x, clientY: y });
-      el.dispatchEvent(new TouchEvent("touchstart", {
-        bubbles: true, cancelable: true, touches: [touch], targetTouches: [touch], changedTouches: [touch],
+        bubbles: true, cancelable: true, pointerId: 6, pointerType: "touch", clientX: r.x + 8, clientY: r.y + 8,
       }));
     }, longHost);
     await mp.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });

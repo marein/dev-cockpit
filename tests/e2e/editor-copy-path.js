@@ -5,7 +5,8 @@ const { assert, sleep, BASE } = L;
 
 // Copy path with its chip "absolute" in the project editor's menus: the tree
 // row of a file and of a folder, the file's tab, the tab of a file at a
-// revision and the line number menu's Copy path:line. The row copies the path
+// revision and the line number menu's Copy path:line (a right click, on a
+// phone a long press). The row copies the path
 // inside the project as before, the chip on the same row copies the path on
 // the host, the project's own directory in front, for a linked worktree its
 // own folder. The chip is a second button beside the row in a .dc-menu-split
@@ -228,7 +229,7 @@ L.runFeature("EDITOR-COPY-PATH", async ({ engine, ctx, page, run, mobilePage }) 
     await openFile(page);
     const open = async () => {
       await sleep(400);
-      await lineCell(page, 3).click();
+      await lineCell(page, 3).click({ button: "right" });
       await menuShown(page);
     };
     await open();
@@ -343,7 +344,7 @@ L.runFeature("EDITOR-COPY-PATH", async ({ engine, ctx, page, run, mobilePage }) 
     await openPhoneFile(mp);
     const open = async () => {
       await sleep(400);
-      await lineCell(mp, 2).tap();
+      await L.longPress(mp, lineCell(mp, 2));
       await menuShown(mp);
     };
     return rowAndChip(mp, open, "Copy path:line", `${FILE}:2`, `${mainAbs}/${FILE}:2`, { tap: true });

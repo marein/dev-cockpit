@@ -78,13 +78,16 @@ const assistantApprovalsSettingsPath = "/settings/assistant/approvals"
 // key is read against "off", so an install that never saved it asks, and
 // switching it on again removes the key rather than storing a copy of the
 // default. A new kind is one more entry, the tab and the save read the list,
-// and Event is what an end of one of its approvals publishes beyond the note
-// (approvalEnded), empty for a kind that publishes nothing.
+// Event is what an end of one of its approvals publishes beyond the note
+// (approvalEnded), empty for a kind that publishes nothing, and Icon and Tone
+// are what its dialog wears unless its request names its own.
 type approvalKind struct {
 	ID    string
 	Label string
 	Hint  string
 	Event assistant.ApprovalEvent
+	Icon  string
+	Tone  string
 }
 
 // approvalComposeActions is whether a confirm compose action an assistant
@@ -128,38 +131,56 @@ var approvalKinds = []approvalKind{{
 	Label: "Compose actions approval",
 	Hint:  "Compose commands marked to ask first under Settings › Docker wait for your approval.",
 	Event: assistant.ComposeApprovalEvent,
+	Icon:  "brand-docker",
+	Tone:  "docker",
 }, {
 	ID:    approvalProjectDelete,
 	Label: "Project delete approval",
 	Hint:  "A project an assistant wants to delete stays until you approve.",
+	Icon:  "trash",
+	Tone:  "danger",
 }, {
 	ID:    approvalCoderDelete,
 	Label: "Coder delete approval",
 	Hint:  "A coder an assistant wants to delete stays until you approve.",
+	Icon:  "trash",
+	Tone:  "danger",
 }, {
 	ID:    approvalAssistantDelete,
 	Label: "Assistant delete approval",
 	Hint:  "An assistant one of them wants to delete, itself included, stays until you approve.",
+	Icon:  "trash",
+	Tone:  "danger",
 }, {
 	ID:    approvalWorktreePostScript,
 	Label: "Worktree post script approval",
 	Hint:  "A worktree post script an assistant wants to set or delete under Settings › Projects stays as it is until you approve.",
+	Icon:  "terminal-2",
+	Tone:  "script",
 }, {
 	ID:    approvalForgeRetry,
 	Label: "Pipeline retry approval",
 	Hint:  "Failed jobs an assistant wants to run again on a forge stay as they are until you approve.",
+	Icon:  "refresh",
+	Tone:  "git",
 }, {
 	ID:    approvalForgeChange,
 	Label: "Change request approval",
 	Hint:  "A merge or pull request an assistant wants to open stays unopened until you approve.",
+	Icon:  "git-pull-request",
+	Tone:  "git",
 }, {
 	ID:    approvalForgePublish,
 	Label: "Review comment approval",
 	Hint:  "Line comments an assistant wants to publish on a forge stay unpublished until you approve.",
+	Icon:  "message-plus",
+	Tone:  "git",
 }, {
 	ID:    approvalForgeThread,
 	Label: "Review thread approval",
 	Hint:  "A reply or resolve an assistant wants on a forge's review thread waits until you approve.",
+	Icon:  "message-reply",
+	Tone:  "git",
 }}
 
 // approvalKey is where one kind is stored.

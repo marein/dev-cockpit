@@ -267,7 +267,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     const install = () => {
       if (window.__dcUpdateAutoCancel) return;
       window.__dcUpdateAutoCancel = setInterval(() => {
-        const title = document.querySelector(".swal2-container .swal2-title");
+        const title = document.querySelector(".swal2-container .dc-ask-title");
         if (!title || !/^Update to \S+\?$/.test((title.textContent || "").trim())) return;
         const cancel = document.querySelector(".swal2-container .swal2-cancel");
         if (cancel) cancel.click();
@@ -3059,7 +3059,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         `the dialog does not carry ssh's own line: ${question}`);
       // Above ssh's line the dialog carries this server's own truth, the
       // project and the action, kept apart from whatever the helper reported.
-      assert(question.includes(`${project} · push`),
+      assert(question.includes(`git push in ${project}`),
         `the dialog does not name project and action: ${question}`);
       assert(await page.getAttribute(".swal2-popup input.swal2-input", "type") === "password",
         "the answer field is not masked");

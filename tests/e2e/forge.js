@@ -413,7 +413,7 @@ L.runFeature("FORGE", async ({ page, run, mobilePage }) => {
       await page.waitForSelector(`${DIALOG} [data-forge-delete]`, { timeout: 8000 });
       await page.click(`${DIALOG} [data-forge-delete]`);
       await page.waitForSelector(".swal2-cancel", { state: "visible", timeout: 8000 });
-      const question = (await page.textContent(".swal2-title")).trim();
+      const question = (await page.textContent(".dc-ask-title")).trim();
       assert(question === `Delete the host https://${ghe} and its token?`, `the question reads "${question}"`);
       await page.click(".swal2-cancel");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });
@@ -684,7 +684,7 @@ L.runFeature("FORGE", async ({ page, run, mobilePage }) => {
       await openToken(fakeHost);
       await page.click(`${DIALOG} [data-forge-token-remove]`);
       await page.waitForSelector(".swal2-cancel", { state: "visible", timeout: 8000 });
-      const question = (await page.textContent(".swal2-title")).trim();
+      const question = (await page.textContent(".dc-ask-title")).trim();
       assert(question === `Remove the token of ${fakeHost}?`, `the question reads "${question}"`);
       await page.click(".swal2-cancel");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 5000 });

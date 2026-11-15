@@ -13,34 +13,35 @@ function isCdnNoise(t) {
   return /jsdelivr|cdn\.|CORS policy|ERR_FAILED|Failed to load resource/i.test(t);
 }
 
-// WebKit reports a same-origin request that a navigation aborted mid-flight (the
+// WebKit reports a same origin request that a navigation cuts as a page error
+// ending in "due to access control checks", whether it was already out or a
+// script starts it once the leave began (an element that upgrades or an event
+// that lands while the runner leaves). That is a browser artifact of racing
+// navigations on the throwaway instance, not an app defect, so it joins the
+// noise that does not gate. The filter names each request it covers, so a
+// real access control failure on any other app route still gates: the
 // /events stream connect, the /update/check and /costs/status polls, the
-// page's one /time measurement, the editor's terminals fragment pull and its
-// renewal of what it watches on disk, an assistant's pull of its own answer,
-// a terminal's lookup of the words it printed, which catches its own failure,
-// and the pulls of a terminal page's head on a terminals event: its name, its
-// steered mark and the assistant steering it)
-// as a page error ending in "due to access control checks".
-// That is a browser artifact of racing navigations on the throwaway
-// instance, not an app defect, so it joins the non-gating noise bucket. The
-// filter stays narrow so a real access control failure on an app route still
-// gates.
+// page's one /time measurement, the git question's pull, the read mark a
+// question sends when it shows, the status line's pull of its links on a
+// docker event, the assistant list's renewal of the projects it watches, the
+// editor's terminals fragment pull, its renewal of what it watches on disk
+// and its reads after a git action (the open files, the status, the commit
+// view's head and a diff's revision side), an assistant's own stream and its
+// pull of its own answer, a terminal's lookup of the words it printed, and
+// the pulls of a terminal page's head on a terminals event: its name, its
+// steered mark and the assistant steering it.
 //
-// The bare `/projects` pull is the same artifact and gets its own pattern
-// rather than a path in the list above, because it has to be matched to the
-// **end** of the URL: dc-project-list answers a projects event by pulling the
-// page itself (`refreshProjectList`, a fetch that already carries its own
-// catch), and a runner navigating on while that pull is out leaves this error
-// behind. An assistant's page pulls itself the same way (`syncFromServer`),
-// and so does a split page whose members moved (`refreshPage`), the tab
-// strip on a terminals event (`tryRefresh`, whose writes under
-// `/terminal-tabs/` still gate) and the list column sheet (`/ctx/<area>`). Naming it in the list would swallow every project scoped route under
-// it, `/projects/<name>/editor/…` included, which is exactly where a real
-// access control failure would have to gate.
+// A page that pulls itself is matched to the **end** of its URL instead, so
+// the routes under it still gate, `/projects/<name>/editor/…` above all: the
+// project list on a projects event (`refreshProjectList`), an assistant's
+// page (`syncFromServer`), a split page whose members moved (`refreshPage`),
+// the tab strip on a terminals event (`tryRefresh`, whose writes under
+// `/terminal-tabs/` still gate), the list column sheet (`/ctx/<area>`) and
+// the sharing page on a shares event (`dc-share-links`).
 function isWebkitAbortNoise(t) {
-  return /\/(events|update\/check|costs\/status|git\/prompt|time|editor\/(terminals|docker|lsp\/(status|source)|list|file|watch|git\/changes|search-draft))\b.*due to access control checks/.test(t)
-    || /\/(projects|terminal-tabs|ctx\/[^/\s?]+|assistants\/[^/\s?]+|splits\/[^/\s?]+)(\?\S*)? due to access control checks/.test(t)
-    || /\/assistants\/[^/\s]+\/messages\/[^/\s]+ due to access control checks/.test(t)
+  return /\/(events|update\/check|costs\/status|git\/prompt|time|notifications\/read|docker\/links|assistants\/projects\/watch|editor\/(terminals|docker|lsp\/(status|source)|list|file|watch|git\/(changes|file|commit(?!-draft))|search-draft))\b.*due to access control checks/.test(t)
+    || /\/(projects|terminal-tabs|settings\/sharing|ctx\/[^/\s?]+|assistants\/[^/\s?]+|splits\/[^/\s?]+)(\?\S*)? due to access control checks/.test(t)
+    || /\/assistants\/[^/\s]+\/(stream|messages\/[^/\s]+) due to access control checks/.test(t)
     || /\/(shells|coders)\/[^/\s]+\/(file-links|name|steered|steered-by) due to access control checks/.test(t);
 }
 function wirePage(page, bag) {
@@ -723,12 +724,74 @@ function answerSTT(route) {
   });
 }
 
+// The editor's line comment threads stand under their lines
+// (@dc/editor-threads): a press on a line number folds the line's threads in
+// or out, or opens the field of a new comment there. A click right after a
+// menu closed is swallowed, so a press waits a beat first. lineThread is the
+// card under a line of the thread a note with text belongs to, lineField the
+// field of a new comment under line n, seen what really shows: a box and no
+// style hiding it.
+const lineNumber = (page, n) => page.locator(".cm-lineNumbers .cm-gutterElement:visible").filter({ hasText: new RegExp(`^${n}$`) }).first();
+async function pressLine(page, n, { tap = false } = {}) {
+  await sleep(400);
+  if (tap) await lineNumber(page, n).tap();
+  else await lineNumber(page, n).click();
+}
+const lineThread = (page, text) => page.locator(".cm-content [data-line-thread]").filter({ has: page.locator("[data-comment-note-text]", { hasText: text }) });
+const lineField = (page, n) => page.locator(`.cm-content [data-line-block="${n}"] [data-line-comment-form]`);
+const seen = (locator) => locator.first().evaluate((el) => {
+  const box = el.getBoundingClientRect();
+  return box.width > 0 && box.height > 0 && !!el.checkVisibility?.({ visibilityProperty: true, opacityProperty: true });
+}, null, { timeout: 2000 }).catch(() => false);
+
+// longPress holds a finger on what locator names until the row menus' long
+// press opens the menu (@dc/contextmenu wireRowMenus), then lifts it. It goes
+// by pointer events alone, WebKit constructs no Touch.
+async function longPress(page, locator) {
+  const fire = (type) => locator.evaluate((el, t) => {
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: 4, pointerType: "touch", isPrimary: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }));
+  }, type);
+  await fire("pointerdown");
+  await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 4000 });
+  await fire("pointerup");
+}
+
+// threadCard reads the card of the thread a note with text belongs to, under
+// its line or in the editor's dialog, every part by its box: where it stands,
+// its title, Resolved, its notes (" +buttons" where a note offers any), what
+// it offers (Reply, Resolve, the reply form with its button, hint and switch)
+// and its forge link.
+const threadCard = (page, text) => page.locator("[data-line-thread]").filter({ has: page.locator("[data-comment-note-text]", { hasText: text }) }).first();
+const readThread = (page, text) => threadCard(page, text).evaluate((c) => {
+  const shown = (el) => !!el && getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().height > 0;
+  const q = (sel) => c.querySelector(sel);
+  const dialog = c.closest("[data-editor-comment-modal]");
+  const row = q("[data-line-thread-reply-resolve]")?.closest("label");
+  const box = c.getBoundingClientRect();
+  return {
+    open: shown(c), line: c.closest("[data-line-block]")?.dataset.lineBlock || "",
+    title: dialog ? dialog.querySelector("[data-editor-comment-title]").textContent.trim() : q("[data-line-thread-kind]")?.textContent.trim() || "",
+    place: dialog && shown(dialog.querySelector("[data-editor-comment-place]")) ? dialog.querySelector("[data-editor-comment-place]").textContent.trim() : "",
+    author: shown(q("[data-line-thread-resolved]")) ? "Resolved" : "",
+    notes: [...c.querySelectorAll("[data-comment-note]")].map((n) => `${n.querySelector("[data-comment-note-author]").textContent.trim()}: ${n.querySelector("[data-comment-note-text]").textContent}${n.querySelector("button") ? " +buttons" : ""}`),
+    reply: shown(q("[data-line-thread-reply-open]")), resolveButton: shown(q("[data-line-thread-resolve]")), remove: shown(q("[data-line-thread-delete]")),
+    field: shown(q("[data-line-thread-reply-text]")), text: q("[data-line-thread-reply-text]")?.value || "", invalid: !!q("[data-line-thread-reply-text].is-invalid"),
+    save: shown(q("[data-line-thread-reply]")) ? q("[data-line-thread-reply-send]").textContent.trim() : "",
+    hint: shown(q("[data-line-thread-reply] .form-hint")) ? q("[data-line-thread-reply] .form-hint").textContent.trim() : "",
+    resolve: shown(row), resolveRight: row ? row.getBoundingClientRect().right : 0,
+    link: shown(q("[data-line-thread-forge]")) ? { text: q("[data-line-thread-forge]").getAttribute("aria-label"), href: q("[data-line-thread-forge]").getAttribute("href"), target: q("[data-line-thread-forge]").getAttribute("target") } : null,
+    left: box.left, right: box.right, inner: window.innerWidth,
+  };
+});
+
 module.exports = {
   caretWalk, stubMicrophone, answerSTT,
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
   login, createProject, projectPath, deleteProject, dismissUpdate, openPicked, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
   iconSpin, spinning, still,
+  lineNumber, pressLine, lineThread, lineField, seen, threadCard, readThread, longPress,
   makeRunner, report, assert, assertNoLogin, recordCopies,
   ENGINES, engineList, launch, newDesktop, newMobile, runFeature,
 };

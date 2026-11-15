@@ -236,17 +236,17 @@ func TestAnAssistantsWriteOnAThreadWaitsForTheApproval(t *testing.T) {
 		t.Fatalf("the write answered %d %v", code, answer)
 	}
 	q := f.waitQuestion(t)
-	address := f.s.forgeByProject(f.s.projects.List())["app"].Address()
+	binding := f.s.forgeByProject(f.s.projects.List())["app"]
 	want := []askpass.Detail{
-		{Label: "Action", Value: "Reply and resolve the thread"},
-		{Label: "Thread", Value: "src/login.go:4 · alice: New name?"},
-		{Label: "Reply", Value: "fixed in abc123"},
-		{Label: "On", Value: "merge request !4 · Fix the login · https://gitlab.example.com/group/sub/app/-/merge_requests/4"},
-		{Label: "Branch", Value: "feature"},
-		{Label: "Forge", Value: "GitLab · " + address},
-		{Label: "Project", Value: "app"},
+		{Label: "Project", Value: "app", As: askpass.AsProject},
+		{Label: "Branch", Value: "feature", As: askpass.AsBranch},
+		{Label: "File", Value: "src/login.go:4", As: askpass.AsPlace},
+		{Label: "alice", Value: "New name?", As: askpass.AsQuote},
+		{Label: "Reply", Value: "fixed in abc123", As: askpass.AsLong},
+		{Label: "Merge request", Value: "!4 Fix the login", As: askpass.AsLink, URL: "https://gitlab.example.com/group/sub/app/-/merge_requests/4"},
+		{Label: "Forge", Value: "GitLab · " + binding.Address(), As: askpass.AsLink, URL: binding.WebURL()},
 	}
-	if q.Action != what || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.written()) != 0 {
+	if q.Action != what || q.Title != "Reply and resolve the thread on merge request !4" || q.Icon != "message-reply" || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.written()) != 0 {
 		t.Fatalf("the question reads %+v, the forge was asked %q", q, f.gitlab.written())
 	}
 	if code, answer := f.write(t, true, url.Values{"thread": {"d1"}, "body": {"again"}}); code != http.StatusConflict || !strings.Contains(answer["error"].(string), "already waits") {
@@ -254,7 +254,7 @@ func TestAnAssistantsWriteOnAThreadWaitsForTheApproval(t *testing.T) {
 	}
 	f.decide(t, q, true, false)
 	note := f.waitApprovalNotes(t, f.owner, 1)[0]
-	says := "On GitLab " + address + ` the review thread on src/login.go:4 of the merge request !4 "Fix the login" of feature in app holds your reply and is resolved: https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_400.`
+	says := "On GitLab " + binding.Address() + ` the review thread on src/login.go:4 of the merge request !4 "Fix the login" of feature in app holds your reply and is resolved: https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_400.`
 	if note.Note.Verdict != approval.Done || !strings.Contains(note.Content, says) || !slices.Equal(f.gitlab.written(), []string{"reply: fixed in abc123", "resolve"}) {
 		t.Fatalf("the approval asked %q, note %s", f.gitlab.written(), note.Content)
 	}
@@ -288,7 +288,7 @@ func TestAGeneralThreadIsAnsweredAndResolved(t *testing.T) {
 		t.Fatalf("the assistant's write answered %d %v", code, answer)
 	}
 	q := f.waitQuestion(t)
-	if q.Details[1] != (askpass.Detail{Label: "Thread", Value: "the conversation · alice: General"}) {
+	if q.Details[2] != (askpass.Detail{Label: "alice", Value: "General", As: askpass.AsQuote}) {
 		t.Fatalf("the question reads %+v", q)
 	}
 	f.decide(t, q, true, false)
@@ -296,6 +296,18 @@ func TestAGeneralThreadIsAnsweredAndResolved(t *testing.T) {
 	says := ` the general thread of the merge request !4 "Fix the login" of feature in app holds your reply and is resolved: https://gitlab.example.com/group/sub/app/-/merge_requests/4#note_501.`
 	if note.Note.Verdict != approval.Done || !strings.Contains(note.Content, says) || !slices.Equal(f.gitlab.written(), []string{"g1 reply: yes", "g1 resolve", "g1 reply: done", "g1 resolve"}) {
 		t.Fatalf("the approval asked %q, note %s", f.gitlab.written(), note.Content)
+	}
+}
+
+// A resolve alone wears the resolve's icon and carries no reply.
+func TestAnAssistantsResolveWearsItsIcon(t *testing.T) {
+	f := newForgeThreadFixture(t)
+	if code, answer := f.write(t, true, url.Values{"thread": {"d1"}, "resolve": {"1"}}); code != http.StatusOK || answer["pending"] != true {
+		t.Fatalf("the resolve answered %d %v", code, answer)
+	}
+	q := f.waitQuestion(t)
+	if q.Icon != "circle-check" || q.Tone != "git" || slices.ContainsFunc(q.Details, func(d askpass.Detail) bool { return d.Label == "Reply" }) {
+		t.Fatalf("the resolve's question reads %+v", q)
 	}
 }
 

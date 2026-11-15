@@ -220,7 +220,7 @@ L.runFeature("GIT PROXY", async ({ page, ctx, run }) => {
       // the dialog does not say them a second time above ssh's own words.
       // The editor's question has no such block and keeps its line, which is
       // what tests/e2e/editor-git.js holds on to.
-      assert(!question.includes(`${PROJECT} · push`), `the dialog repeats project and action: ${question}`);
+      assert(!question.includes(`git push in ${PROJECT}`), `the dialog repeats project and action: ${question}`);
       assert(await page.getAttribute(".swal2-popup input.swal2-input", "type") === "password",
         "a passphrase field is not masked");
 
@@ -237,7 +237,7 @@ L.runFeature("GIT PROXY", async ({ page, ctx, run }) => {
       // /aux, so the two spellings differ by their prefix. What is checked is
       // the part that is the same on both sides, the project directory the
       // command really runs in.
-      assert(new RegExp(`^cwd: \\S*/${PROJECT}$`, "m").test(block),
+      assert(new RegExp(`^\\S*/${PROJECT}$`, "m").test(block),
         `the command block does not name the working copy: ${block}`);
       assert(/\$ git push\b/.test(block), `the command block does not read like the call: ${block}`);
       const mono = await command.evaluate((el) => getComputedStyle(el).fontFamily);

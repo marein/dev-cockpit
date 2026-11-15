@@ -701,9 +701,9 @@ L.runFeature("PROJECT-SHARE", async ({ engine, browser, page, run, bag, mobilePa
       const unknown = await fetchRaw(`${BASE}/share/${"A".repeat(43)}`);
       await editLink(page, fx.teamId);
       await page.click(`${DIALOG} [data-share-revoke]`);
-      await page.waitForSelector(".swal2-title", { state: "visible", timeout: 8000 });
-      const asked = await page.$eval(".swal2-title", (el) => ({ text: el.textContent, markup: el.children.length }));
-      assert(asked.text === `Revoke the link "${fx.teamName}"? It stops working at once.` && !asked.markup, `the revoke dialog reads ${JSON.stringify(asked)}`);
+      await page.waitForSelector(".dc-ask-title", { state: "visible", timeout: 8000 });
+      const asked = await page.$eval(".swal2-popup", (el) => ({ text: el.querySelector(".dc-ask-title").textContent, warning: el.querySelector(".dc-ask-warning").textContent, markup: el.querySelector(".dc-ask-title").children.length }));
+      assert(asked.text === `Revoke the link "${fx.teamName}"?` && asked.warning === "It stops working at once." && !asked.markup, `the revoke dialog reads ${JSON.stringify(asked)}`);
       await L.confirmSwal(page);
       await page.waitForSelector(`[data-share-row="${fx.teamId}"]`, { state: "detached", timeout: 10000 });
       await waitText(() => page.$$eval(".dc-notice", (els) => els.map((el) => el.textContent).join(" ")), "Link revoked.", "the revoke's notice");

@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -35,14 +34,11 @@ const Timeout = 30 * time.Minute
 // the bound is what keeps a turn in a loop from burying the user in them.
 const MaxPerOwner = 100
 
-// The bounds of what a row of the dialog shows of its value. A reply, a
-// description or a comment of many KiB says what it is in its start, and
-// every page and the phone carry the question; the run takes the whole
-// value all the same.
-const (
-	maxDetailRunes = 1000
-	maxDetailLines = 20
-)
+// maxDetailBytes bounds what the dialog shows of one value. Below it the
+// user approves what they read, whole. Every page and the phone carry each
+// question, up to MaxPerOwner of them per assistant, and this bound is what
+// keeps that sane; the run takes the whole value all the same.
+const maxDetailBytes = 64 << 10
 
 // The verdicts an approval ends in: approved and the run went through,
 // approved and the run failed, or never run.
@@ -61,8 +57,11 @@ type Run func() (string, error)
 // Request is one action an assistant asks for, as its kind hands it in. Key
 // is the action's stable identity within its kind, the same Kind and Key wait
 // once whoever asks; What is the one line it is read by ("Delete project
-// shop"), the notification and the note name it; Details are the rows the
-// dialog shows; Command and Dir, where the action runs a program, are the
+// shop"), the notification and the note name it; Title is the dialog's head
+// line where it says less than What, whose rest the dialog's chips show; Icon
+// and Tone are what its dialog wears, its kind's where empty; Details are
+// what the dialog shows;
+// Command and Dir, where the action runs a program, are the
 // command line and the directory it runs in, shown the way a proxied git
 // call's are; Projects, where the action touches any, name the projects
 // whose deletion ends the approval; Run is what happens once the user
@@ -72,6 +71,9 @@ type Request struct {
 	Kind     string
 	Key      string
 	What     string
+	Title    string
+	Icon     string
+	Tone     string
 	Details  []askpass.Detail
 	Command  string
 	Dir      string
@@ -87,6 +89,9 @@ type Approval struct {
 	Kind      string           `json:"kind"`
 	Key       string           `json:"key"`
 	What      string           `json:"what"`
+	Title     string           `json:"title,omitempty"`
+	Icon      string           `json:"icon,omitempty"`
+	Tone      string           `json:"tone,omitempty"`
 	Details   []askpass.Detail `json:"details,omitempty"`
 	Command   string           `json:"command,omitempty"`
 	Dir       string           `json:"dir,omitempty"`
@@ -106,12 +111,13 @@ type Outcome struct {
 // Config wires the service to the rest of the cockpit. Asks reads a kind's
 // switch, StopAsking turns it off when the user approves with "don't ask
 // again", Asker names the assistant the way the dialog and the notification
-// call it, and Ended hears every end of an approval that waited.
+// call it, its name and its short id, and Ended hears every end of an
+// approval that waited.
 type Config struct {
 	Path       string
 	Asks       func(kind string) bool
 	StopAsking func(kind string)
-	Asker      func(owner string) string
+	Asker      func(owner string) (name, id string)
 	Ended      func(Approval, Outcome)
 }
 
@@ -160,6 +166,9 @@ func (s *Service) Ask(req Request) (waiting bool, err error) {
 		Kind:      req.Kind,
 		Key:       req.Key,
 		What:      req.What,
+		Title:     req.Title,
+		Icon:      req.Icon,
+		Tone:      req.Tone,
 		Details:   shown(req.Details),
 		Command:   req.Command,
 		Dir:       req.Dir,
@@ -174,21 +183,17 @@ func (s *Service) Ask(req Request) (waiting bool, err error) {
 	return true, nil
 }
 
-// shown are the rows the way the dialog shows them, each value within the
-// bounds of a row and, where cut, with how long it is in all.
+// shown are the rows the way the dialog shows them: each value whole, one
+// beyond maxDetailBytes cut on a character's start and marked Cut.
 func shown(details []askpass.Detail) []askpass.Detail {
 	out := make([]askpass.Detail, 0, len(details))
 	for _, d := range details {
-		runes := utf8.RuneCountInString(d.Value)
-		cut := d.Value
-		if runes > maxDetailRunes {
-			cut = string([]rune(cut)[:maxDetailRunes])
-		}
-		if lines := strings.SplitAfterN(cut, "\n", maxDetailLines+1); len(lines) > maxDetailLines {
-			cut = strings.TrimSuffix(strings.Join(lines[:maxDetailLines], ""), "\n")
-		}
-		if cut != d.Value {
-			d.Value = fmt.Sprintf("%s… (%d characters in all)", cut, runes)
+		if len(d.Value) > maxDetailBytes {
+			end := maxDetailBytes
+			for end > maxDetailBytes-utf8.UTFMax && !utf8.RuneStart(d.Value[end]) {
+				end--
+			}
+			d.Value, d.Cut = d.Value[:end], true
 		}
 		out = append(out, d)
 	}
@@ -221,12 +226,17 @@ func (s *Service) park(a Approval) (*askpass.Action, error) {
 	if standing >= MaxPerOwner {
 		return nil, fmt.Errorf("%d actions already wait for the user's approval.", standing)
 	}
+	name, id := s.cfg.Asker(a.Owner)
 	bridge := s.broker.BeginApproval(askpass.ApprovalKey(a.ID), askpass.Question{
-		Assistant: s.cfg.Asker(a.Owner),
-		Action:    a.What,
-		Details:   a.Details,
-		Command:   a.Command,
-		Dir:       a.Dir,
+		Assistant:   name,
+		AssistantID: id,
+		Action:      a.What,
+		Title:       a.Title,
+		Icon:        a.Icon,
+		Tone:        a.Tone,
+		Details:     a.Details,
+		Command:     a.Command,
+		Dir:         a.Dir,
 	})
 	if bridge == nil {
 		return nil, errors.New("The approval could not be asked.")

@@ -1,5 +1,5 @@
 import { labelNodes } from "@dc/contextmenu";
-import { el, escapeHtml } from "@dc/dom";
+import { el, growTextarea } from "@dc/dom";
 import { ensureOk, postForm, postJSON } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
 
@@ -10,9 +10,7 @@ export function sortComments(list) {
   });
 }
 
-export const PROJECT_PLACE = "Project comment";
-
-export const placeOf = (comment) => (comment.project ? PROJECT_PLACE : `${comment.path}:${comment.line}`);
+const PROJECT_PLACE = "Project comment";
 
 const flatLine = (text) => String(text || "").replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
 
@@ -30,6 +28,8 @@ export function findUniqueQuoteLine(doc, quote) {
   return at;
 }
 
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
 const SHORT_ESCAPES = { "\t": "\\t", "\n": "\\n", "\r": "\\r", "\f": "\\f", "\v": "\\v", "\b": "\\b", "\u0007": "\\a" };
 
 function escapeOf(char) {
@@ -41,11 +41,11 @@ function escapeOf(char) {
 // line, as nodes that keep it there: a control character or a line or
 // paragraph separator shows as its escape in a code chip. WebKit breaks a line
 // at the separators even where nothing may wrap.
-export function visibleLine(text) {
+function visibleLine(text) {
   const value = String(text || "");
   const nodes = [];
   let at = 0;
-  for (const match of value.matchAll(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g)) {
+  for (const match of value.matchAll(CONTROL)) {
     if (match.index > at) nodes.push(value.slice(at, match.index));
     nodes.push(el("code", {}, escapeOf(match[0])));
     at = match.index + 1;
@@ -131,7 +131,14 @@ export async function writeLineComment(url, payload, failed, refused = notifyErr
 // it by the rule its delete takes.
 export const mayDelete = (comment) => !!comment.deletes;
 
-const noteConfirm = (comment, note) => `${el("div", {}, ...visibleLine(placeOf(comment))).outerHTML}${note.author ? `<div>By ${escapeHtml(note.author)}</div>` : ""}<div class="text-secondary">${escapeHtml(note.text)}</div>`;
+const shownLine = (text) => String(text || "").replace(CONTROL, escapeOf);
+
+const noteDetails = (comment, note) => [
+  comment.project
+    ? { as: "project", label: "Place", value: PROJECT_PLACE }
+    : { as: "place", label: "Line", value: `${shownLine(comment.path)}:${comment.line}` },
+  { as: "quote", label: note.author || "", value: note.text },
+];
 
 // deleteCommentQuestion is the confirm before a thread is deleted, which
 // takes its replies along.
@@ -139,13 +146,15 @@ export function deleteCommentQuestion(comment) {
   const replies = repliesOf(comment).length;
   return {
     title: "Delete this comment?",
-    html: `${noteConfirm(comment, comment)}${replies ? `<div>It takes ${replies === 1 ? "its reply" : `its ${replyCount(replies)}`} along.</div>` : ""}`,
+    details: noteDetails(comment, comment),
+    warning: replies ? `It takes ${replies === 1 ? "its reply" : `its ${replyCount(replies)}`} along.` : "",
+    kind: "delete",
     confirmText: "Delete",
   };
 }
 
 // deleteReplyQuestion is the confirm before one reply of a thread is deleted.
-export const deleteReplyQuestion = (comment, reply) => ({ title: "Delete this reply?", html: noteConfirm(comment, reply), confirmText: "Delete" });
+export const deleteReplyQuestion = (comment, reply) => ({ title: "Delete this reply?", details: noteDetails(comment, reply), kind: "delete", confirmText: "Delete" });
 
 // deleteLineComments posts a delete of line comment threads to the delete
 // route of a project's line comments and answers whether it went, false
@@ -216,5 +225,152 @@ export async function publishComments(url, ids) {
     notifySuccess((await response.json()).message);
   } catch (err) {
     notifyError(err.message);
+  }
+}
+
+// The fields of a thread's card, its reply and a note being edited, and of a
+// new comment under a line, which grow with their text up to a share of the
+// window.
+export const THREAD_FIELDS = "[data-line-thread-reply-text], [data-line-comment-text], [data-comment-note-field]";
+
+export const growField = (text) => growTextarea(text, () => window.innerHeight);
+
+const requiredText = new WeakMap();
+
+// refuse marks a field and says why under it, the server's sentence or the
+// one the field is required with.
+export function refuse(text, sentence = "") {
+  const feedback = text.parentElement?.querySelector(":scope > .invalid-feedback");
+  if (feedback) {
+    if (!requiredText.has(feedback)) requiredText.set(feedback, feedback.textContent);
+    feedback.textContent = sentence || requiredText.get(feedback);
+  }
+  text.classList.add("is-invalid");
+  text.focus();
+}
+
+export const replyOpen = (card) => !!card.querySelector("[data-line-thread-reply]:not([hidden])");
+
+const OPEN_EDITS = "[data-comment-note-form]:not([hidden])";
+
+// openEdits are the notes of a card whose text stands as its field.
+export const openEdits = (card) => [...card.querySelectorAll(OPEN_EDITS)].map((form) => form.closest("[data-comment-note]"));
+
+// typingIn is whether a card holds words a swap would take: its reply open
+// or a note being edited.
+export const typingIn = (card) => replyOpen(card) || !!card.querySelector(OPEN_EDITS);
+
+// openNoteEdit puts the field of a note in place of its text, holding that
+// text, sized to it and with the caret at its end. A field already open
+// keeps what was typed there.
+export function openNoteEdit(note) {
+  const form = note?.querySelector(":scope > [data-comment-note-form]");
+  const text = note?.querySelector(":scope > [data-comment-note-text]");
+  if (!form || !text) return null;
+  const field = form.querySelector("textarea");
+  if (form.hidden) {
+    form.dcFrom = text.textContent;
+    field.value = form.dcFrom;
+    field.classList.remove("is-invalid");
+    text.hidden = true;
+    form.hidden = false;
+  }
+  growField(field);
+  field.focus();
+  field.setSelectionRange(field.value.length, field.value.length);
+  return form;
+}
+
+// closeNoteEdit puts the note's text back in place of its field, the words
+// saved where it went.
+export function closeNoteEdit(form, saved) {
+  const text = form.closest("[data-comment-note]")?.querySelector(":scope > [data-comment-note-text]");
+  if (text && typeof saved === "string") text.textContent = saved;
+  form.hidden = true;
+  form.querySelector("textarea")?.classList.remove("is-invalid");
+  if (text) text.hidden = false;
+}
+
+// noteEdited is whether the field of a note being edited holds other words
+// than the note.
+export const noteEdited = (form) => !form.hidden && form.querySelector("textarea")?.value !== form.dcFrom;
+
+// noteEditOf is what the edit of a note sends: the note's id, empty for the
+// first note, and its words, which are the note's own where nothing changed,
+// null after it refused an empty field.
+export function noteEditOf(form) {
+  const field = form.querySelector("textarea");
+  const body = field.value.trim();
+  if (!body) {
+    refuse(field);
+    return null;
+  }
+  return { id: form.closest("[data-comment-note]")?.dataset.commentNote || "", body, same: body === form.dcFrom };
+}
+
+// paintReply names what the reply form of a thread's card sends: Resolve or
+// Reopen while its switch stands on and its field is empty, else Reply.
+export function paintReply(form) {
+  const send = form.querySelector("[data-line-thread-reply-send]");
+  const toggle = form.querySelector("[data-line-thread-reply-resolve]");
+  if (!send) return;
+  const toggling = !!toggle?.checked && !form.querySelector("textarea")?.value.trim();
+  send.textContent = toggling ? (toggle.value === "1" ? "Resolve" : "Reopen") : "Reply";
+}
+
+// openReply unfolds the reply form of a thread's card, its field taking the
+// focus on a fine pointer, and answers the form.
+export function openReply(card) {
+  const form = card.querySelector("[data-line-thread-reply]");
+  if (!form) return null;
+  form.hidden = false;
+  card.querySelector("[data-line-thread-reply-open]")?.setAttribute("aria-expanded", "true");
+  const text = form.querySelector("textarea");
+  growField(text);
+  if (matchMedia("(pointer: fine)").matches) text?.focus();
+  return form;
+}
+
+export function closeReply(form) {
+  form.reset();
+  form.querySelector("textarea")?.classList.remove("is-invalid");
+  form.hidden = true;
+  paintReply(form);
+  form.closest("[data-line-thread]")?.querySelector("[data-line-thread-reply-open]")?.setAttribute("aria-expanded", "false");
+}
+
+// replyOf is what the reply form of a thread's card sends: its words and,
+// where it offers the switch, whether that resolves or reopens the thread,
+// null after it refused an empty form at its field.
+export function replyOf(form) {
+  const text = form.querySelector("textarea");
+  const body = text.value.trim();
+  const toggle = form.querySelector("[data-line-thread-reply-resolve]");
+  if (!body && !toggle?.checked) {
+    refuse(text);
+    return null;
+  }
+  return { body, toggles: !!toggle?.checked, resolve: toggle?.checked ? toggle.value === "1" : null };
+}
+
+// answerLocal writes the answer to a local thread the way every place does:
+// the reply first, then the resolve or the reopen. A switch refused after the
+// reply went still counts as done, a second Reply would post the words twice.
+export async function answerLocal({ body, resolve }, { reply, toggle }) {
+  if (body && !(await reply(body))) return false;
+  if (resolve !== null && !(await toggle(resolve))) return !!body;
+  return true;
+}
+
+// placeChildren puts nodes into box in their order and takes the rest out,
+// moving no node that stays in the order it stands, so a focused field keeps
+// its focus and its caret.
+export function placeChildren(box, nodes) {
+  const stay = new Set(nodes);
+  for (const child of [...box.children]) if (!stay.has(child)) child.remove();
+  let at = box.firstElementChild;
+  for (const node of nodes) {
+    if (node === at) at = at.nextElementSibling;
+    else box.insertBefore(node, at);
   }
 }

@@ -67,7 +67,7 @@
                 </div>
                 {{if .Stale}}<span class="badge bg-warning-lt">Old keys</span>{{end}}
                 <span class="badge bg-primary-lt d-none" data-push-this-device>This device</span>
-                <form method="post" action="/settings/notifications" data-confirm="Remove device &quot;{{.Label}}&quot;?" data-confirm-button="Remove">
+                <form method="post" action="/settings/notifications" data-confirm="Remove device &quot;{{.Label}}&quot;?" data-confirm-kind="delete" data-confirm-button="Remove">
                   <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                   <input type="hidden" name="form" value="push-remove">
                   <input type="hidden" name="id" value="{{.ID}}">
@@ -89,7 +89,7 @@
                 <i class="ti ti-webhook fs-2 text-secondary"></i>
                 <div class="flex-fill min-w-0 text-truncate">{{.URL}}</div>
                 <button type="button" class="btn btn-sm d-none" data-webhook-test="{{.ID}}">Send test</button>
-                <form method="post" action="/settings/notifications" data-confirm="Remove this webhook?" data-confirm-button="Remove">
+                <form method="post" action="/settings/notifications" data-confirm="Remove this webhook?" data-confirm-kind="delete" data-confirm-button="Remove">
                   <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                   <input type="hidden" name="form" value="webhook-remove">
                   <input type="hidden" name="id" value="{{.ID}}">

@@ -171,29 +171,71 @@ func shellQuote(value string) string {
 // Key is what an answer names to reach its question, the key its action was
 // begun under: the project for a git question, the approval's id for an
 // approval. Kind tells the two apart, empty for a git question; an approval
-// carries who asks (Assistant), the one line it is read by in its Action
-// ("Delete project shop"), the rows the dialog shows (Details, written by
-// the asker, so the dialog knows no kind of action) and, for an action that
-// runs a program, its Command and Dir.
+// carries who asks (Assistant with its AssistantID), the one line it is read
+// by in its Action ("Delete project shop"), the shorter Title its dialog may
+// head with, the icon and tone its dialog wears, what the dialog shows (Details, written by the asker, so the dialog
+// knows no kind of action) and, for an action that runs a program, its
+// Command and Dir.
 type Question struct {
-	ID        string   `json:"id"`
-	Key       string   `json:"key"`
-	Kind      string   `json:"kind,omitempty"`
-	Project   string   `json:"project"`
-	Action    string   `json:"action"`
-	Prompt    string   `json:"prompt"`
-	External  bool     `json:"external,omitempty"`
-	Command   string   `json:"command,omitempty"`
-	Dir       string   `json:"dir,omitempty"`
-	Assistant string   `json:"assistant,omitempty"`
-	Details   []Detail `json:"details,omitempty"`
+	ID          string   `json:"id"`
+	Key         string   `json:"key"`
+	Kind        string   `json:"kind,omitempty"`
+	Project     string   `json:"project"`
+	Action      string   `json:"action"`
+	Prompt      string   `json:"prompt"`
+	External    bool     `json:"external,omitempty"`
+	Command     string   `json:"command,omitempty"`
+	Dir         string   `json:"dir,omitempty"`
+	Assistant   string   `json:"assistant,omitempty"`
+	AssistantID string   `json:"assistantId,omitempty"`
+	Title       string   `json:"title,omitempty"`
+	Icon        string   `json:"icon,omitempty"`
+	Tone        string   `json:"tone,omitempty"`
+	Details     []Detail `json:"details,omitempty"`
 }
 
-// Detail is one row an approval dialog shows: a label and its value.
-type Detail struct {
-	Label string `json:"label"`
-	Value string `json:"value"`
+// Asker is who asks an approval in one line, the name with the short id that
+// tells two of the same name apart.
+func (q Question) Asker() string {
+	if q.AssistantID == "" {
+		return q.Assistant
+	}
+	return q.Assistant + " · " + q.AssistantID
 }
+
+// Detail is one piece of what an approval dialog shows, As says which: a row
+// of Label and Value, plain, mono or a link to URL; a long text or code under
+// its Label; a chip of the row above (project, branch, target, place, stack);
+// one item of a list, its Icon, the ID and the Place beside it; a quote of
+// Label; a warning or a note. Cut says Value is only the start of what the
+// action takes.
+type Detail struct {
+	Label string `json:"label,omitempty"`
+	Value string `json:"value"`
+	As    string `json:"as,omitempty"`
+	URL   string `json:"url,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Place string `json:"place,omitempty"`
+	Icon  string `json:"icon,omitempty"`
+	Cut   bool   `json:"cut,omitempty"`
+}
+
+// What a Detail is, see Detail. A plain row has no As.
+const (
+	AsMono    = "mono"
+	AsLink    = "link"
+	AsLong    = "long"
+	AsCode    = "code"
+	AsProject = "project"
+	AsBranch  = "branch"
+	AsTarget  = "target"
+	AsPlace   = "place"
+	AsStack   = "stack"
+	AsItem    = "item"
+	AsQuote   = "quote"
+	AsWarning = "warning"
+	AsNote    = "note"
+)
 
 // KindApproval marks a question whose answer is a decision, see BeginApproval.
 const KindApproval = "approval"

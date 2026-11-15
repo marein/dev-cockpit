@@ -1263,7 +1263,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       // The refusal is a second dialog behind the confirm, so it is waited for
       // by name and not by the one selector both of them answer to.
       await page.waitForFunction(
-        () => /Unsaved files/.test(document.querySelector(".swal2-title")?.textContent || ""),
+        () => /Unsaved files/.test(document.querySelector(".dc-ask-title")?.textContent || ""),
         null, { timeout: 10000 });
       const refusal = await page.textContent(".swal2-html-container");
       assert(refusal.includes(`${dir}/two.go`), `the refusal does not name the file: ${refusal}`);
@@ -1946,9 +1946,9 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
     await run("upload via the file picker confirms the target dir and shows progress", async () => {
       const uploaded = `upload_${tag}.txt`;
       await page.setInputFiles("[data-editor-upload-input]", { name: uploaded, mimeType: "text/plain", buffer: Buffer.from("uploaded " + tag) });
-      await page.waitForSelector(".editor-upload-list", { timeout: 6000 });
-      assert((await page.textContent(".swal2-html-container")).includes("project root"), "upload dialog does not name the target dir");
-      await page.waitForSelector(".editor-upload-item .progress", { timeout: 4000 });
+      await page.waitForSelector("[data-upload-item]", { timeout: 6000 });
+      assert((await page.textContent(".swal2-html-container .dc-ask-chip")).trim() === project, "upload dialog does not name the target dir");
+      await page.waitForSelector("[data-upload-item] .progress", { timeout: 4000 });
       await page.click(".swal2-confirm");
       await page.waitForSelector(`.editor-file[data-path="${uploaded}"]`, { timeout: 8000 });
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 });
@@ -1961,7 +1961,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
         { name: `pix_${tag}.png`, mimeType: "image/png", buffer: png },
         { name: `pic_${tag}.svg`, mimeType: "image/svg+xml", buffer: svg },
       ]);
-      await page.waitForSelector(".editor-upload-list", { timeout: 6000 });
+      await page.waitForSelector("[data-upload-item]", { timeout: 6000 });
       await page.click(".swal2-confirm");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 });
       await page.click(`.editor-file[data-path="pix_${tag}.png"] .editor-item-name`);
@@ -2143,7 +2143,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       assert((await outOfBand(conflictFile, "theirs")) === 200, "the out of band write did not land");
       await page.keyboard.press("Control+S");
       await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
-      const title = await page.textContent(".swal2-title");
+      const title = await page.textContent(".dc-ask-title");
       assert(/changed on disk/.test(title || ""), `the conflict dialog says ${title}`);
       const buttons = await dialogButtons();
       assert(buttons.length === 2 && buttons.includes("Reload"), `the dialog offers ${buttons.join(", ")}`);
@@ -2189,7 +2189,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.click(".cm-content");
       await page.keyboard.press("Control+S");
       await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
-      const title = await page.textContent(".swal2-title");
+      const title = await page.textContent(".dc-ask-title");
       assert(/no longer exists/.test(title || ""), `the deleted dialog says ${title}`);
       const buttons = await dialogButtons();
       assert(buttons.length === 2 && buttons.includes("Create again"), `the deleted dialog offers ${buttons.join(", ")}`);
@@ -2361,7 +2361,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       // Cancel writes nothing.
       await page.keyboard.press("Control+S");
       await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
-      assert(/changed on disk/.test((await page.textContent(".swal2-title")) || ""), "the stale save asked something else");
+      assert(/changed on disk/.test((await page.textContent(".dc-ask-title")) || ""), "the stale save asked something else");
       await page.click(".swal2-cancel");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 }).catch(() => {});
       // Reload takes the disk, and the mark goes with it.
@@ -2383,7 +2383,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       // The save is refused as deleted and Create again is the way out; the
       // mark goes when the file is there again.
       await page.waitForSelector(".swal2-confirm", { state: "visible", timeout: 8000 });
-      assert(/no longer exists/.test((await page.textContent(".swal2-title")) || ""), "the deleted save asked something else");
+      assert(/no longer exists/.test((await page.textContent(".dc-ask-title")) || ""), "the deleted save asked something else");
       await page.click(".swal2-confirm");
       await waitDirty(liveFile, false);
       await waitDiskState(liveFile, "");
@@ -2804,7 +2804,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
         mimeType: "video/mp4",
         buffer: Buffer.from(TINY_MP4, "base64"),
       }]);
-      await page.waitForSelector(".editor-upload-list", { timeout: 6000 });
+      await page.waitForSelector("[data-upload-item]", { timeout: 6000 });
       await page.click(".swal2-confirm");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 });
       await page.waitForSelector(`.editor-file[data-path="clip_${tag}.mp4"]`, { timeout: 10000 });
@@ -2906,14 +2906,14 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.setInputFiles("[data-editor-upload-input]", [{
         name: "dup.txt", mimeType: "text/plain", buffer: Buffer.from("uploaded one"),
       }]);
-      await page.waitForSelector(".editor-upload-list", { timeout: 6000 });
+      await page.waitForSelector("[data-upload-item]", { timeout: 6000 });
       assert(!(await page.$("[data-upload-clash]")), "the root has no dup.txt, yet a clash was reported");
       await page.click(".swal2-cancel");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 4000 });
       await page.setInputFiles("[data-editor-upload-input]", [{
         name: "dup.txt", mimeType: "text/plain", buffer: Buffer.from("uploaded one"),
       }]);
-      await page.waitForSelector(".editor-upload-list", { timeout: 6000 });
+      await page.waitForSelector("[data-upload-item]", { timeout: 6000 });
       await page.click(".swal2-confirm");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 8000 });
       await page.waitForSelector('.editor-file[data-path="dup.txt"]', { timeout: 8000 });
@@ -3109,7 +3109,7 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
         mimeType: "application/gzip",
         buffer: fs.readFileSync(await download.path()),
       }]);
-      await page.waitForSelector(".editor-upload-list", { timeout: 6000 });
+      await page.waitForSelector("[data-upload-item]", { timeout: 6000 });
       await page.click(".swal2-confirm");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 8000 });
       await page.waitForSelector('.editor-file[data-path="arch.tar.gz"]', { timeout: 8000 });
@@ -3222,8 +3222,8 @@ L.runFeature("EDITOR", async ({ engine, browser, ctx, page, run, mobilePage, bag
       await page.keyboard.press("Escape");
       await page.waitForSelector(".dc-context-menu", { state: "detached", timeout: 4000 });
       await page.setInputFiles("[data-editor-upload-dir-input]", root);
-      await page.waitForSelector(".editor-upload-list", { timeout: 8000 });
-      const rows = await page.$$eval(".editor-upload-item .text-truncate", (els) => els.map((e) => e.textContent.trim()));
+      await page.waitForSelector("[data-upload-item]", { timeout: 8000 });
+      const rows = await page.$$eval("[data-upload-item] .dc-ask-name", (els) => els.map((e) => e.textContent.trim()));
       const folder = path.basename(root);
       assert(rows.some((r) => r === `${folder}/nested/deep.txt`), `upload list shows ${rows.join(", ")}`);
       await page.click(".swal2-confirm");

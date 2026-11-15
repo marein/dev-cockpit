@@ -20,7 +20,7 @@
         {{else}}
         <div class="btn-list flex-nowrap">
           <a href="{{$.Base}}/skills/{{.ID}}/edit" class="btn btn-sm btn-icon btn-outline-secondary" aria-label="Edit skill {{.ID}}" title="Edit"><i class="ti ti-pencil"></i></a>
-          <form method="post" action="{{$.Base}}/skills/{{.ID}}/delete" data-confirm="Delete skill &quot;{{.ID}}&quot;?" data-confirm-button="Delete">
+          <form method="post" action="{{$.Base}}/skills/{{.ID}}/delete" data-confirm="Delete skill &quot;{{.ID}}&quot;?" data-confirm-kind="delete" data-confirm-button="Delete">
             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Delete skill {{.ID}}" title="Delete"><i class="ti ti-trash"></i></button>
           </form>

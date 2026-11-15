@@ -25,8 +25,10 @@ const { assert, BASE, sleep } = L;
 // stack nowhere, also not from a hand built pull) and the version, without the
 // spend, the songs and the update check. The line
 // comments stand marked in the gutter and listed in the sheet on every project
-// of the link, a marked line's menu shows its comment in a dialog that saves
-// nothing, and a comment the owner adds or deletes reaches the open guest
+// of the link, a marked line's menu, or a click on its number, unfolds its
+// comment under it with nothing to write, a click on a bare line number opens
+// the line's menu and no field, and a comment the owner adds or deletes
+// reaches the open guest
 // without a reload. A project
 // added to the link shows up in the open guest's project switcher without a
 // reload and opens in the same tab, its shell joins the strip, and taken off
@@ -101,7 +103,7 @@ async function openCommentsSheet(page) {
 }
 
 async function lineMenu(page, line) {
-  await page.locator(".cm-lineNumbers .cm-gutterElement:visible", { hasText: new RegExp(`^${line}$`) }).first().click();
+  await page.locator(".cm-lineNumbers .cm-gutterElement:visible", { hasText: new RegExp(`^${line}$`) }).first().click({ button: "right" });
   await page.waitForSelector(".dc-context-menu", { timeout: 4000 });
   return menuLabels(page);
 }
@@ -209,20 +211,31 @@ module.exports.guestChecks = async function guestChecks({ browser, page, run, ba
       noneOf(labels, ["Add line comment", "Delete comment"], "a line's menu");
       assert(labels.includes("Open thread"), `the commented line's menu reads ${JSON.stringify(labels)}`);
       await gp.locator(".dc-context-menu .dropdown-item", { hasText: /^Open thread$/ }).click();
-      await gp.waitForSelector("[data-editor-comment-modal].show", { timeout: 6000 });
+      const card = L.threadCard(gp, `owner-note-${fx.tag}`);
+      await card.waitFor({ timeout: 6000 });
       await sleep(500);
-      const shown = await gp.$eval("[data-editor-comment-modal]", (el) => ({
-        title: el.querySelector("[data-editor-comment-title]").textContent.trim(),
-        place: el.querySelector("[data-editor-comment-place]").textContent.trim(),
+      const shown = await card.evaluate((el) => ({
+        title: el.querySelector("[data-line-thread-kind]").textContent.trim(),
+        line: el.closest("[data-line-block]")?.dataset.lineBlock || "",
         notes: [...el.querySelectorAll("[data-comment-note]")].map((n) => `${n.querySelector("[data-comment-note-author]").textContent}: ${n.querySelector("[data-comment-note-text]").textContent}`).join("|"),
-        field: getComputedStyle(el.querySelector("[data-editor-comment-text]")).display !== "none",
-        writes: el.querySelectorAll("[data-editor-comment-save], .form-hint, [data-editor-comment-resolve-row], [data-comment-note] button").length,
+        writes: el.querySelectorAll("[data-line-thread-reply-open], [data-line-thread-reply], [data-line-thread-resolve], [data-line-thread-reopen], [data-line-thread-delete], [data-comment-note] button").length,
       }));
-      const want = { title: "Line comment", place: "README.md:2", notes: `Owner: owner-note-${fx.tag}`, field: false, writes: 0 };
+      const want = { title: "Line comment", line: "2", notes: `Owner: owner-note-${fx.tag}`, writes: 0 };
       assert(JSON.stringify(shown) === JSON.stringify(want), `the comment shows as ${JSON.stringify(shown)}`);
+      assert(await gp.locator("[data-editor-comment-modal].show").count() === 0, "the thread opened a dialog");
       await gp.keyboard.press("Control+Enter");
-      await gp.click("[data-editor-comment-cancel]");
-      await gp.waitForFunction(() => getComputedStyle(document.querySelector("[data-editor-comment-modal]")).display === "none", null, { timeout: 6000 });
+      await sleep(400);
+      await gp.locator(".cm-lineNumbers .cm-gutterElement:visible", { hasText: /^2$/ }).first().click();
+      await gp.waitForFunction(() => !document.querySelector(".cm-content [data-line-thread]"), null, { timeout: 6000 });
+      await sleep(400);
+      await gp.locator(".cm-lineNumbers .cm-gutterElement:visible", { hasText: /^2$/ }).first().click();
+      await card.waitFor({ timeout: 6000 });
+      await sleep(400);
+      await gp.locator(".cm-lineNumbers .cm-gutterElement:visible", { hasText: /^1$/ }).first().click();
+      await gp.waitForSelector(".dc-context-menu", { timeout: 4000 });
+      noneOf(await menuLabels(gp), ["Open thread", "Add line comment"], "a reader's click on an uncommented line");
+      await closeMenu(gp);
+      assert(await gp.locator(".cm-content [data-line-comment-form]").count() === 0, "a reader's click opened a field");
       assert(!fx.requests.some((r) => r.startsWith("POST") && r.includes("/comments")), "the guest posted a comment");
     });
 

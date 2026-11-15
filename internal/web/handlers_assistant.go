@@ -14,6 +14,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/activity"
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -548,19 +549,23 @@ func (s *Server) deleteAssistant(id string) ([]assistant.Job, error) {
 	return held, nil
 }
 
+// assistantDeleteWarning is what an assistant delete does, see deleteAssistant.
+const assistantDeleteWarning = "A running turn ends, the conversation, workspace, jobs and triggers are deleted, the approvals it waits for are declined and the coders it steers are yours again. This cannot be undone."
+
 // assistantDeleteKind is the assistant delete an assistant asks for. A
 // target's delete looks the assistant up again. An assistant that deleted
 // itself reads no note, its thread is gone with it.
 func (s *Server) assistantDeleteKind() deleteKind {
-	return deleteKind{ID: approvalAssistantDelete, Plural: "assistants", Resolve: func(id string) (deleteTarget, error) {
+	return deleteKind{ID: approvalAssistantDelete, Plural: "assistants", Warning: assistantDeleteWarning, Resolve: func(id string) (deleteTarget, error) {
 		if _, err := s.assistants.Get(id); err != nil {
 			return deleteTarget{}, err
 		}
-		name := s.assistantName(id)
+		name, short := s.assistantName(id), coder.ShortID(id)
 		return deleteTarget{
 			Key:     id,
 			Name:    "assistant " + name,
-			Details: []askpass.Detail{{Label: "Assistant", Value: withShortID(name, id)}},
+			Details: []askpass.Detail{{Label: "Assistant", Value: name}, {Label: "ID", Value: short, As: askpass.AsMono}},
+			Item:    askpass.Detail{Icon: "sparkles", Value: name, ID: short},
 			Delete: func(bool) (string, []string, error) {
 				if _, err := s.assistants.Get(id); err != nil {
 					return "", nil, errors.New("the assistant no longer exists")

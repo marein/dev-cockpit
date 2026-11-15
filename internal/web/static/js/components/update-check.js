@@ -1,4 +1,6 @@
 import * as dialog from "@dc/dialog";
+import { escapeHtml } from "@dc/dom";
+import { formView } from "@dc/prompt-view";
 import { errorText } from "@dc/toast";
 import { csrfHeaders } from "@dc/http";
 import { getJSON, setJSON } from "@dc/store";
@@ -22,6 +24,23 @@ function paintTile(tile, status) {
   tile.classList.toggle("text-primary", Boolean(status.available));
   if (label) label.textContent = status.available ? `Update to ${status.latest}` : "Up to date";
   if (icon) icon.className = `ti ${status.available ? "ti-arrow-up-circle" : "ti-circle-check"}`;
+}
+
+function changelog(releases) {
+  return releases.map((rel) => {
+    const named = rel.name && rel.name.replace(/^v/, "") !== rel.version ? ` · ${escapeHtml(rel.name)}` : "";
+    const date = rel.date ? ` <span class="text-secondary">· ${escapeHtml(rel.date.slice(0, 10))}</span>` : "";
+    const notes = rel.notesHtml || `<p class="dc-prompt-text">${escapeHtml((rel.notes || "").trim() || "No release notes.")}</p>`;
+    return `<p><strong>${escapeHtml(rel.version)}</strong>${named}${date}</p>${notes}`;
+  }).join("<hr>");
+}
+
+function upToDate(version) {
+  return dialog.notice({ kind: "success", title: "Up to date", text: `Running version ${version}.` });
+}
+
+function failed(text) {
+  return dialog.notice({ kind: "error", title: "Update failed", text });
 }
 
 class UpdateCheck extends HTMLElement {
@@ -172,68 +191,38 @@ class UpdateCheck extends HTMLElement {
   }
 
   openDialog() {
-    dialog.loading({ title: "Checking for updates…" });
+    dialog.loading({ title: "Checking for updates…", icon: "refresh" });
     this.doCheck(true).then((status) => {
       const current = status || this.status;
       if (!current || !current.supported) {
-        dialog.fire({ icon: "error", title: "Could not check for updates" });
+        dialog.notice({ kind: "error", title: "Could not check for updates" });
       } else if (current.available) {
         this.confirmUpdate(current);
       } else {
-        dialog.fire({ icon: "success", title: "Up to date", text: "Running version " + current.current + "." });
+        upToDate(current.current);
       }
     });
-  }
-
-  changelog(releases) {
-    const wrap = document.createElement("div");
-    wrap.style.textAlign = "left";
-    wrap.style.maxHeight = "50vh";
-    wrap.style.overflowY = "auto";
-    releases.forEach((rel) => {
-      const head = document.createElement("div");
-      head.className = "fw-bold mt-3";
-      let title = rel.name && rel.name !== rel.version ? rel.version + " — " + rel.name : "Version " + rel.version;
-      if (rel.date) title += "  (" + rel.date.slice(0, 10) + ")";
-      head.textContent = title;
-
-      const body = document.createElement("div");
-      body.className = "small dc-md";
-      if (rel.notesHtml) {
-        body.innerHTML = rel.notesHtml;
-        body.querySelectorAll("a[href]").forEach((anchor) => {
-          anchor.target = "_blank";
-          anchor.rel = "noopener noreferrer";
-        });
-      } else {
-        body.textContent = (rel.notes || "").trim() || "No release notes.";
-      }
-
-      wrap.append(head, body);
-    });
-    return wrap;
   }
 
   confirmUpdate(status) {
-    const options = {
-      title: "Update to " + status.latest + "?",
-      html: this.changelog(status.releases || []),
-      showCancelButton: true,
-      confirmButtonText: "Update & restart",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
-      width: "44rem",
-    };
-    if (!status.writable) {
-      options.footer = "⚠ The binary location is not writable here, the update will fail.";
-    }
-    dialog.fire(options).then((result) => {
+    const releases = status.releases || [];
+    const view = formView({
+      title: `Update to ${status.latest}?`,
+      details: [
+        { label: "Running", value: status.current, as: "mono" },
+        ...(releases.length ? [{ as: "long", label: "Release notes", html: changelog(releases) }] : []),
+        ...(status.writable ? [] : [{ as: "warning", value: "The binary location is not writable here, the update will fail." }]),
+      ],
+      icon: "arrow-up-circle",
+      confirmText: "Update & restart",
+    });
+    dialog.fire({ ...view, width: "42rem" }).then((result) => {
       if (result.isConfirmed) this.apply(status);
     });
   }
 
   apply(status) {
-    dialog.loading({ title: "Updating…", text: "Downloading and restarting." });
+    dialog.loading({ title: "Updating…", text: "Downloading and restarting.", icon: "arrow-up-circle" });
     fetch("/update/apply", {
       method: "POST",
       headers: csrfHeaders({ Accept: "application/json", "Content-Type": "application/json" }),
@@ -248,16 +237,14 @@ class UpdateCheck extends HTMLElement {
         await response.json().catch(() => ({}));
         this.waitForRestart(status.latest);
       })
-      .catch((error) => {
-        dialog.fire({ icon: "error", title: "Update failed", text: error.message });
-      });
+      .catch((error) => failed(error.message));
   }
 
   async applyRejected(response) {
     const data = await response.json().catch(() => null);
     const fresh = data && data.status;
     if (!fresh || !fresh.supported) {
-      dialog.fire({ icon: "error", title: "Update failed", text: (data && data.error) || "Update failed." });
+      failed((data && data.error) || "Update failed.");
       return;
     }
     this.saveState({ status: fresh });
@@ -266,7 +253,7 @@ class UpdateCheck extends HTMLElement {
     if (fresh.available) {
       this.confirmUpdate(fresh);
     } else {
-      dialog.fire({ icon: "success", title: "Up to date", text: "Running version " + fresh.current + "." });
+      upToDate(fresh.current);
     }
   }
 
@@ -278,9 +265,7 @@ class UpdateCheck extends HTMLElement {
         .then((response) => (response.ok ? response.json() : null))
         .then((status) => {
           if (status && status.current === target) {
-            dialog
-              .fire({ icon: "success", title: "Updated to " + target, timer: 2000, showConfirmButton: false })
-              .then(() => location.reload());
+            dialog.notice({ kind: "success", title: `Updated to ${target}`, timer: 2000 }).then(() => location.reload());
             return;
           }
           retry();
@@ -289,7 +274,7 @@ class UpdateCheck extends HTMLElement {
     };
     const retry = () => {
       if (Date.now() > deadline) {
-        dialog.fire({ icon: "warning", title: "Restart is taking a while", text: "Reload the page in a moment." });
+        dialog.notice({ title: "Restart is taking a while", text: "Reload the page in a moment." });
         return;
       }
       setTimeout(poll, 1500);

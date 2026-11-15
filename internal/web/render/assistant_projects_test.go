@@ -98,7 +98,7 @@ func TestACardsJobRowsResumeForTheOwnerAlone(t *testing.T) {
 	if folded := renderPart(t, "assistant_projects_list.gohtml", data); !strings.Contains(folded, `aria-expanded="false" data-assistant-older>`) {
 		t.Fatalf("the folded older projects do not say so:\n%s", folded)
 	}
-	reviews := AssistantProjectReviews{Project: "app", Resolved: []AssistantThread{{ID: "a"}, {ID: "b"}}}
+	reviews := AssistantProjectReviews{Project: "app", Resolved: []LineThread{{ID: "a"}, {ID: "b"}}}
 	if got := reviews.ResolvedLabel(); got != (FoldLabel{Shut: "Show 2 resolved threads", Open: "Hide resolved threads"}) {
 		t.Fatalf("the resolved fold says %+v", got)
 	}

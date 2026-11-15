@@ -296,10 +296,22 @@ templates plus ES modules.
   (`@dc/rowdrag`), one swipe (`@dc/swipe`), one token match with its row ranking (`@dc/filter`, `rankRows`),
   one project palette (`@dc/project-palette` over the `project_palette_*`
   templates), one follow of a conversation's end with its jump to end button
-  (`@dc/chat-follow` over `chat_end.gohtml`), one inline diff of two texts the way the editor draws it (`@dc/inline-diff`), one gutter mark of the lines that carry line comment threads (`@dc/comment-gutter`), one growth of a text box with its text (`growTextarea` with `keepGrown`, `@dc/dom`), one brief mark where something just landed (`flash`, `@dc/dom`), one tag filter over a project list (`@dc/tags`), one terminal
+  (`@dc/chat-follow` over `chat_end.gohtml`), one inline diff of two texts the way the editor draws it (`@dc/inline-diff`), one gutter mark of the lines that carry line comment threads (`@dc/comment-gutter`), one element under a line of a code view, a thread's card or a field (`@dc/line-blocks`), one card of a line comment thread (`line_thread.gohtml`), one growth of a text box with its text (`growTextarea` with `keepGrown`, `@dc/dom`), one brief mark where something just landed (`flash`, `@dc/dom`), one tag filter over a project list (`@dc/tags`), one terminal
   theme table (`@dc/terminal`), one popup door
   (`@dc/dialog`, SweetAlert for dialogs only) and toasts via `@dc/toast`
-  (Bootstrap toasts). New surfaces reuse these, never copy them. A tag is
+  (Bootstrap toasts). New surfaces reuse these, never copy them. A question
+  before an action is `confirm` of `@dc/dialog` in the look of `@dc/prompt-view`,
+  a form asks it through `data-confirm`; one before a delete or another
+  destructive action names its kind (`kind`, `data-confirm-kind`), and what
+  goes along with it stands as its `warning` (`data-confirm-warning`). A
+  question for a name or a value is `promptText` in the same look, a message
+  with one button `notice` with its kind (`info`, `success`, `error`) and a
+  wait `loading`. A dialog
+  with fields or rows of its own builds on `formView` or `promptView` of
+  `@dc/prompt-view` and passes them as details (`field`, `note`, `item`),
+  never as markup of its own. Markup a server rendered, like release notes,
+  is the `html` of a `long` detail, its links open only over http(s) and in
+  a new tab. A tag is
   shown through `tags.gohtml`, wears its color as `dc-tag-<color>` and is
   pointed at by its id everywhere (filters, links, `data-tag`, form fields).
   The tag disc after a name stands in a `.dc-tagged` box, so the name

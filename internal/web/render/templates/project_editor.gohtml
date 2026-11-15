@@ -311,31 +311,25 @@
       {{template "project_comment_field.gohtml" (dict "Small" false)}}
     </div>
   </div>{{end}}
+  {{- if .Access.Can "comments"}}
+  {{/* The field a press on a line number opens under the line. */}}
+  <template data-editor-line-comment>
+    {{- if .Access.Guest}}{{template "line_comment_field.gohtml" (dict "Hint" "The comment follows this line as the file changes, but works best when the line keeps its content.")}}
+    {{- else}}{{template "line_comment_field.gohtml" (dict "Hint" "The comment follows this line as the file changes, but works best when the line keeps its content. The assistant can read and manage all line comments.")}}{{end}}
+  </template>
+  {{- end}}
   <div data-editor-comment-modal-host>
     <div class="modal modal-blur fade" data-editor-comment-modal tabindex="-1" aria-labelledby="editor-comment-modal-title" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
           <div class="modal-header">
-            <h3 class="modal-title" id="editor-comment-modal-title" data-editor-comment-title>Line comment</h3>
+            <div class="min-w-0">
+              <h3 class="modal-title" id="editor-comment-modal-title" data-editor-comment-title>Project comment</h3>
+              <div class="text-secondary small d-flex min-w-0 mt-1" hidden data-editor-comment-place></div>
+            </div>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
-          <div class="modal-body">
-            <div class="text-secondary small d-flex min-w-0" data-editor-comment-place></div>
-            <div class="text-secondary small font-monospace text-truncate mt-1" data-editor-comment-code hidden></div>
-            <div class="small fw-medium text-break mt-1" data-editor-comment-author hidden></div>
-            <a class="small d-inline-flex align-items-center gap-1 mt-1" href="#" target="_blank" rel="noopener" data-editor-comment-link hidden><i class="ti ti-external-link" aria-hidden="true"></i><span></span></a>
-            <div class="mt-2" data-editor-comment-thread hidden></div>
-            {{if .Access.Can "comments"}}<textarea class="form-control mt-3" rows="4" data-editor-comment-text placeholder="What about this line?" aria-label="Comment"></textarea>
-            <div class="invalid-feedback" data-editor-comment-invalid>A comment is required.</div>
-            <small class="form-hint mt-2" data-editor-comment-hint>The comment follows this line as the file changes, but works best when the line keeps its content.{{if not .Access.Guest}} The assistant can read and manage all line comments.{{end}}</small>
-            <label class="form-check mt-2 mb-0" data-editor-comment-resolve-row hidden><input class="form-check-input" type="checkbox" data-editor-comment-resolve><span class="form-check-label" data-editor-comment-resolve-label>Resolve the thread</span></label>
-            {{else}}<textarea class="form-control mt-3" rows="4" data-editor-comment-text aria-label="Comment" readonly></textarea>{{end}}
-          </div>
-          <div class="modal-footer">
-            {{if .Access.Can "comments"}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal" data-editor-comment-cancel>Cancel</button>
-            <button type="button" class="btn btn-primary" data-editor-comment-save>Add</button>
-            {{else}}<button type="button" class="btn btn-primary" data-bs-dismiss="modal" data-editor-comment-cancel>Close</button>{{end}}
-          </div>
+          <div class="modal-body" data-editor-comment-thread></div>
         </div>
       </div>
     </div>

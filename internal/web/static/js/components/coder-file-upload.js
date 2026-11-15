@@ -214,7 +214,7 @@ class CoderFileUpload extends HTMLElement {
     // Render inside the open Bootstrap modal so its focus trap treats the
     // dialog as in scope; otherwise it pulls focus back to the modal and Enter
     // hits the modal close button instead of confirming the delete.
-    confirm({ title: message, confirmText: "Delete", target: this.modal, heightAuto: false }).then((ok) => {
+    confirm({ title: message, kind: "delete", confirmText: "Delete", target: this.modal, heightAuto: false }).then((ok) => {
       if (ok) {
         sendDelete();
       }

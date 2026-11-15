@@ -55,10 +55,6 @@ html, body { height: 100%; }
    surface that fills the viewport. */
 html { scrollbar-gutter: auto; }
 body.dc-body { overflow: hidden; margin: 0; }
-body {
-  --swal2-background: var(--tblr-bg-surface);
-  --swal2-color: var(--tblr-body-color);
-}
 .dc-mono { font-family: var(--tblr-font-monospace); }
 .dc-trunc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-min0 { min-width: 0; }
@@ -1035,9 +1031,6 @@ terminal-tabs[data-tabs-vertical] .terminal-tabs-strip { display: flex; flex-dir
 coder-file-upload {
   display: contents;
 }
-body .swal2-styled.swal2-deny {
-  background-color: var(--tblr-secondary);
-}
 .coder-files-refresh {
   position: absolute;
   top: 1.1rem;
@@ -1217,7 +1210,7 @@ body .swal2-styled.swal2-deny {
    that: the composer would tear apart under one, and the trigger's task
    would pull itself wider than the dialog it stands in. */
 textarea[data-assistant-input], textarea[data-trigger-task],
-textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment-text], [data-assistant-project-comment] textarea { resize: none; }
+textarea[data-line-thread-reply-text], textarea[data-line-comment-text], [data-assistant-project-comment] textarea { resize: none; }
 .dc-assistant-aside, .dc-assistant-memory { --tblr-offcanvas-width: 420px; }
 .dc-assistant-aside .dc-assistant-aside-body { display: flex; flex-direction: column; }
 .dc-assistant-aside .card { box-shadow: none; }
@@ -1985,27 +1978,14 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
   word-break: break-all;
   pointer-events: none;
 }
-.editor-upload-list {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-  text-align: left;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-.editor-upload-item[data-done="true"] .progress-bar {
+[data-upload-item][data-done="true"] .progress-bar {
   background-color: var(--tblr-success);
 }
-.editor-upload-item[data-error="true"] .progress-bar {
+[data-upload-item][data-error="true"] .progress-bar {
   background-color: var(--tblr-danger);
 }
-.editor-upload-item[data-error="true"] [data-file-status] {
+[data-upload-item][data-error="true"] .dc-ask-id {
   color: var(--tblr-danger) !important;
-}
-.editor-upload-item [data-file-status] {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .editor-item-name { flex: 1 1 auto; min-width: 0; font-size: 0.85rem; }
 .editor-item-icon { width: 1rem; text-align: center; color: var(--tblr-secondary); flex: 0 0 auto; }
@@ -2101,22 +2081,34 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
 [data-bs-theme="dark"] :is(.editor-surface, .dc-inline-diff) .cm-editor.cm-merge-b .cm-changedText {
   background: rgba(var(--tblr-green-rgb), 0.42);
 }
-/* What stands under a line of the aside's inline diff, its threads and the
-   field of a new comment, reads as the page does, not as code. */
-.dc-inline-diff .dc-inline-diff-block {
+/* What stands under a line of the editor or the aside's inline diff, its
+   threads and the field of a new comment, reads as the page does, not as
+   code, shows the caret CodeMirror hides in its content outside iOS, and
+   stays in the visible width beside the gutters while long lines scroll the
+   code sideways (@dc/line-blocks measures both), on a large screen no wider
+   than a comment reads well. */
+.cm-editor .dc-line-block {
+  position: sticky;
+  left: var(--dc-line-block-left, 0);
+  width: var(--dc-line-block-width, auto);
   font-family: var(--tblr-body-font-family);
   font-size: var(--tblr-body-font-size);
   line-height: var(--tblr-body-line-height);
+  white-space: normal;
+  caret-color: auto;
   cursor: auto;
+}
+@media (min-width: 1200px) {
+  .cm-editor .dc-line-block { max-width: 48rem; }
+}
+.cm-editor .dc-line-block [data-line-thread-quote] {
+  white-space: normal;
 }
 /* The wrapped content is a flex item, the widest text in a block that does
    not wrap would set its width and scroll the diff sideways. A quote cut in
    Reviews wraps here. */
 .dc-inline-diff .cm-content {
   min-width: 0;
-}
-.dc-inline-diff .dc-inline-diff-block [data-assistant-thread-quote] {
-  white-space: normal;
 }
 .editor-placeholder {
   display: flex;
@@ -2650,39 +2642,6 @@ textarea[data-assistant-thread-reply-text], textarea[data-assistant-diff-comment
    them, and let the name span take all the slack. */
 .card .list-group-item > form, .card .btn-list > form { flex: 0 0 auto; }
 .card .list-group-item .text-truncate { min-width: 0; }
-.dc-md {
-  margin-top: 0.4rem;
-  line-height: 1.45;
-  color: var(--tblr-body-color);
-}
-.dc-md > :first-child { margin-top: 0 !important; }
-.dc-md h1, .dc-md h2, .dc-md h3, .dc-md h4, .dc-md h5, .dc-md h6 {
-  font-size: 0.95rem;
-  color: var(--tblr-emphasis-color);
-}
-.dc-md a { color: var(--tblr-link-color); }
-.dc-md code {
-  background: var(--tblr-code-bg);
-  color: var(--tblr-code-color);
-  padding: 0.05rem 0.3rem;
-  border-radius: 0.25rem;
-}
-.dc-md pre {
-  background: var(--tblr-code-bg);
-  color: var(--tblr-body-color);
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.4rem;
-  overflow-x: auto;
-}
-.dc-md pre code {
-  background: none;
-  padding: 0;
-}
-.dc-md hr {
-  border: 0;
-  border-top: 1px solid var(--tblr-border-color);
-  margin: 0.75rem 0;
-}
 [data-terminal-refresh][data-refreshing] {
   color: var(--tblr-warning);
   border-color: var(--tblr-warning);
@@ -2987,11 +2946,6 @@ dc-notify-volume { display: block; max-width: 24rem; }
   white-space: pre-wrap;
 }
 .dc-toast-clickable { cursor: pointer; }
-.dc-prompt-text {
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-.dc-prompt-command { max-height: 12rem; }
 .dc-page-progress {
   z-index: 10000;
   top: 0;

@@ -306,9 +306,8 @@ func (s *Server) composeApproval(owner string, p project.Project, stack docker.S
 		where = stack.Label
 	}
 	details := []askpass.Detail{
-		{Label: "Action", Value: action.Label},
-		{Label: "Stack", Value: where},
-		{Label: "Project", Value: p.Name},
+		{Label: "Project", Value: p.Name, As: askpass.AsProject},
+		{Label: "Stack", Value: where, As: askpass.AsStack},
 	}
 	// The line the run will start, resolved the way the run resolves it; one
 	// that does not resolve fails the run, and the dialog shows it as written.
@@ -322,6 +321,7 @@ func (s *Server) composeApproval(owner string, p project.Project, stack docker.S
 		Kind:     approvalComposeActions,
 		Key:      strings.Join([]string{name, label, actionID}, "\n"),
 		What:     what,
+		Title:    action.Label,
 		Details:  details,
 		Command:  command,
 		Dir:      stack.Dir,

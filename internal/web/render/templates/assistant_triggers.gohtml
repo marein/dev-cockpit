@@ -89,8 +89,9 @@
         {{end}}
         {{if not $.Access.Guest}}
         <form method="post" action="{{$.URL}}" class="flex-fill d-flex" data-ajax-refresh
-              data-confirm="Remove &#34;{{.Heading}}&#34;? The assistant stops reacting to it. What it already did stays in the thread."
-              data-confirm-button="Remove">
+              data-confirm="Remove &#34;{{.Heading}}&#34;?"
+              data-confirm-warning="The assistant stops reacting to it. What it already did stays in the thread."
+              data-confirm-kind="delete" data-confirm-button="Remove">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="form" value="remove">
           <input type="hidden" name="id" value="{{.ID}}">

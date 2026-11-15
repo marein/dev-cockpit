@@ -231,7 +231,7 @@ module.exports.tagChecks = async function tagChecks({ page, run, mobilePage, pro
     await page.click(`${row(ids.third)} [data-tag-remove]`);
     assert(await page.$eval(row(ids.third), (r) => r.classList.contains("is-removed")) && await shown(page, `${row(ids.third)} [data-tag-undo]`) && !(await shown(page, `${row(ids.third)} [data-tag-remove]`)), "the removal does not stand with its Undo");
     assert((await pending(page)).trim() === "3 changes", `the footer reads ${await pending(page)}`);
-    assert((await page.getAttribute("[data-tags-form]", "data-confirm")) === `Remove tag "${third}"?` && (await page.getAttribute("[data-tags-form]", "data-confirm-text")) === `It comes off 1 project: ${project}.`, "the save does not ask before the removal");
+    assert((await page.getAttribute("[data-tags-form]", "data-confirm")) === `Remove tag "${third}"?` && (await page.getAttribute("[data-tags-form]", "data-confirm-warning")) === `It comes off 1 project: ${project}.`, "the save does not ask before the removal");
     await page.click(`${row(ids.third)} [data-tag-undo]`);
     assert((await pending(page)).trim() === "2 changes" && (await page.getAttribute("[data-tags-form]", "data-confirm")) === null, "Undo left the removal");
 
@@ -535,7 +535,7 @@ module.exports.tagChecks = async function tagChecks({ page, run, mobilePage, pro
     };
     const switcher = async (name) => {
       await page.goto(`${BASE}/projects/${project}/editor`, { waitUntil: "domcontentloaded" });
-      await page.waitForSelector("[data-editor-project-switch]", { state: "attached", timeout: 12000 });
+      assert((await L.waitUpgraded(page, ["terminal-tabs"], 8000)).length === 0, "terminal-tabs not upgraded");
       await page.keyboard.press("Control");
       await page.keyboard.press("Control");
       await page.waitForSelector(".terminal-switcher", { state: "visible", timeout: 4000 });

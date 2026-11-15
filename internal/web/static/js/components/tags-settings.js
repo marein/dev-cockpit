@@ -337,16 +337,18 @@ class TagsSettings extends HTMLElement {
     const form = this.form;
     if (removed.length === 0) {
       delete form.dataset.confirm;
-      delete form.dataset.confirmText;
+      delete form.dataset.confirmWarning;
+      delete form.dataset.confirmKind;
       delete form.dataset.confirmButton;
       return;
     }
     const carriers = [...new Set(removed.flatMap((row) => this.state(row).carriers))].sort();
     const one = removed.length === 1;
     form.dataset.confirm = one ? `Remove tag "${removed[0].dataset.loadedName}"?` : `Remove ${removed.length} tags?`;
-    form.dataset.confirmText = carriers.length === 0
+    form.dataset.confirmWarning = carriers.length === 0
       ? `No project carries ${one ? "it" : "them"}.`
       : `${one ? "It comes" : "They come"} off ${counted(carriers.length, "project", "projects")}: ${carriers.join(", ")}.`;
+    form.dataset.confirmKind = "delete";
     form.dataset.confirmButton = "Remove";
   }
 

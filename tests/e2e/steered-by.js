@@ -21,11 +21,13 @@ const { guestPage } = require("./project-share-guest");
 // the purple mark in the head (dc-steered-mark with `menu`) opens a menu
 // holding the same entry. The name is the one the assistants list shows, cut
 // by the menu, never breaking a phone's width. A steer from the page belongs
-// to the assistant the dialog picked and shows the same way. A rename, a
-// release and a deleted assistant move tooltip, label and menu entries live on
-// the terminals event without a reload, and an unsteered coder shows none of
-// it. A guest of a link (`/share/<token>/...`) sees the purple mark and never
-// the name, the label or the thread, a tap on its head mark opens nothing.
+// to the assistant the dialog picked and shows the same way. With one
+// assistant the dialog opens on a closed job's criterion with the caret at
+// its end, so typing appends. A rename, a release and a deleted assistant
+// move tooltip, label and menu entries live on the terminals event without
+// a reload, and an unsteered coder shows none of it. A guest of a link
+// (`/share/<token>/...`) sees the purple mark and never the name, the label
+// or the thread, a tap on its head mark opens nothing.
 //
 // Instance: like assistant.js's (tests/e2e/fakes first on PATH for the fake
 // claude, a scratch HOME, its own TMUX_TMPDIR, --projects-dir and
@@ -40,6 +42,7 @@ const SHOTS = process.env.SHOTS_DIR || "";
 const LONG = `Steering lead ${TAG} with a name long enough to be cut on a phone`;
 const RENAMED = `Renamed lead ${TAG}`;
 const OTHER = `Second lead ${TAG}`;
+const CRITERION = `The dialogs <b>all</b> look right ${TAG}`;
 // The fake claude names its session after the first prompt, which the cockpit
 // cuts to the longest name a head shows, so the prompt makes the name long.
 const CODER = `Review the steered work ${TAG} under a coder name that fills the head`;
@@ -614,6 +617,27 @@ L.runFeature("steered-by", async ({ engine, browser, page, run, mobilePage, bag 
       await stayed(page, marker);
       await stayed(mp, phone);
       fx.b = "";
+    });
+
+    await run("a steer with one assistant opens on its old criterion with the caret at its end", async () => {
+      await visit(page, `${BASE}/coders/${fx.coder}`);
+      await postJSON(page, "/assistants/jobs", { form: "steer", assistant: fx.a, terminal: fx.coder, done_when: CRITERION });
+      await postJSON(page, "/assistants/jobs", { form: "release", terminal: fx.coder });
+      await page.waitForFunction(([s, want]) => document.querySelector(s)?.dataset.tabSteerPrefill === want, [tab(fx.coder), CRITERION], { timeout: 15000 });
+      await menuAt(page, tab(fx.coder));
+      await page.locator(".dc-context-menu .dropdown-item", { hasText: /^Steer$/ }).click();
+      await page.waitForSelector("#dc-steer-done-when", { state: "visible", timeout: 5000 });
+      await page.waitForFunction(() => document.activeElement?.id === "dc-steer-done-when", null, { timeout: 5000 });
+      const field = await page.$eval("#dc-steer-done-when", (el) => ({
+        value: el.value, start: el.selectionStart, end: el.selectionEnd, several: !!document.getElementById("dc-steer-assistant"),
+      }));
+      assert(!field.several && field.value === CRITERION && field.start === CRITERION.length && field.end === CRITERION.length,
+        `the field reads ${JSON.stringify(field)}`);
+      await page.keyboard.type("!");
+      const typed = await page.inputValue("#dc-steer-done-when");
+      assert(typed === `${CRITERION}!`, `typing made ${JSON.stringify(typed)}`);
+      await page.keyboard.press("Escape");
+      await page.waitForSelector(".swal2-popup", { state: "hidden", timeout: 5000 });
     });
   } finally {
     await run("cleanup", async () => {

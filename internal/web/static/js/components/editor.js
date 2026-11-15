@@ -6,7 +6,8 @@
 import { notifyError, notifySuccess } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
 import { focusRow, labelNodes, menuJustClosed, openMenu, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
-import { CLOSED_EVENT as DIALOG_CLOSED, available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
+import { CLOSED_EVENT as DIALOG_CLOSED, available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, notice, promptText } from "@dc/dialog";
+import { confirmView, formView, invalid, promptView } from "@dc/prompt-view";
 import { copyPending, copyText, el, escapeHtml, isModEnter, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
@@ -27,9 +28,11 @@ import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPrevie
 import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
 import { showPreview, wirePreviewLinks } from "@dc/editor-preview";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
-import { PROJECT_PLACE, authorHead, commentRow, deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, mayDelete, noteStart, placeNodes, postForgeThread, publishComments, publishQuestion, publishWords, resolved, sortComments, visibleLine, writeLineComment } from "@dc/editor-comments";
+import { authorHead, commentRow, placeNodes, deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, mayDelete, noteStart, publishComments, publishQuestion, publishWords, resolved, sortComments, writeLineComment } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
 import { commentGutter } from "@dc/comment-gutter";
+import { lineBlocks } from "@dc/line-blocks";
+import { editorThreads } from "@dc/editor-threads";
 import { changeList } from "@dc/editor-changes";
 import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-marks";
 import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl, setupSettingsUI } from "@dc/editor-settings";
@@ -116,20 +119,7 @@ async function init(root) {
   const commentModalEl = root.querySelector("[data-editor-comment-modal]");
   const commentModalTitleEl = root.querySelector("[data-editor-comment-title]");
   const commentModalPlaceEl = root.querySelector("[data-editor-comment-place]");
-  const commentModalCodeEl = root.querySelector("[data-editor-comment-code]");
-  const commentModalAuthorEl = root.querySelector("[data-editor-comment-author]");
-  const commentModalLinkEl = root.querySelector("[data-editor-comment-link]");
-  const commentModalHintEl = root.querySelector("[data-editor-comment-hint]");
-  const commentModalCancelBtn = root.querySelector("[data-editor-comment-cancel]");
-  const commentModalTextEl = root.querySelector("[data-editor-comment-text]");
-  const commentModalSaveBtn = root.querySelector("[data-editor-comment-save]");
-  const commentModalResolveRowEl = root.querySelector("[data-editor-comment-resolve-row]");
-  const commentModalResolveEl = root.querySelector("[data-editor-comment-resolve]");
-  const commentModalResolveLabelEl = root.querySelector("[data-editor-comment-resolve-label]");
   const commentModalThreadEl = root.querySelector("[data-editor-comment-thread]");
-  const commentModalInvalidEl = root.querySelector("[data-editor-comment-invalid]");
-  const commentHint = commentModalHintEl ? commentModalHintEl.textContent : "";
-  const commentPlaceholder = commentModalTextEl ? commentModalTextEl.placeholder : "";
   const projectCommentFormEl = root.querySelector("[data-editor-project-comment-form]");
   const projectCommentTextEl = projectCommentFormEl?.querySelector("[data-project-comment-text]");
   const projectCommentAddBtn = projectCommentFormEl?.querySelector("[data-project-comment-add]");
@@ -390,9 +380,9 @@ async function init(root) {
   let commitGrouped = store.get(COMMIT_GROUP_KEY, "") !== "0";
   const commitMsgKey = `dc-editor-commit-msg:${name}`;
   let comments = [];
-  // threadDialog repaints the open thread's dialog when the comments move,
-  // null while none stands.
-  let threadDialog = null;
+  // threads shows the line comment threads under their lines and a project
+  // comment's in the dialog, see @dc/editor-threads.
+  let threads = null;
 
   const tabByPath = (path) => tabs.find((t) => t.path === path) || null;
   const activeTabOf = (g) => {
@@ -1968,7 +1958,7 @@ async function init(root) {
     const fromCommitList = commitOn && commitListEl.contains(document.activeElement);
     const fromRevdiffFilter = revdiffOn && document.activeElement === revdiffFilterEl;
     const fromRevdiffList = revdiffOn && revdiffListEl.contains(document.activeElement);
-    if (!force && tab.dirty && !(await confirmDialog({ title: `Discard changes in "${tab.name}"?`, confirmText: "Discard" }))) {
+    if (!force && tab.dirty && !(await confirmDialog({ title: `Discard changes in "${tab.name}"?`, kind: "danger", confirmText: "Discard" }))) {
       return;
     }
     if (!tabs.includes(tab)) return;
@@ -2335,7 +2325,7 @@ async function init(root) {
 
   // jump is the line the tab should stand on once it is up, which is what the
   // palette hands over: a hit opens where it was found.
-  async function openPath(path, { keepDrawer = false, jump = null } = {}) {
+  async function openPath(path, { keepDrawer = false, jump = null, quiet = false } = {}) {
     if (!keepDrawer) closeDrawer();
     if (tabByPath(path)) {
       placeTab(path, jump);
@@ -2351,7 +2341,7 @@ async function init(root) {
       placeTab(path, jump);
       status("");
     } catch (err) {
-      status(err.message, "error");
+      status(quiet ? "" : err.message, quiet ? "" : "error");
     } finally {
       opening.delete(path);
     }
@@ -4312,6 +4302,7 @@ async function init(root) {
       const holder = document.createElement("div");
       holder.innerHTML = text;
       forgeFragment = holder;
+      threads?.offer(holder.querySelector("[data-forge-threads]")?.outerHTML || "");
     } catch {
       return;
     } finally {
@@ -4717,20 +4708,15 @@ async function init(root) {
   async function deleteTagDialog(commit, name, paintChips) {
     let remote = false;
     if (dialogAvailable()) {
-      const result = await fireDialog({
+      const result = await fireDialog(confirmView({
         title: `Delete "${name}"?`,
-        html: `<div class="text-secondary small">The tag goes, the commit stays.</div>`
-          + `<label class="form-check text-start mt-3 mb-0"><input class="form-check-input" type="checkbox" data-tag-remote checked>`
-          + `<span class="form-check-label">Delete it on the remote too</span></label>`,
-        showCancelButton: true,
-        confirmButtonText: "Delete tag",
-        cancelButtonText: "Cancel",
-        reverseButtons: true,
-        preConfirm: () => ({ remote: window.Swal.getHtmlContainer().querySelector("[data-tag-remote]").checked }),
-      });
-      if (!result.isConfirmed || !result.value) return;
-      ({ remote } = result.value);
-    } else if (!await confirmDialog({ title: `Delete "${name}"?`, confirmText: "Delete tag" })) {
+        text: "The tag goes, the commit stays.",
+        check: { label: "Delete it on the remote too", checked: true, mark: "data-tag-remote" },
+        kind: "delete", confirmText: "Delete tag",
+      }));
+      if (!result.isConfirmed) return;
+      remote = result.value === 1;
+    } else if (!await confirmDialog({ title: `Delete "${name}"?`, kind: "delete", confirmText: "Delete tag" })) {
       return;
     }
     const data = await gitRun("tag/delete", { tag: name, remote }, `Deleting "${name}"…`, "tag");
@@ -4748,25 +4734,25 @@ async function init(root) {
     let push = published;
     if (dialogAvailable()) {
       const result = await fireDialog({
-        title: "Tag this commit",
-        input: "text",
-        inputPlaceholder: "v1.0.0",
-        html: `<div class="text-secondary small text-truncate">${escapeHtml(commit.short)} · ${escapeHtml(commit.summary || "")}</div>`
-          + `<input class="form-control mt-3" data-tag-message placeholder="Message, optional" aria-label="Tag message">`
-          + `<div class="text-secondary small mt-1 text-start">A message makes it an annotated tag, which is what a release is.</div>`
-          + `<label class="form-check text-start mt-3 mb-0"><input class="form-check-input" type="checkbox" data-tag-push${push ? " checked" : ""}>`
-          + `<span class="form-check-label">Push the tag</span></label>`,
-        showCancelButton: true,
-        confirmButtonText: "Create tag",
-        cancelButtonText: "Cancel",
-        reverseButtons: true,
+        ...promptView({
+          title: "Tag this commit",
+          icon: "tag",
+          details: [{ as: "item", icon: "git-commit", label: "Commit", value: commit.summary || "", id: commit.short }],
+          placeholder: "v1.0.0",
+          after: [
+            { as: "field", mark: "data-tag-message", aria: "Tag message", placeholder: "Message, optional" },
+            { as: "note", value: "A message makes it an annotated tag, which is what a release is." },
+          ],
+          check: { label: "Push the tag", checked: push, mark: "data-tag-push" },
+          confirmText: "Create tag",
+        }),
         preConfirm: (value) => {
           const normalized = normalizeBranchName(value);
           if (!normalized) {
-            window.Swal.showValidationMessage("A tag name is required.");
+            window.Swal.showValidationMessage(invalid("A tag name is required."));
             return false;
           }
-          const box = window.Swal.getHtmlContainer();
+          const box = window.Swal.getPopup();
           return {
             name: normalized,
             message: box.querySelector("[data-tag-message]").value.trim(),
@@ -5219,11 +5205,11 @@ async function init(root) {
 
   async function doPush(force) {
     if (force) {
-      const target = gitBranch && gitBranch.upstream ? `"${escapeHtml(gitBranch.upstream)}"` : "the upstream";
+      const target = gitBranch && gitBranch.upstream ? `"${gitBranch.upstream}"` : "the upstream";
       const ok = await confirmDialog({
         title: "Force push?",
-        html: `<div class="text-secondary">Overwrites ${target} where it moved away. It runs as force-with-lease: work this repository has not fetched is never overwritten.</div>`,
-        confirmText: "Force push",
+        warning: `Overwrites ${target} where it moved away. It runs as force-with-lease: work this repository has not fetched is never overwritten.`,
+        kind: "danger", confirmText: "Force push",
       });
       if (!ok) return;
     }
@@ -5274,19 +5260,21 @@ async function init(root) {
     let name = "";
     if (dialogAvailable()) {
       const result = await fireDialog({
-        title: "New branch",
-        input: "text",
-        inputPlaceholder: "feature/name",
-        html: `<div class="text-secondary small">Created at the current state and switched to.</div>`
-          + `<div class="small mt-2" data-branch-preview hidden>Will be created as <code></code></div>`,
-        showCancelButton: true,
-        confirmButtonText: "Create and switch",
-        cancelButtonText: "Cancel",
-        reverseButtons: true,
+        ...promptView({
+          title: "New branch",
+          icon: "git-branch",
+          tone: "git",
+          text: "Created at the current state and switched to.",
+          placeholder: "feature/name",
+          after: [{ as: "note", value: "Will be created as", mark: "data-branch-preview", hidden: true }],
+          confirmText: "Create and switch",
+        }),
         didOpen: () => {
           const input = window.Swal.getInput();
-          const preview = window.Swal.getHtmlContainer().querySelector("[data-branch-preview]");
-          const code = preview.querySelector("code");
+          const preview = window.Swal.getPopup().querySelector("[data-branch-preview]");
+          const code = document.createElement("span");
+          code.className = "font-monospace";
+          preview.querySelector("[data-approval-value]").append(" ", code);
           input.addEventListener("input", () => {
             const normalized = normalizeBranchName(input.value);
             code.textContent = normalized;
@@ -5296,7 +5284,7 @@ async function init(root) {
         preConfirm: (value) => {
           const normalized = normalizeBranchName(value);
           if (!normalized) {
-            window.Swal.showValidationMessage("A branch name is required.");
+            window.Swal.showValidationMessage(invalid("A branch name is required."));
             return false;
           }
           return normalized;
@@ -5322,8 +5310,8 @@ async function init(root) {
   async function cloneDialog() {
     const url = await promptText({
       title: "Clone repository",
-      html: `<div class="text-secondary small">Cloned straight into this project folder, which has to be empty. Authentication is whatever git on this host can already do.</div>`,
-      placeholder: "git@host:owner/repo.git",
+      text: "Cloned straight into this project folder, which has to be empty. Authentication is whatever git on this host can already do.",
+      icon: "cloud-download", tone: "git", placeholder: "git@host:owner/repo.git",
       confirmText: "Clone",
     });
     if (!url) return;
@@ -5446,30 +5434,30 @@ async function init(root) {
         if (kind === "renamed") goneAfter.push(bare(entry.path));
       }
     }
-    let html = "";
+    let warning = "";
     let confirmText = "Revert";
     if (!isDir) {
       const entry = restored.concat(removed).find((e) => bare(e.path) === path);
       const kind = entry ? gitKind(entry) : fileKind(path);
       if (kind === "untracked" || kind === "added") {
-        html = `<div class="text-secondary">"${escapeHtml(path)}" has no state in HEAD. Reverting deletes the file.</div>`;
+        warning = `"${path}" has no state in HEAD. Reverting deletes the file.`;
         confirmText = "Delete file";
       } else if (kind === "deleted") {
-        html = `<div class="text-secondary">"${escapeHtml(path)}" comes back at its state in HEAD.</div>`;
+        warning = `"${path}" comes back at its state in HEAD.`;
       } else if (kind === "renamed" && entry && entry.from) {
-        html = `<div class="text-secondary">The rename is taken back: "${escapeHtml(entry.from)}" comes back and "${escapeHtml(path)}" is deleted. Uncommitted changes are lost.</div>`;
+        warning = `The rename is taken back: "${entry.from}" comes back and "${path}" is deleted. Uncommitted changes are lost.`;
       } else {
-        html = `<div class="text-secondary">"${escapeHtml(path)}" goes back to its state in HEAD, staged edits included. Uncommitted changes are lost.</div>`;
+        warning = `"${path}" goes back to its state in HEAD, staged edits included. Uncommitted changes are lost.`;
       }
     } else {
       const parts = [];
       if (restored.length) parts.push(`${restored.length} tracked ${restored.length === 1 ? "change is" : "changes are"} restored`);
       if (removed.length) parts.push(`${removed.length} ${removed.length === 1 ? "file" : "files"} without a state in HEAD ${removed.length === 1 ? "is" : "are"} deleted`);
-      html = parts.length
-        ? `<div class="text-secondary">Everything under "${escapeHtml(path)}" goes back to HEAD: ${parts.join(", ")}. Uncommitted changes are lost.</div>`
-        : `<div class="text-secondary">Everything under "${escapeHtml(path)}" goes back to its state in HEAD; files that have no state there are deleted.</div>`;
+      warning = parts.length
+        ? `Everything under "${path}" goes back to HEAD: ${parts.join(", ")}. Uncommitted changes are lost.`
+        : `Everything under "${path}" goes back to its state in HEAD; files that have no state there are deleted.`;
     }
-    const ok = await confirmDialog({ title: `Revert "${path}"?`, html, confirmText });
+    const ok = await confirmDialog({ title: `Revert "${path}"?`, warning, kind: confirmText === "Delete file" ? "delete" : "danger", confirmText });
     if (!ok) return;
     const data = await gitRun("revert", { path }, `Reverting "${path}"…`, "revert");
     if (!data) return;
@@ -5598,9 +5586,8 @@ async function init(root) {
       : `${Math.round(kib).toLocaleString()} KiB`;
     return confirmDialog({
       title: "Build this diff?",
-      html: `<div class="text-secondary">This file is ${escapeHtml(reason)}. Diffing it can take a while on a slow device.</div>`,
+      text: `This file is ${reason}. Diffing it can take a while on a slow device.`,
       confirmText: "Diff anyway",
-      icon: "question",
     });
   }
 
@@ -5948,7 +5935,6 @@ async function init(root) {
   const commentsFor = (path) => comments.filter((c) => !c.project && c.path === path);
   const commentAt = (path, line) => commentsFor(path).find((c) => c.line === line && !c.forge) || null;
   const threadsAt = (path, line) => commentsFor(path).filter((c) => c.line === line);
-  const mayChange = (c) => !c.forge && can("comments") && (!guest || !!c.mine);
   const ownComments = () => comments.filter((c) => !c.forge);
   // An author marks a guest's note, only the owner's own ones without a
   // reply publish, a project comment as a general one.
@@ -5958,15 +5944,6 @@ async function init(root) {
     const el = forgeFragment?.querySelector("[data-forge-publish]");
     return el ? { forge: el.dataset.forgePublishForge, noun: el.dataset.forgePublishNoun, ref: el.dataset.forgePublishRef } : null;
   };
-  const threadsOffer = () => {
-    const el = forgeFragment?.querySelector("[data-forge-threads]");
-    return el ? {
-      hint: el.dataset.forgeThreadsHint,
-      reply: el.hasAttribute("data-forge-threads-reply"),
-      resolve: el.hasAttribute("data-forge-threads-resolve"),
-    } : null;
-  };
-
   function paintComments() {
     commentsCountEl.textContent = comments.length ? String(comments.length) : "";
     commentsCountEl.hidden = comments.length === 0;
@@ -5976,7 +5953,7 @@ async function init(root) {
       g.editor.setComments(tab ? commentsFor(tab.path).map((c) => ({ line: c.line, outdated: !!c.outdated, resolved: resolved(c) })) : null);
     });
     if (sheetKind === "comments") renderCommentsSheet();
-    if (threadDialog) threadDialog();
+    threads?.paint();
   }
 
   async function loadComments() {
@@ -6103,9 +6080,11 @@ async function init(root) {
   }
 
   // A thread deleted on another device meanwhile answers gone, the list is
-  // read again instead of keeping the stale one.
-  async function writeComment(path, payload, failed) {
-    const data = await writeLineComment(`${base}${path}`, payload, failed);
+  // read again instead of keeping the stale one. It answers the thread as
+  // written, true where it is gone, false after it handed the refusal to
+  // refused, a toast unless the caller shows it at its field.
+  async function writeComment(path, payload, failed, refused) {
+    const data = await writeLineComment(`${base}${path}`, payload, failed, refused);
     if (!data) return false;
     if (data.gone || !data.comment) {
       await loadComments();
@@ -6115,11 +6094,11 @@ async function init(root) {
     if (idx >= 0) comments[idx] = data.comment;
     else comments.push(data.comment);
     paintComments();
-    return true;
+    return data.comment;
   }
 
-  const saveComment = (payload) => writeComment("/comments", payload, "The comment could not be saved.");
-  const saveReply = (thread, text, id = "") => writeComment("/comments/reply", { thread: thread.id, id, text }, "The reply could not be saved.");
+  const saveComment = (payload, refused) => writeComment("/comments", payload, "The comment could not be saved.", refused);
+  const saveReply = (thread, text, id = "", refused) => writeComment("/comments/reply", { thread: thread.id, id, text }, "The reply could not be saved.", refused);
   const resolveThread = (thread, done) => writeComment("/comments/resolve", { id: thread.id, resolved: done }, "The thread could not be resolved.");
   const removeReply = (thread, reply) => writeComment("/comments/reply/delete", { thread: thread.id, id: reply.id }, "The reply could not be deleted.");
 
@@ -6129,212 +6108,47 @@ async function init(root) {
     paintComments();
   }
 
-  // submit answers nothing to keep the dialog open, so a refused write keeps
-  // what was typed.
-  function runCommentModal(editable, submit) {
-    return new Promise((resolve) => {
-      const modal = window.bootstrap.Modal.getOrCreateInstance(commentModalEl);
-      const wires = new AbortController();
-      let result = null;
-      let sending = false;
-      const send = async () => {
-        if (sending) return;
-        sending = commentModalSaveBtn.disabled = true;
-        const outcome = await submit(commentModalTextEl.value.trim());
-        sending = commentModalSaveBtn.disabled = false;
-        if (!outcome || wires.signal.aborted) return;
-        result = outcome;
-        modal.hide();
-      };
-      if (editable) {
-        commentModalSaveBtn.addEventListener("click", send, { signal: wires.signal });
-        commentModalTextEl.addEventListener("input", () => commentModalTextEl.classList.remove("is-invalid"), { signal: wires.signal });
-        commentModalTextEl.addEventListener("keydown", (ev) => {
-          if (isModEnter(ev)) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            send();
-          }
-        }, { signal: wires.signal });
-      }
-      commentModalEl.addEventListener("shown.bs.modal", () => {
-        if (pointerMedia.matches) commentModalTextEl.focus();
-      }, { once: true, signal: wires.signal });
-      commentModalEl.addEventListener("hidden.bs.modal", () => {
-        wires.abort();
-        threadDialog = null;
-        resolve(result);
-      }, { once: true });
-      modal.show();
-    });
-  }
-
-  function markInvalid() {
-    commentModalTextEl.classList.add("is-invalid");
-    commentModalTextEl.focus();
-    return null;
-  }
-
-  function commentModalHead(path, line, lineText) {
-    commentModalPlaceEl.hidden = !path;
-    commentModalPlaceEl.replaceChildren(...(path ? placeNodes(path, line) : []));
-    commentModalPlaceEl.title = commentModalPlaceEl.textContent;
-    const code = (lineText || "").trim();
-    commentModalCodeEl.replaceChildren(...visibleLine(code));
-    commentModalCodeEl.hidden = !code;
-    commentModalTextEl.classList.remove("is-invalid");
-    commentModalAuthorEl.classList.remove("text-green");
-  }
-
-  function openCommentModal({ path, line, lineText }) {
-    commentModalTitleEl.textContent = "Line comment";
-    commentModalHead(path, line, lineText);
-    commentModalAuthorEl.hidden = true;
-    commentModalLinkEl.hidden = true;
-    commentModalThreadEl.hidden = true;
-    commentModalTextEl.hidden = false;
-    commentModalTextEl.value = "";
-    commentModalSaveBtn.textContent = "Add";
-    commentModalTextEl.readOnly = commentModalSaveBtn.hidden = commentModalHintEl.hidden = false;
-    commentModalTextEl.placeholder = commentPlaceholder;
-    commentModalHintEl.textContent = commentHint;
-    commentModalCancelBtn.textContent = "Cancel";
-    commentModalInvalidEl.textContent = "A comment is required.";
-    commentModalResolveRowEl.hidden = true;
-    return runCommentModal(true, async (text) => (text ? { text } : markInvalid()));
-  }
-
   // A note's author: you for your own, the owner for a guest, a guest by the
   // name of its link.
   const noteName = (note) => (note.mine || (!guest && !note.author) ? "You" : note.author || "Owner");
 
-  // openThread opens a thread: the whole conversation, a field for a reply
-  // and the switch that resolves the thread or opens it again. A pencil edits
-  // a note of your own or a guest's in the same field, a reply's bin closes
-  // the dialog for the confirm. A thread of the forge takes its reply and its
-  // resolve there, the owner's alone and only where the forge takes them, and
-  // is never opened again from here. The notes are the server's rendering of
-  // the thread, the assistant's project view shows the same, pulled again
-  // while the dialog stands and the comments move.
-  async function openThread(thread) {
-    let editing = null;
-    let current = thread;
-    const live = () => comments.find((c) => c.id === current.id || c.was === current.id) || current;
-    const { forge } = thread;
-    const offer = forge ? threadsOffer() : null;
-    const writes = forge ? !guest && !!offer?.reply && !!forge.thread : can("comments");
-    const mayToggle = (c) => !editing && (forge ? writes && offer.resolve && !forge.unresolvable && !resolved(c) : mayChange(c));
-    const wires = new AbortController();
-    let dropReply = null;
-    const paintControls = () => {
-      const c = current;
-      const toggles = mayToggle(c);
-      commentModalResolveRowEl.hidden = !toggles;
-      commentModalResolveLabelEl.textContent = resolved(c) ? "Reopen the thread" : "Resolve the thread";
-      const toggling = toggles && commentModalResolveEl.checked && !commentModalTextEl.value.trim();
-      commentModalSaveBtn.textContent = editing ? "Save" : toggling ? (resolved(c) ? "Reopen" : "Resolve") : "Reply";
-      commentModalInvalidEl.textContent = editing && !editing.id ? "A comment is required." : "A reply is required.";
-    };
-    const paintState = () => {
-      current = live();
-      commentModalAuthorEl.textContent = resolved(current) ? "Resolved" : "";
-      commentModalAuthorEl.hidden = !resolved(current);
-      if (writes) paintControls();
-    };
-    let notesAsked = 0;
-    const paint = async () => {
-      paintState();
-      const asked = ++notesAsked;
-      let html;
-      try {
-        html = await getText(`${base}/comments/thread?id=${encodeURIComponent(current.id)}`, { signal: wires.signal });
-      } catch {
+  // openThread shows a thread: a line comment's unfolded under its line, the
+  // file opened there first, its reply open where asked. A project comment's,
+  // and one whose file or line is gone, stands in the dialog.
+  async function openThread(thread, { reply = false } = {}) {
+    if (!thread.project) {
+      await jumpToComment(thread, { quiet: true });
+      const tab = commentableTab(tabByPath(thread.path));
+      const placed = comments.find((c) => c.id === thread.id) || thread;
+      if (tab && inFront(tab) && tab.group.editor.canBlocks && placed.line >= 1 && placed.line <= tab.group.editor.snapshot(tab, true).lines) {
+        threads.reveal(tab, placed, { reply });
         return;
       }
-      if (asked !== notesAsked || wires.signal.aborted) return;
-      commentModalThreadEl.innerHTML = html;
-      await window.app?.loadElements?.(commentModalThreadEl);
-    };
-    const edit = (id) => {
-      const c = live();
-      const note = id ? (c.replies || []).find((r) => r.id === id) : c;
-      if (!note) return;
-      editing = { id };
-      commentModalTitleEl.textContent = id ? "Edit reply" : c.project ? "Edit project comment" : "Edit line comment";
-      commentModalTextEl.value = note.text;
-      commentModalTextEl.classList.remove("is-invalid");
-      paintState();
-      commentModalTextEl.focus();
-    };
-    commentModalThreadEl.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-comment-note-edit], [data-comment-note-drop]");
-      if (!button) return;
-      const id = button.closest("[data-comment-note]")?.dataset.commentNote || "";
-      if (button.hasAttribute("data-comment-note-edit")) {
-        edit(id);
-        return;
-      }
-      dropReply = (live().replies || []).find((r) => r.id === id) || null;
-      if (dropReply) window.bootstrap.Modal.getOrCreateInstance(commentModalEl).hide();
-    }, { signal: wires.signal });
-    commentModalTitleEl.textContent = thread.project ? PROJECT_PLACE : "Line comment";
-    if (thread.project) commentModalHead("", 0, "");
-    else commentModalHead(thread.path, thread.line, currentLineText(thread.path, thread.line, thread));
-    commentModalAuthorEl.classList.add("text-green");
-    commentModalLinkEl.hidden = !forge?.url;
-    commentModalLinkEl.href = forge?.url || "#";
-    commentModalLinkEl.lastChild.textContent = forge ? `Open the thread on ${forge.label}` : "";
-    commentModalThreadEl.hidden = false;
-    commentModalTextEl.value = "";
-    commentModalTextEl.hidden = !writes;
-    if (can("comments")) {
-      commentModalSaveBtn.hidden = !writes;
-      commentModalHintEl.hidden = !(writes && forge);
-      commentModalResolveRowEl.hidden = true;
-      commentModalCancelBtn.textContent = writes ? "Cancel" : "Close";
     }
-    if (writes) {
-      commentModalTextEl.readOnly = false;
-      if (forge) commentModalHintEl.textContent = offer.hint;
-      commentModalTextEl.placeholder = "Your reply";
-      commentModalResolveEl.checked = false;
-    }
-    commentModalThreadEl.replaceChildren();
-    await paint();
-    threadDialog = paint;
-    if (writes) {
-      commentModalTextEl.addEventListener("input", paintControls, { signal: wires.signal });
-      commentModalResolveEl.addEventListener("change", paintControls, { signal: wires.signal });
-    }
-    const outcome = await runCommentModal(writes, async (text) => {
-      const c = live();
-      if (editing) {
-        if (!text) return markInvalid();
-        const note = editing.id ? (c.replies || []).find((r) => r.id === editing.id) : c;
-        if (note && note.text === text) return true;
-        const saved = editing.id
-          ? await saveReply(c, text, editing.id)
-          : await saveComment(c.project ? { id: c.id, project: true, text } : { id: c.id, path: c.path, line: c.line, lineText: currentLineText(c.path, c.line, c), text });
-        return saved || null;
-      }
-      const toggle = mayToggle(c) && commentModalResolveEl.checked;
-      if (!text && !toggle) return markInvalid();
-      if (forge) return (await postForgeThread(`${forgeBase}/thread`, { thread: c.forge.thread, body: text, resolve: toggle })) || null;
-      if (text && !(await saveReply(c, text))) return null;
-      if (toggle && !(await resolveThread(c, !resolved(c)))) return text ? true : null;
-      return true;
-    });
-    wires.abort();
-    if (!outcome && dropReply) await deleteReplyDialog(live(), dropReply);
+    await threads.openDialog(thread);
   }
 
-  async function commentOnLine(path, line) {
+  // commentOnLine is the keyboard's way to a line: the reply of the line's
+  // comment, else the field of a new comment.
+  function commentOnLine(path, line) {
+    const tab = commentableTab(tabByPath(path));
+    if (!tab || !can("comments")) return;
     const existing = commentAt(path, line);
-    if (existing) return openThread(existing);
-    const lineText = currentLineText(path, line, null);
-    const outcome = await openCommentModal({ path, line, lineText });
-    if (!outcome) return;
-    await saveComment({ id: "", path, line, lineText, text: outcome.text });
+    if (existing) threads.reveal(tab, existing, { reply: true });
+    else threads.compose(tab, line);
+  }
+
+  // The dialog of a thread that stands on no line, its card the threads' own,
+  // titled by where the thread stands. It answers once the dialog closed.
+  function showCommentDialog(thread) {
+    commentModalTitleEl.textContent = thread.project ? "Project comment" : "Line comment";
+    commentModalPlaceEl.hidden = !!thread.project;
+    commentModalPlaceEl.replaceChildren(...(thread.project ? [] : placeNodes(thread.path, thread.line)));
+    commentModalPlaceEl.title = commentModalPlaceEl.textContent;
+    return new Promise((resolve) => {
+      commentModalEl.addEventListener("hidden.bs.modal", () => resolve(), { once: true });
+      window.bootstrap.Modal.getOrCreateInstance(commentModalEl).show();
+    });
   }
 
   const publishItem = (comment, label) => {
@@ -6406,8 +6220,8 @@ async function init(root) {
   // yours.
   function openGutterMenu(tab, line, x, y) {
     const existing = commentAt(tab.path, line);
-    const threads = threadsAt(tab.path, line).sort((a, b) => Number(!!a.forge) - Number(!!b.forge));
-    const many = threads.length > 1;
+    const onLine = threadsAt(tab.path, line).sort((a, b) => Number(!!a.forge) - Number(!!b.forge));
+    const many = onLine.length > 1;
     const whose = (c) => (c.forge ? `${c.author || c.forge.label}'s` : noteName(c) === "You" ? "your" : c.author ? `${c.author}'s` : "the owner's");
     const openItem = (c) => ({
       label: many ? `Open ${whose(c)} thread: ${noteStart(c.text, 24)}` : "Open thread",
@@ -6420,9 +6234,9 @@ async function init(root) {
       y,
       signal,
       items: [
-        !many && threads[0]?.author && { label: `Comment by ${threads[0].author}`, icon: threads[0].forge ? threads[0].forge.icon : "ti-user", disabled: true },
-        ...threads.map(openItem),
-        !existing && can("comments") && { label: "Add line comment", icon: "ti-message-plus", hint: "Ctrl+Alt+C", action: () => void commentOnLine(tab.path, line) },
+        !many && onLine[0]?.author && { label: `Comment by ${onLine[0].author}`, icon: onLine[0].forge ? onLine[0].forge.icon : "ti-user", disabled: true },
+        ...onLine.map(openItem),
+        !existing && can("comments") && { label: "Add line comment", icon: "ti-message-plus", hint: "Ctrl+Alt+C", action: () => threads.compose(tab, line) },
         existing && publishItem(existing, "Publish comment"),
         existing && mayDelete(existing) && { label: "Delete comment", icon: "ti-trash", danger: true, action: () => void deleteCommentDialog(existing) },
         copyPathItem("Copy path:line", `${tab.path}:${line}`),
@@ -6454,7 +6268,7 @@ async function init(root) {
     const cell = e.target.closest(".cm-gutterElement");
     const rect = cell ? cell.getBoundingClientRect() : null;
     const line = editor.lineAtGutter(gutters, rect ? rect.top + rect.height / 2 : e.clientY);
-    if (!line) return;
+    if (!line || threads.press(tab, line)) return;
     openGutterMenu(tab, line, e.clientX, e.clientY);
   }
 
@@ -6473,16 +6287,16 @@ async function init(root) {
     if (!count) return;
     if (!(await confirmDialog({
       title: "Delete all comments?",
-      text: (count === 1 ? "This removes the one comment of this project." : `This removes all ${count} comments of this project.`)
+      warning: (count === 1 ? "This removes the one comment of this project." : `This removes all ${count} comments of this project.`)
         + (comments.length > count ? " The review threads of the forge stay." : ""),
-      confirmText: "Delete",
+      kind: "delete", confirmText: "Delete",
     }))) return;
     await deleteComments([], { all: true });
   }
 
-  async function jumpToComment(comment) {
+  async function jumpToComment(comment, { quiet = false } = {}) {
     closeSheet();
-    await openPath(comment.path);
+    await openPath(comment.path, { quiet });
     const tab = commentableTab(tabByPath(comment.path));
     if (!tab) return;
     editor.jumpTo(comment.line, 0);
@@ -6877,15 +6691,16 @@ async function init(root) {
   function askReloadOverBuffer(path) {
     return confirmDialog({
       title: `"${path}" changed on disk.`,
-      html: `<div class="text-secondary">Somebody wrote the file after you opened it, a coder or git, and nothing has been saved. <em>Reload</em> replaces what is in the editor with what is on the disk, so your unsaved changes are gone. <em>Cancel</em> keeps them and writes nothing.</div>`,
-      confirmText: "Reload",
+      text: "Somebody wrote the file after you opened it, a coder or git, and nothing has been saved.",
+      warning: "Reload replaces what is in the editor with what is on the disk, so your unsaved changes are gone. Cancel keeps them and writes nothing.",
+      kind: "danger", confirmText: "Reload",
     });
   }
 
   function askRecreateFile(path) {
     return confirmDialog({
       title: `"${path}" no longer exists on the server.`,
-      html: `<div class="text-secondary">The file was deleted after you opened it, by a coder or by git, and nothing has been written. <em>Create again</em> writes what is in the editor as a new file. <em>Cancel</em> keeps the buffer and writes nothing.</div>`,
+      text: "The file was deleted after you opened it, by a coder or by git, and nothing has been written. Create again writes what is in the editor as a new file. Cancel keeps the buffer and writes nothing.",
       confirmText: "Create again",
     });
   }
@@ -7045,7 +6860,7 @@ async function init(root) {
   }
 
   async function deletePath(targetPath) {
-    if (!(await confirmDialog({ title: `Delete "${targetPath}"?`, confirmText: "Delete" }))) return;
+    if (!(await confirmDialog({ title: `Delete "${targetPath}"?`, kind: "delete", confirmText: "Delete" }))) return;
     status("Deleting…");
     try {
       const res = await postForm(`${base}/delete`, { path: targetPath });
@@ -7188,10 +7003,10 @@ async function init(root) {
     const where = dir || "The project root";
     return confirmDialog({
       title: `Replace "${name}"?`,
-      text: isDir
+      warning: isDir
         ? `${where} already holds a folder called ${name}. Everything in it is replaced.`
         : `${where} already holds a file called ${name}.`,
-      confirmText: "Replace",
+      kind: "danger", confirmText: "Replace",
     });
   }
 
@@ -7248,7 +7063,7 @@ async function init(root) {
   }
 
   async function createFile(dir = targetDir()) {
-    const fileName = await promptName("file", dir);
+    const fileName = await promptName("file", dir, name);
     if (!fileName) return;
     const path = dir ? `${dir}/${fileName}` : fileName;
     status("Creating…");
@@ -7265,7 +7080,7 @@ async function init(root) {
   }
 
   async function createFolder(dir = targetDir()) {
-    const folderName = await promptName("folder", dir);
+    const folderName = await promptName("folder", dir, name);
     if (!folderName) return;
     const path = dir ? `${dir}/${folderName}` : folderName;
     status("Creating…");
@@ -7371,48 +7186,40 @@ async function init(root) {
       await uploadPlain(files, dir);
       return;
     }
-    const where = dir ? `${dir}/` : "project root";
     // Names already in the target folder are named up front, so the upload asks
     // once instead of failing per file. A drop that collides opens the dialog
     // even though it would otherwise upload straight away.
     const taken = new Set((await listDir(dir).catch(() => [])).map((entry) => entry.name));
     const clashes = nested ? [] : files.filter((file) => taken.has(file.name));
-    const content = document.createElement("div");
-    const target = document.createElement("div");
-    target.className = "text-secondary small mb-3";
-    target.innerHTML = `in <code>${escapeHtml(where)}</code>`;
-    const list = document.createElement("div");
-    list.className = "editor-upload-list";
-    items.forEach((item, index) => list.appendChild(uploadItem(item.file, index, item.rel)));
-    content.append(target, list);
-    if (clashes.length) {
-      const warn = document.createElement("div");
-      warn.className = "text-warning small mt-3 text-break";
-      warn.dataset.uploadClash = String(clashes.length);
-      warn.textContent = clashes.length === 1
-        ? `${clashes[0].name} is already there and will be replaced.`
-        : `${clashes.length} files are already there and will be replaced: ${clashes.map((f) => f.name).join(", ")}`;
-      content.appendChild(warn);
-    }
+    const warning = clashes.length === 1
+      ? `${clashes[0].name} is already there and will be replaced.`
+      : `${clashes.length} files are already there and will be replaced: ${clashes.map((f) => f.name).join(", ")}`;
+    const ask = {
+      title: files.length === 1 ? "Upload 1 file" : `Upload ${files.length} files`,
+      details: [
+        dir ? { as: "folder", label: "Folder", value: `${dir}/` } : { as: "project", label: "Project", value: name },
+        ...(clashes.length ? [{ as: "warning", value: warning, mark: "data-upload-clash" }] : []),
+        ...items.map((item) => ({
+          as: "item", icon: "file", label: "File", mono: true, progress: true, mark: "data-upload-item",
+          value: item.rel ? `${item.rel}/${item.file.name}` : item.file.name, id: formatSize(item.file.size),
+        })),
+      ],
+      confirmText: clashes.length ? "Replace" : "Upload",
+    };
     let uploaded = 0;
     const result = await fireDialog({
-      title: files.length === 1 ? "Upload 1 file" : `Upload ${files.length} files`,
-      html: content,
-      showCancelButton: true,
-      confirmButtonText: clashes.length ? "Replace" : "Upload",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
+      ...(clashes.length ? confirmView({ ...ask, kind: "danger" }) : formView({ ...ask, icon: "upload" })),
       showLoaderOnConfirm: true,
       allowOutsideClick: () => !window.Swal.isLoading(),
       didOpen: () => {
         if (!confirmFirst && !clashes.length) window.Swal.clickConfirm();
       },
       preConfirm: async () => {
-        const results = await runUploads(items, dir, list, clashes.length > 0);
+        const results = await runUploads(items, dir, window.Swal.getPopup(), clashes.length > 0);
         uploaded += results.filter((r) => r.status === "fulfilled" && r.value).length;
         const failed = results.filter((r) => r.status === "rejected");
         if (failed.length > 0) {
-          window.Swal.showValidationMessage(failed[0].reason.message);
+          window.Swal.showValidationMessage(invalid(failed[0].reason.message));
           return false;
         }
         return true;
@@ -7454,14 +7261,15 @@ async function init(root) {
 
   // Already uploaded rows keep data-done, so a retry after a partial failure
   // only sends the files that are still missing.
-  function runUploads(items, dir, list, overwrite = false) {
+  function runUploads(items, dir, popup, overwrite = false) {
+    const rows = popup.querySelectorAll("[data-upload-item]");
     const jobs = items.map(({ file, rel }, index) => {
-      const item = list.querySelector(`[data-file-index="${index}"]`);
+      const item = rows[index];
       if (item.dataset.done === "true") return Promise.resolve(null);
       delete item.dataset.error;
       const bar = item.querySelector(".progress-bar");
       const outer = item.querySelector(".progress");
-      const statusEl = item.querySelector("[data-file-status]");
+      const statusEl = item.querySelector(".dc-ask-id");
       statusEl.textContent = "Uploading";
       const into = rel ? (dir ? `${dir}/${rel}` : rel) : dir;
       return uploadOne(file, into, overwrite, !!rel, (e) => {
@@ -7517,34 +7325,6 @@ async function init(root) {
       form.append("files", file, file.name);
       xhr.send(form);
     });
-  }
-
-  function uploadItem(file, index, rel) {
-    const item = document.createElement("div");
-    item.className = "editor-upload-item";
-    item.dataset.fileIndex = String(index);
-    const header = document.createElement("div");
-    header.className = "d-flex justify-content-between gap-2 small mb-1";
-    const nameEl = document.createElement("div");
-    nameEl.className = "text-truncate";
-    nameEl.textContent = rel ? `${rel}/${file.name}` : file.name;
-    const statusEl = document.createElement("div");
-    statusEl.className = "text-secondary text-nowrap";
-    statusEl.dataset.fileStatus = "";
-    statusEl.textContent = formatSize(file.size);
-    const outer = document.createElement("div");
-    outer.className = "progress";
-    outer.setAttribute("role", "progressbar");
-    outer.setAttribute("aria-valuemin", "0");
-    outer.setAttribute("aria-valuemax", "100");
-    outer.setAttribute("aria-valuenow", "0");
-    const bar = document.createElement("div");
-    bar.className = "progress-bar";
-    bar.style.width = "0%";
-    header.append(nameEl, statusEl);
-    outer.append(bar);
-    item.append(header, outer);
-    return item;
   }
 
   function expandTo(dir) {
@@ -8107,11 +7887,11 @@ async function init(root) {
   // to be right the moment somebody switches modes or jumps into a hit, both of
   // which read the cache back, so this half is synchronous.
   function paletteDraft() {
+    // The two texts belong to find in files, another mode's filter is no search.
+    const held = findsInFiles() ? null : searchDraft || {};
     return {
-      // While a chooser borrows the field, the query is the parked one: the
-      // chooser's filter is nobody's search.
-      query: currentQuery(),
-      replace: quickOpenReplaceInput.value,
+      query: held ? held.query || "" : currentQuery(),
+      replace: held ? held.replace || "" : quickOpenReplaceInput.value,
       folder: scopeFolder,
       mask: maskPatterns.join(", "),
       regex: !!editorSettings.search_regex,
@@ -8923,9 +8703,10 @@ async function init(root) {
       scheduleSearch(0, single);
     } catch (err) {
       if (err.blocked && err.blocked.length) {
-        await fireDialog({
+        await notice({
           title: "Unsaved files stand in the way",
-          html: `<div class="text-secondary">Nothing was replaced. Save or close these first:<br><code>${escapeHtml(err.blocked.join(", "))}</code></div>`,
+          text: "Nothing was replaced. Save or close these first.",
+          details: err.blocked.map((path) => ({ as: "item", icon: "file", label: "File", value: path, mono: true })),
           confirmText: "Got it",
         });
         return;
@@ -8941,8 +8722,8 @@ async function init(root) {
     const scope = `${countLabel(lastSearch.total, "match", "matches")} in ${countLabel(lastSearch.files, "file", "files")}`;
     const ok = await confirmDialog({
       title: `Replace ${scope}?`,
-      html: `<div class="text-secondary">Every match in the chosen folder and mask is written, the ones below the shown list included. This cannot be undone from here.</div>`,
-      confirmText: "Replace all",
+      warning: "Every match in the chosen folder and mask is written, the ones below the shown list included. This cannot be undone from here.",
+      kind: "danger", confirmText: "Replace all",
     });
     if (!ok) return;
     await runReplace({});
@@ -10630,7 +10411,8 @@ async function init(root) {
     const ok = await confirmDialog({
       title: drop ? `Delete coder "${sessionName}"?`
         : coder ? `Stop coder "${sessionName}"?` : `Delete shell "${sessionName}"?`,
-      text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+      warning: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+      kind: coder && !drop ? "danger" : "delete",
       confirmText: coder && !drop ? "Stop" : "Delete",
     });
     if (!ok) return;
@@ -11364,6 +11146,33 @@ async function init(root) {
   void loadAssistants();
   void loadDocker();
   void pullLSPIndex();
+  threads = editorThreads({
+    root,
+    base,
+    signal,
+    dialogBody: commentModalThreadEl,
+    comments: () => comments,
+    commentsFor,
+    shownTab: (g) => commentableTab(activeTabOf(g)),
+    tabOfNode: (node) => [...groupsById.values()].map((g) => commentableTab(activeTabOf(g))).find((t) => t && t.group.surfaceEl.contains(node)) || null,
+    docOf: (tab) => tab.group.editor.snapshot(tab, inFront(tab)),
+    lineText: (c) => currentLineText(c.path, c.line, c),
+    eachGroup,
+    focusEditor: (g) => g.editor.focus(),
+    forgeThreadUrl: () => `${forgeBase}/thread`,
+    saveComment,
+    saveReply,
+    resolveThread,
+    deleteThread: deleteCommentDialog,
+    deleteReply: deleteReplyDialog,
+    showDialog: showCommentDialog,
+    closeDialog: () => window.bootstrap.Modal.getInstance(commentModalEl)?.hide(),
+  });
+  // Escape closes the thread's dialog alone, the sheet it was opened from
+  // stays.
+  commentModalEl.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") e.stopPropagation();
+  }, { signal });
   void loadComments();
   document.body.appendChild(termModalsHostEl);
   document.body.appendChild(commentModalHostEl);
@@ -11471,7 +11280,7 @@ async function init(root) {
       && e.code === "KeyC" && quickOpenEl.hidden) {
       if (commentableTab(activeTab()) && can("comments")) {
         e.preventDefault();
-        void commentOnLine(activeTab().path, group.cursor.line);
+        commentOnLine(activeTab().path, group.cursor.line);
       }
     } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.altKey && !e.repeat
       && e.code === "KeyR" && quickOpenEl.hidden) {
@@ -11554,7 +11363,11 @@ async function init(root) {
     if (a?.hasAttribute("data-file-link") && opensHere(a.href)) return;
     if (a && a.host === location.host && !a.hasAttribute("target")) guard(e, a);
   }, { capture: true, signal });
-  document.addEventListener("submit", (e) => guard(e, e.target), { capture: true, signal });
+  // The forms of the line comment threads write over a fetch and leave the
+  // page nowhere.
+  document.addEventListener("submit", (e) => {
+    if (!e.target.closest?.("[data-line-thread-reply], [data-line-comment-form]")) guard(e, e.target);
+  }, { capture: true, signal });
 
   // Before the first load, not after it: every scope change renews the watch,
   // and a renewal before the watch runs at all is a renewal nobody sends. A tab
@@ -12052,6 +11865,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   let commentData = null;
 
   const commentsExtension = commentGutter(state, view);
+  const blocks = lineBlocks(state, view);
 
   // ---- change bars -----------------------------------------------------------
 
@@ -12093,6 +11907,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     mergeConf.of([]),
     blameConf.of(blame),
     commentsConf.of(commentsExtension(commentData)),
+    blocks.extension,
     EditorView.updateListener.of((u) => {
       if (u.docChanged) hooks.onDocChanged?.(u);
       if (u.docChanged) hooks.onChange();
@@ -12399,6 +12214,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // belongs to the buffer, and a snapshot from before would drop it.
       const doc = workView().state.doc;
       const blame = carryBlame(workView().state);
+      const held = blocks.held(workView());
       const hadFocus = liveViews().some((v) => v.hasFocus);
       dropMergeView();
       // Built first, without a parent, and only then put on screen: a
@@ -12417,6 +12233,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       mergeView = view;
       syncMergeScroll(view);
       syncSurface();
+      blocks.set(editorView, []);
+      blocks.set(view.b, held);
       if (hadFocus && hooks.mayFocus()) view.b.focus();
       view.b.requestMeasure();
       reportCursor(view.b.state);
@@ -12433,9 +12251,11 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       // plain editor continues with.
       const text = mergeView.b.state.doc;
       const blame = carryBlame(mergeView.b.state);
+      const held = blocks.held(mergeView.b);
       const hadFocus = liveViews().some((v) => v.hasFocus);
       dropMergeView();
       editorView.setState(EditorState.create({ doc: text, extensions: baseExtensions(langExt, blame) }));
+      blocks.set(editorView, held);
       if (hadFocus && hooks.mayFocus()) editorView.focus();
     }
     if (merge) buildUnified(merge, spec);
@@ -12549,6 +12369,13 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       commentData = data;
       workView().dispatch({ effects: commentsConf.reconfigure(commentsExtension(data)) });
     },
+    // setBlocks puts elements under lines of the working copy, a list of
+    // { dom, line }, see @dc/line-blocks; blockLine is where one stands now.
+    canBlocks: true,
+    setBlocks(list) {
+      blocks.set(workView(), list);
+    },
+    blockLine: (dom) => blocks.lineOf(workView(), dom),
     canChanges: true,
     // setChanges puts the bars for the given HEAD text on the plain editor, or
     // takes them off with null. It always reaches the plain editor, never a
@@ -12740,8 +12567,8 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       const v = workView();
       if (!v.dom.contains(node)) return 0;
       const docY = y - v.documentTop;
-      const block = v.lineBlockAtHeight(docY);
-      if (!block || docY < block.top - 2 || docY > block.bottom + 2) return 0;
+      const block = v.elementAtHeight(docY);
+      if (!block || block.type !== BlockType.Text || docY < block.top - 2 || docY > block.bottom + 2) return 0;
       return v.state.doc.lineAt(block.from).number;
     },
     mapSavedLine(tab, isActive, line, changes) {
@@ -12784,6 +12611,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     },
     destroy() {
       dropMergeView();
+      blocks.destroy();
       editorView.destroy();
     },
   };
@@ -12792,11 +12620,11 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
 // promptName asks for just a name; the location (selected folder, or project
 // root) is shown so the user never types a path. Returns the trimmed name, or
 // null when cancelled/empty.
-async function promptName(kind, dir) {
-  const where = dir ? `${dir}/` : "project root";
+async function promptName(kind, dir, project) {
   return promptText({
     title: `New ${kind}`,
-    html: `<div class="text-secondary small mb-2">in <code>${escapeHtml(where)}</code></div>`,
+    details: [dir ? { as: "folder", label: "Folder", value: `${dir}/` } : { as: "project", label: "Project", value: project }],
+    icon: `${kind}-plus`,
     placeholder: kind === "folder" ? "folder name" : "file name",
     confirmText: "Create",
     validatorMessage: "Please enter a name.",
