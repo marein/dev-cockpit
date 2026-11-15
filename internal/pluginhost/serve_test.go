@@ -293,7 +293,7 @@ func TestAddPageNeedsATitleAndATablerIcon(t *testing.T) {
 	refusal := func(title, icon string) (msg any) {
 		defer func() { msg = recover() }()
 		_, _ = ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "untitled", Plugin: serveFunc(func(s plugin.Serve) error {
-			s.AddPage(title, icon, "")
+			s.AddPage(plugin.Page{Title: title, Icon: icon, NavLabel: "Label"})
 			return nil
 		})}}, "", t.TempDir(), nil, nil)
 		return nil

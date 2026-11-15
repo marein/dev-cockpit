@@ -29,7 +29,7 @@ func (subtreePlugin) ConfigureServe(s plugin.Serve) error {
 		_, _ = w.Write([]byte("plugin page"))
 	})
 	s.AddRoutes(mux)
-	s.AddPage("Fake", "ti-box", "<fake-board></fake-board>")
+	s.AddPage(plugin.Page{Title: "Fake", Icon: "ti-box", HTML: "<fake-board></fake-board>"})
 	return nil
 }
 

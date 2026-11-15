@@ -43,7 +43,7 @@ type Serve struct {
 	assets         fs.FS
 	elements       []Registration
 	slots          map[string][]string
-	page           *Page
+	page           *plugin.Page
 	memory         []assistantMemory
 	settings       []settingValues
 }
@@ -99,12 +99,12 @@ func (s *Serve) AddSlotHTML(slot, html string) {
 // not bring classes of its own.
 var tablerIcon = regexp.MustCompile(`^ti-[a-z0-9-]+$`)
 
-func (s *Serve) AddPage(title, icon, html string) {
+func (s *Serve) AddPage(page plugin.Page) {
 	s.add()
-	if strings.TrimSpace(title) == "" || !tablerIcon.MatchString(icon) {
-		panic(fmt.Sprintf("plugin %s: AddPage needs a title and a Tabler icon class like ti-box, got %q", s.id, icon))
+	if strings.TrimSpace(page.Title) == "" || !tablerIcon.MatchString(page.Icon) {
+		panic(fmt.Sprintf("plugin %s: AddPage needs a Title and a Tabler icon class like ti-box, got %q", s.id, page.Icon))
 	}
-	s.page = &Page{Title: title, Icon: icon, HTML: html}
+	s.page = &page
 }
 
 func (s *Serve) AddAssistantMemory(files fs.FS, overwrite bool) {
@@ -149,17 +149,10 @@ func (s *Serve) Assets() fs.FS { return s.assets }
 func (s *Serve) CustomElements() []Registration { return s.elements }
 
 // Page answers the added page, nil for none.
-func (s *Serve) Page() *Page { return s.page }
+func (s *Serve) Page() *plugin.Page { return s.page }
 
 // SlotHTML answers the markup added for a slot, "" for none.
 func (s *Serve) SlotHTML(slot string) string { return strings.Join(s.slots[slot], "") }
-
-// Page is one plugin's own page as AddPage added it.
-type Page struct {
-	Title string
-	Icon  string
-	HTML  string
-}
 
 // routesHandle implements plugin.Routes.
 type routesHandle struct {

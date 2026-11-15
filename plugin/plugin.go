@@ -103,16 +103,14 @@ type Serve interface {
 	// defined set panics, markup for a place no template renders would
 	// otherwise vanish silently.
 	AddSlotHTML(slot, html string)
-	// AddPage gives the plugin a page of its own: an entry in the side rail
-	// and the phone tab bar under title, with icon a Tabler icon class like
-	// "ti-ticket", leading to the root of the plugin's URL subtree. The
-	// cockpit renders that page in its own layout with html as the work
-	// surface, unescaped and as trusted as AddSlotHTML; a plugin usually
-	// mounts one of its custom elements there. The page takes GET of the
+	// AddPage gives the plugin a page of its own at the root of its URL
+	// subtree, reached from an entry in the side rail and, on a phone, from
+	// a row in the Cockpit sheet. The cockpit renders the page in its own
+	// layout, see Page for what each field becomes. The page takes GET of the
 	// subtree root, a route the plugin added there no longer answers it. A
-	// second call replaces the first, an empty title or an icon that is not
+	// second call replaces the first, an empty Title or an Icon that is not
 	// one Tabler class panics.
-	AddPage(title, icon, html string)
+	AddPage(page Page)
 	// AddAssistantMemory adds top level <slug>.md files to the assistant's
 	// shared memory, a slug being lower case letters, digits and dashes,
 	// other files are skipped. Applied at serve start in plugin order,
@@ -137,6 +135,25 @@ type Serve interface {
 	ProjectsDir() string
 	// Projects answers the cockpit's project surface.
 	Projects() Projects
+}
+
+// Page is a plugin's own page as AddPage takes it. Fields only ever get
+// added, so a plugin sets them by name.
+type Page struct {
+	// Title is the page's heading, required.
+	Title string
+	// Icon is the entry's icon, one Tabler icon class like "ti-ticket",
+	// required.
+	Icon string
+	// HTML is the work surface below the heading, rendered unescaped and as
+	// trusted as AddSlotHTML; a plugin usually mounts one of its custom
+	// elements there.
+	HTML string
+	// NavLabel is the entry's short name in the rail and the Cockpit sheet,
+	// optional, empty falls back to Title. A name too long for the rail
+	// ends in an ellipsis there, the Title stays its tooltip and its
+	// accessible name.
+	NavLabel string
 }
 
 // Routes is the handle AddRoutes answers. Path names where the cockpit
