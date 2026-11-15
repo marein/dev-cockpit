@@ -56,6 +56,23 @@ export function remove(key) {
   }
 }
 
+// keys lists the stored keys that start with prefix, by the names get, set
+// and remove take.
+export function keys(prefix) {
+  try {
+    const head = own(prefix);
+    const found = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (key?.startsWith(head)) found.push(prefix + key.slice(head.length));
+    }
+    return found;
+  } catch (error) {
+    void error;
+    return [];
+  }
+}
+
 export function getJSON(key, fallback = null) {
   try {
     const value = readItem(key);

@@ -535,6 +535,8 @@ L.runFeature("assistant-projects", async ({ page, run, mobilePage }) => {
       fits("desktop 1360", await strip(page));
       if (SHOTS_DIR) await page.screenshot({ path: path.join(SHOTS_DIR, "assistant-projects-desktop.png") });
       const mp = await mobilePage();
+      // The phone left this aside on Coders before.
+      await L.forgetPlaces(mp);
       await openPage(mp, owner);
       assert(!(await mp.locator(`[data-assistant-project="${REPO}"]`).isVisible()), "the phone shows the aside before it is opened");
       await mp.tap("[data-assistant-watching-button]");

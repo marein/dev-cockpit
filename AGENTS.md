@@ -287,9 +287,11 @@ templates plus ES modules.
   components only the exported helpers of `dc-form-modal` and `dc-time`.
   Behavior lives in elements and modules. There are no free page scripts
   and no window globals besides `window.pe` and `window.app`, config
-  travels in attributes. Two inline scripts run before the modules load and
-  hide nothing: the head's theme and the first paint landing of a
-  conversation in `chat_end.gohtml`.
+  travels in attributes. Three inline scripts run before the modules load
+  and hide nothing: the head's theme, the first paint landing of a
+  conversation in `chat_end.gohtml` and the one in
+  `assistant_watching.gohtml` that shows an assistant's aside at once where
+  the device kept no place of it.
 - **Shared Modules**: There is one `escapeHtml` (`@dc/dom`), one test for
   Ctrl or Cmd plus Enter (`isModEnter`, `@dc/dom`), one context
   menu with row menus and long press (`@dc/contextmenu`), one row drag

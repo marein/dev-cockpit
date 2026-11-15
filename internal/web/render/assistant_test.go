@@ -65,13 +65,14 @@ func TestUnfinishedAssistantWearsTheBadgeWithoutTheRing(t *testing.T) {
 
 // Every assistant is a row of its own, all of them live: what the column says
 // about one of them is what it holds and what it is doing, never that it is
-// the current one or an earlier one.
+// the current one or an earlier one. The rows stand marked as the whole list,
+// the one a device drops the remembered asides of gone assistants by.
 func TestTheColumnListsEveryAssistantWithWhatItHolds(t *testing.T) {
 	out := renderAssistantCtx(t, assistantCtxData(
 		AssistantCard{ID: "c1", Title: "Release work", URL: "/assistants/c1", OpenJobs: 2},
 		AssistantCard{ID: "c2", Title: "Side quest", URL: "/assistants/c2", News: true},
 	))
-	for _, want := range []string{"Release work", "Side quest", `data-assistant-instance="c1"`, `data-assistant-instance="c2"`} {
+	for _, want := range []string{"Release work", "Side quest", `data-assistant-instance="c1"`, `data-assistant-instance="c2"`, "data-assistant-living"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("want %q in the column", want)
 		}

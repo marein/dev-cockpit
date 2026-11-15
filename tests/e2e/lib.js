@@ -106,6 +106,9 @@ async function openPicked(page, row, { tap = false, item = "Open" } = {}) {
   else await entry.click();
 }
 
+// forgetPlaces drops the asides' places (assistant-place.js), owner and guest, so another feature opens on the cards.
+const forgetPlaces = (page) => page.evaluate(() => Object.keys(localStorage).filter((k) => /^(dc-guest:)?dc-assistant-aside:/.test(k)).forEach((k) => localStorage.removeItem(k))).catch(() => {});
+
 // dismissUpdate closes the update dialog if this instance found a newer release.
 // A runner that only clicks would hit its backdrop, and the failure looks like
 // the form itself is broken. Instances started for a run usually point at a
@@ -788,7 +791,7 @@ const readThread = (page, text) => threadCard(page, text).evaluate((c) => {
 module.exports = {
   caretWalk, stubMicrophone, answerSTT,
   BASE, sleep, wirePage, submitBtn, confirmSwal, modalShown, upgraded, waitUpgraded,
-  login, createProject, projectPath, deleteProject, dismissUpdate, openPicked, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
+  login, createProject, projectPath, deleteProject, dismissUpdate, forgetPlaces, openPicked, setEditorFiles, createShell, deleteShell, createSession, stopSession, closeFromStrip,
   saveTagSettings, setField, removeTags, reach, editorReady, waitEditorCursor, wordPoint, splitLabel, skewedClocks, markPhases, markOff, clockMarks,
   iconSpin, spinning, still,
   lineNumber, pressLine, lineThread, lineField, seen, threadCard, readThread, longPress,

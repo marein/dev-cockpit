@@ -98,6 +98,7 @@ const steer = (page, owner, terminal) => postJSON(page, "/assistants/jobs", { fo
 const release = (page, terminal) => postJSON(page, "/assistants/jobs", { form: "release", terminal });
 
 async function openPage(p, url) {
+  await L.forgetPlaces(p);
   await p.goto(url, { waitUntil: "domcontentloaded" });
   await L.dismissUpdate(p);
   await p.waitForSelector(`${PANE} [data-assistant-body]`, { state: "attached", timeout: 15000 });

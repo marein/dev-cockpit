@@ -181,6 +181,7 @@ type ShareEditData struct {
 // read only.
 type GuestAssistantData struct {
 	Page
+	ID               string
 	Name             string
 	StreamURL        string
 	PageURL          string

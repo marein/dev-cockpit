@@ -117,6 +117,7 @@ func (s *Server) handleShareAssistant(c *gin.Context) {
 	jobs, older := s.guestJobViews(g, inst.ID, false)
 	data := render.GuestAssistantData{
 		Page:            s.page(c, title, "assistants"),
+		ID:              inst.ID,
 		Name:            name,
 		StreamURL:       base + "/stream",
 		PageURL:         base,

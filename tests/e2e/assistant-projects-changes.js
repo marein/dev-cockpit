@@ -98,6 +98,7 @@ async function newCoder(page, dir, name) {
 }
 
 async function openPage(p, url) {
+  await L.forgetPlaces(p);
   await p.goto(url, { waitUntil: "domcontentloaded" });
   await L.dismissUpdate(p);
   await p.waitForSelector(`${PANE} [data-assistant-body]`, { state: "attached", timeout: 15000 });

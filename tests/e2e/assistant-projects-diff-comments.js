@@ -95,6 +95,7 @@ const comment = async (page, line, text, lineText) => (await postJSON(page, `/pr
 const stored = (page) => page.evaluate(async (name) => (await (await fetch(`/projects/${name}/editor/comments`)).json()).comments || [], REPO);
 
 async function openPage(p, url) {
+  await L.forgetPlaces(p);
   await p.goto(url, { waitUntil: "domcontentloaded" });
   await L.dismissUpdate(p);
   await p.waitForSelector(`${PANE} [data-assistant-body]`, { state: "attached", timeout: 15000 });

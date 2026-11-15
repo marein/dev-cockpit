@@ -1,3 +1,4 @@
+import { forgetPlace } from "@dc/assistant-place";
 import { confirm } from "@dc/dialog";
 import { ensureOk, postForm } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
@@ -25,6 +26,7 @@ export async function deleteAssistant(url, name) {
     notifyError(err?.message || "The assistant could not be deleted.");
     return false;
   }
+  forgetPlace(url.slice(url.lastIndexOf("/") + 1));
   if (released) notifySuccess(released);
   return true;
 }
