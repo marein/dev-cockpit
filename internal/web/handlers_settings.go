@@ -536,9 +536,11 @@ func (s *Server) setPostScriptLocal(c *gin.Context, script string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The post script was not saved, " + err.Error() + "."})
 		return
 	}
-	what, value := "Set the worktree post script", script
+	what := "Set the worktree post script"
+	details := []askpass.Detail{{Label: "Post script", Value: script, As: askpass.AsCode}, {As: askpass.AsNote, Value: "It runs in every worktree project made from now on."}}
 	if script == "" {
-		what, value = "Delete the worktree post script", "(none)"
+		what = "Delete the worktree post script"
+		details = []askpass.Detail{{As: askpass.AsNote, Value: "Worktree projects made from now on run no post script."}}
 	}
 	save := func() (string, error) {
 		if err := project.SavePostScript(s.postScriptPath(), script); err != nil {
@@ -550,7 +552,7 @@ func (s *Server) setPostScriptLocal(c *gin.Context, script string) {
 		Owner:   owner,
 		Kind:    approvalWorktreePostScript,
 		What:    what,
-		Details: []askpass.Detail{{Label: "Script", Value: value}},
+		Details: details,
 		Run:     save,
 	}) {
 		return

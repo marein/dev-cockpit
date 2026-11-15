@@ -6,7 +6,8 @@
 import { notifyError, notifySuccess } from "@dc/toast";
 import { onServerEvent } from "@dc/events";
 import { focusRow, labelNodes, menuJustClosed, openMenu, revealRow, rowsOf, stepRowFocus, wireRowMenus } from "@dc/contextmenu";
-import { CLOSED_EVENT as DIALOG_CLOSED, available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, promptText } from "@dc/dialog";
+import { CLOSED_EVENT as DIALOG_CLOSED, available as dialogAvailable, confirm as confirmDialog, fire as fireDialog, notice, promptText } from "@dc/dialog";
+import { confirmView, formView, invalid, promptView } from "@dc/prompt-view";
 import { copyPending, copyText, el, escapeHtml, isModEnter, syncAnimations } from "@dc/dom";
 import { DoubleTap } from "@dc/doubletap";
 import { AXIS_LOCK_PX, FLING_MAX_V, FLING_START_V, FLING_STOP_V, FLING_TAU_MS, SwipeNav, pushSample, releaseVelocity } from "@dc/swipe";
@@ -1957,7 +1958,7 @@ async function init(root) {
     const fromCommitList = commitOn && commitListEl.contains(document.activeElement);
     const fromRevdiffFilter = revdiffOn && document.activeElement === revdiffFilterEl;
     const fromRevdiffList = revdiffOn && revdiffListEl.contains(document.activeElement);
-    if (!force && tab.dirty && !(await confirmDialog({ title: `Discard changes in "${tab.name}"?`, confirmText: "Discard" }))) {
+    if (!force && tab.dirty && !(await confirmDialog({ title: `Discard changes in "${tab.name}"?`, kind: "danger", confirmText: "Discard" }))) {
       return;
     }
     if (!tabs.includes(tab)) return;
@@ -4707,20 +4708,15 @@ async function init(root) {
   async function deleteTagDialog(commit, name, paintChips) {
     let remote = false;
     if (dialogAvailable()) {
-      const result = await fireDialog({
+      const result = await fireDialog(confirmView({
         title: `Delete "${name}"?`,
-        html: `<div class="text-secondary small">The tag goes, the commit stays.</div>`
-          + `<label class="form-check text-start mt-3 mb-0"><input class="form-check-input" type="checkbox" data-tag-remote checked>`
-          + `<span class="form-check-label">Delete it on the remote too</span></label>`,
-        showCancelButton: true,
-        confirmButtonText: "Delete tag",
-        cancelButtonText: "Cancel",
-        reverseButtons: true,
-        preConfirm: () => ({ remote: window.Swal.getHtmlContainer().querySelector("[data-tag-remote]").checked }),
-      });
-      if (!result.isConfirmed || !result.value) return;
-      ({ remote } = result.value);
-    } else if (!await confirmDialog({ title: `Delete "${name}"?`, confirmText: "Delete tag" })) {
+        text: "The tag goes, the commit stays.",
+        check: { label: "Delete it on the remote too", checked: true, mark: "data-tag-remote" },
+        kind: "delete", confirmText: "Delete tag",
+      }));
+      if (!result.isConfirmed) return;
+      remote = result.value === 1;
+    } else if (!await confirmDialog({ title: `Delete "${name}"?`, kind: "delete", confirmText: "Delete tag" })) {
       return;
     }
     const data = await gitRun("tag/delete", { tag: name, remote }, `Deleting "${name}"…`, "tag");
@@ -4738,25 +4734,25 @@ async function init(root) {
     let push = published;
     if (dialogAvailable()) {
       const result = await fireDialog({
-        title: "Tag this commit",
-        input: "text",
-        inputPlaceholder: "v1.0.0",
-        html: `<div class="text-secondary small text-truncate">${escapeHtml(commit.short)} · ${escapeHtml(commit.summary || "")}</div>`
-          + `<input class="form-control mt-3" data-tag-message placeholder="Message, optional" aria-label="Tag message">`
-          + `<div class="text-secondary small mt-1 text-start">A message makes it an annotated tag, which is what a release is.</div>`
-          + `<label class="form-check text-start mt-3 mb-0"><input class="form-check-input" type="checkbox" data-tag-push${push ? " checked" : ""}>`
-          + `<span class="form-check-label">Push the tag</span></label>`,
-        showCancelButton: true,
-        confirmButtonText: "Create tag",
-        cancelButtonText: "Cancel",
-        reverseButtons: true,
+        ...promptView({
+          title: "Tag this commit",
+          icon: "tag",
+          details: [{ as: "item", icon: "git-commit", label: "Commit", value: commit.summary || "", id: commit.short }],
+          placeholder: "v1.0.0",
+          after: [
+            { as: "field", mark: "data-tag-message", aria: "Tag message", placeholder: "Message, optional" },
+            { as: "note", value: "A message makes it an annotated tag, which is what a release is." },
+          ],
+          check: { label: "Push the tag", checked: push, mark: "data-tag-push" },
+          confirmText: "Create tag",
+        }),
         preConfirm: (value) => {
           const normalized = normalizeBranchName(value);
           if (!normalized) {
-            window.Swal.showValidationMessage("A tag name is required.");
+            window.Swal.showValidationMessage(invalid("A tag name is required."));
             return false;
           }
-          const box = window.Swal.getHtmlContainer();
+          const box = window.Swal.getPopup();
           return {
             name: normalized,
             message: box.querySelector("[data-tag-message]").value.trim(),
@@ -5209,11 +5205,11 @@ async function init(root) {
 
   async function doPush(force) {
     if (force) {
-      const target = gitBranch && gitBranch.upstream ? `"${escapeHtml(gitBranch.upstream)}"` : "the upstream";
+      const target = gitBranch && gitBranch.upstream ? `"${gitBranch.upstream}"` : "the upstream";
       const ok = await confirmDialog({
         title: "Force push?",
-        html: `<div class="text-secondary">Overwrites ${target} where it moved away. It runs as force-with-lease: work this repository has not fetched is never overwritten.</div>`,
-        confirmText: "Force push",
+        warning: `Overwrites ${target} where it moved away. It runs as force-with-lease: work this repository has not fetched is never overwritten.`,
+        kind: "danger", confirmText: "Force push",
       });
       if (!ok) return;
     }
@@ -5264,19 +5260,21 @@ async function init(root) {
     let name = "";
     if (dialogAvailable()) {
       const result = await fireDialog({
-        title: "New branch",
-        input: "text",
-        inputPlaceholder: "feature/name",
-        html: `<div class="text-secondary small">Created at the current state and switched to.</div>`
-          + `<div class="small mt-2" data-branch-preview hidden>Will be created as <code></code></div>`,
-        showCancelButton: true,
-        confirmButtonText: "Create and switch",
-        cancelButtonText: "Cancel",
-        reverseButtons: true,
+        ...promptView({
+          title: "New branch",
+          icon: "git-branch",
+          tone: "git",
+          text: "Created at the current state and switched to.",
+          placeholder: "feature/name",
+          after: [{ as: "note", value: "Will be created as", mark: "data-branch-preview", hidden: true }],
+          confirmText: "Create and switch",
+        }),
         didOpen: () => {
           const input = window.Swal.getInput();
-          const preview = window.Swal.getHtmlContainer().querySelector("[data-branch-preview]");
-          const code = preview.querySelector("code");
+          const preview = window.Swal.getPopup().querySelector("[data-branch-preview]");
+          const code = document.createElement("span");
+          code.className = "font-monospace";
+          preview.querySelector("[data-approval-value]").append(" ", code);
           input.addEventListener("input", () => {
             const normalized = normalizeBranchName(input.value);
             code.textContent = normalized;
@@ -5286,7 +5284,7 @@ async function init(root) {
         preConfirm: (value) => {
           const normalized = normalizeBranchName(value);
           if (!normalized) {
-            window.Swal.showValidationMessage("A branch name is required.");
+            window.Swal.showValidationMessage(invalid("A branch name is required."));
             return false;
           }
           return normalized;
@@ -5312,8 +5310,8 @@ async function init(root) {
   async function cloneDialog() {
     const url = await promptText({
       title: "Clone repository",
-      html: `<div class="text-secondary small">Cloned straight into this project folder, which has to be empty. Authentication is whatever git on this host can already do.</div>`,
-      placeholder: "git@host:owner/repo.git",
+      text: "Cloned straight into this project folder, which has to be empty. Authentication is whatever git on this host can already do.",
+      icon: "cloud-download", tone: "git", placeholder: "git@host:owner/repo.git",
       confirmText: "Clone",
     });
     if (!url) return;
@@ -5436,30 +5434,30 @@ async function init(root) {
         if (kind === "renamed") goneAfter.push(bare(entry.path));
       }
     }
-    let html = "";
+    let warning = "";
     let confirmText = "Revert";
     if (!isDir) {
       const entry = restored.concat(removed).find((e) => bare(e.path) === path);
       const kind = entry ? gitKind(entry) : fileKind(path);
       if (kind === "untracked" || kind === "added") {
-        html = `<div class="text-secondary">"${escapeHtml(path)}" has no state in HEAD. Reverting deletes the file.</div>`;
+        warning = `"${path}" has no state in HEAD. Reverting deletes the file.`;
         confirmText = "Delete file";
       } else if (kind === "deleted") {
-        html = `<div class="text-secondary">"${escapeHtml(path)}" comes back at its state in HEAD.</div>`;
+        warning = `"${path}" comes back at its state in HEAD.`;
       } else if (kind === "renamed" && entry && entry.from) {
-        html = `<div class="text-secondary">The rename is taken back: "${escapeHtml(entry.from)}" comes back and "${escapeHtml(path)}" is deleted. Uncommitted changes are lost.</div>`;
+        warning = `The rename is taken back: "${entry.from}" comes back and "${path}" is deleted. Uncommitted changes are lost.`;
       } else {
-        html = `<div class="text-secondary">"${escapeHtml(path)}" goes back to its state in HEAD, staged edits included. Uncommitted changes are lost.</div>`;
+        warning = `"${path}" goes back to its state in HEAD, staged edits included. Uncommitted changes are lost.`;
       }
     } else {
       const parts = [];
       if (restored.length) parts.push(`${restored.length} tracked ${restored.length === 1 ? "change is" : "changes are"} restored`);
       if (removed.length) parts.push(`${removed.length} ${removed.length === 1 ? "file" : "files"} without a state in HEAD ${removed.length === 1 ? "is" : "are"} deleted`);
-      html = parts.length
-        ? `<div class="text-secondary">Everything under "${escapeHtml(path)}" goes back to HEAD: ${parts.join(", ")}. Uncommitted changes are lost.</div>`
-        : `<div class="text-secondary">Everything under "${escapeHtml(path)}" goes back to its state in HEAD; files that have no state there are deleted.</div>`;
+      warning = parts.length
+        ? `Everything under "${path}" goes back to HEAD: ${parts.join(", ")}. Uncommitted changes are lost.`
+        : `Everything under "${path}" goes back to its state in HEAD; files that have no state there are deleted.`;
     }
-    const ok = await confirmDialog({ title: `Revert "${path}"?`, html, confirmText });
+    const ok = await confirmDialog({ title: `Revert "${path}"?`, warning, kind: confirmText === "Delete file" ? "delete" : "danger", confirmText });
     if (!ok) return;
     const data = await gitRun("revert", { path }, `Reverting "${path}"…`, "revert");
     if (!data) return;
@@ -5588,9 +5586,8 @@ async function init(root) {
       : `${Math.round(kib).toLocaleString()} KiB`;
     return confirmDialog({
       title: "Build this diff?",
-      html: `<div class="text-secondary">This file is ${escapeHtml(reason)}. Diffing it can take a while on a slow device.</div>`,
+      text: `This file is ${reason}. Diffing it can take a while on a slow device.`,
       confirmText: "Diff anyway",
-      icon: "question",
     });
   }
 
@@ -6290,9 +6287,9 @@ async function init(root) {
     if (!count) return;
     if (!(await confirmDialog({
       title: "Delete all comments?",
-      text: (count === 1 ? "This removes the one comment of this project." : `This removes all ${count} comments of this project.`)
+      warning: (count === 1 ? "This removes the one comment of this project." : `This removes all ${count} comments of this project.`)
         + (comments.length > count ? " The review threads of the forge stay." : ""),
-      confirmText: "Delete",
+      kind: "delete", confirmText: "Delete",
     }))) return;
     await deleteComments([], { all: true });
   }
@@ -6694,15 +6691,16 @@ async function init(root) {
   function askReloadOverBuffer(path) {
     return confirmDialog({
       title: `"${path}" changed on disk.`,
-      html: `<div class="text-secondary">Somebody wrote the file after you opened it, a coder or git, and nothing has been saved. <em>Reload</em> replaces what is in the editor with what is on the disk, so your unsaved changes are gone. <em>Cancel</em> keeps them and writes nothing.</div>`,
-      confirmText: "Reload",
+      text: "Somebody wrote the file after you opened it, a coder or git, and nothing has been saved.",
+      warning: "Reload replaces what is in the editor with what is on the disk, so your unsaved changes are gone. Cancel keeps them and writes nothing.",
+      kind: "danger", confirmText: "Reload",
     });
   }
 
   function askRecreateFile(path) {
     return confirmDialog({
       title: `"${path}" no longer exists on the server.`,
-      html: `<div class="text-secondary">The file was deleted after you opened it, by a coder or by git, and nothing has been written. <em>Create again</em> writes what is in the editor as a new file. <em>Cancel</em> keeps the buffer and writes nothing.</div>`,
+      text: "The file was deleted after you opened it, by a coder or by git, and nothing has been written. Create again writes what is in the editor as a new file. Cancel keeps the buffer and writes nothing.",
       confirmText: "Create again",
     });
   }
@@ -6862,7 +6860,7 @@ async function init(root) {
   }
 
   async function deletePath(targetPath) {
-    if (!(await confirmDialog({ title: `Delete "${targetPath}"?`, confirmText: "Delete" }))) return;
+    if (!(await confirmDialog({ title: `Delete "${targetPath}"?`, kind: "delete", confirmText: "Delete" }))) return;
     status("Deleting…");
     try {
       const res = await postForm(`${base}/delete`, { path: targetPath });
@@ -7005,10 +7003,10 @@ async function init(root) {
     const where = dir || "The project root";
     return confirmDialog({
       title: `Replace "${name}"?`,
-      text: isDir
+      warning: isDir
         ? `${where} already holds a folder called ${name}. Everything in it is replaced.`
         : `${where} already holds a file called ${name}.`,
-      confirmText: "Replace",
+      kind: "danger", confirmText: "Replace",
     });
   }
 
@@ -7065,7 +7063,7 @@ async function init(root) {
   }
 
   async function createFile(dir = targetDir()) {
-    const fileName = await promptName("file", dir);
+    const fileName = await promptName("file", dir, name);
     if (!fileName) return;
     const path = dir ? `${dir}/${fileName}` : fileName;
     status("Creating…");
@@ -7082,7 +7080,7 @@ async function init(root) {
   }
 
   async function createFolder(dir = targetDir()) {
-    const folderName = await promptName("folder", dir);
+    const folderName = await promptName("folder", dir, name);
     if (!folderName) return;
     const path = dir ? `${dir}/${folderName}` : folderName;
     status("Creating…");
@@ -7188,48 +7186,40 @@ async function init(root) {
       await uploadPlain(files, dir);
       return;
     }
-    const where = dir ? `${dir}/` : "project root";
     // Names already in the target folder are named up front, so the upload asks
     // once instead of failing per file. A drop that collides opens the dialog
     // even though it would otherwise upload straight away.
     const taken = new Set((await listDir(dir).catch(() => [])).map((entry) => entry.name));
     const clashes = nested ? [] : files.filter((file) => taken.has(file.name));
-    const content = document.createElement("div");
-    const target = document.createElement("div");
-    target.className = "text-secondary small mb-3";
-    target.innerHTML = `in <code>${escapeHtml(where)}</code>`;
-    const list = document.createElement("div");
-    list.className = "editor-upload-list";
-    items.forEach((item, index) => list.appendChild(uploadItem(item.file, index, item.rel)));
-    content.append(target, list);
-    if (clashes.length) {
-      const warn = document.createElement("div");
-      warn.className = "text-warning small mt-3 text-break";
-      warn.dataset.uploadClash = String(clashes.length);
-      warn.textContent = clashes.length === 1
-        ? `${clashes[0].name} is already there and will be replaced.`
-        : `${clashes.length} files are already there and will be replaced: ${clashes.map((f) => f.name).join(", ")}`;
-      content.appendChild(warn);
-    }
+    const warning = clashes.length === 1
+      ? `${clashes[0].name} is already there and will be replaced.`
+      : `${clashes.length} files are already there and will be replaced: ${clashes.map((f) => f.name).join(", ")}`;
+    const ask = {
+      title: files.length === 1 ? "Upload 1 file" : `Upload ${files.length} files`,
+      details: [
+        dir ? { as: "folder", label: "Folder", value: `${dir}/` } : { as: "project", label: "Project", value: name },
+        ...(clashes.length ? [{ as: "warning", value: warning, mark: "data-upload-clash" }] : []),
+        ...items.map((item) => ({
+          as: "item", icon: "file", label: "File", mono: true, progress: true, mark: "data-upload-item",
+          value: item.rel ? `${item.rel}/${item.file.name}` : item.file.name, id: formatSize(item.file.size),
+        })),
+      ],
+      confirmText: clashes.length ? "Replace" : "Upload",
+    };
     let uploaded = 0;
     const result = await fireDialog({
-      title: files.length === 1 ? "Upload 1 file" : `Upload ${files.length} files`,
-      html: content,
-      showCancelButton: true,
-      confirmButtonText: clashes.length ? "Replace" : "Upload",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
+      ...(clashes.length ? confirmView({ ...ask, kind: "danger" }) : formView({ ...ask, icon: "upload" })),
       showLoaderOnConfirm: true,
       allowOutsideClick: () => !window.Swal.isLoading(),
       didOpen: () => {
         if (!confirmFirst && !clashes.length) window.Swal.clickConfirm();
       },
       preConfirm: async () => {
-        const results = await runUploads(items, dir, list, clashes.length > 0);
+        const results = await runUploads(items, dir, window.Swal.getPopup(), clashes.length > 0);
         uploaded += results.filter((r) => r.status === "fulfilled" && r.value).length;
         const failed = results.filter((r) => r.status === "rejected");
         if (failed.length > 0) {
-          window.Swal.showValidationMessage(failed[0].reason.message);
+          window.Swal.showValidationMessage(invalid(failed[0].reason.message));
           return false;
         }
         return true;
@@ -7271,14 +7261,15 @@ async function init(root) {
 
   // Already uploaded rows keep data-done, so a retry after a partial failure
   // only sends the files that are still missing.
-  function runUploads(items, dir, list, overwrite = false) {
+  function runUploads(items, dir, popup, overwrite = false) {
+    const rows = popup.querySelectorAll("[data-upload-item]");
     const jobs = items.map(({ file, rel }, index) => {
-      const item = list.querySelector(`[data-file-index="${index}"]`);
+      const item = rows[index];
       if (item.dataset.done === "true") return Promise.resolve(null);
       delete item.dataset.error;
       const bar = item.querySelector(".progress-bar");
       const outer = item.querySelector(".progress");
-      const statusEl = item.querySelector("[data-file-status]");
+      const statusEl = item.querySelector(".dc-ask-id");
       statusEl.textContent = "Uploading";
       const into = rel ? (dir ? `${dir}/${rel}` : rel) : dir;
       return uploadOne(file, into, overwrite, !!rel, (e) => {
@@ -7334,34 +7325,6 @@ async function init(root) {
       form.append("files", file, file.name);
       xhr.send(form);
     });
-  }
-
-  function uploadItem(file, index, rel) {
-    const item = document.createElement("div");
-    item.className = "editor-upload-item";
-    item.dataset.fileIndex = String(index);
-    const header = document.createElement("div");
-    header.className = "d-flex justify-content-between gap-2 small mb-1";
-    const nameEl = document.createElement("div");
-    nameEl.className = "text-truncate";
-    nameEl.textContent = rel ? `${rel}/${file.name}` : file.name;
-    const statusEl = document.createElement("div");
-    statusEl.className = "text-secondary text-nowrap";
-    statusEl.dataset.fileStatus = "";
-    statusEl.textContent = formatSize(file.size);
-    const outer = document.createElement("div");
-    outer.className = "progress";
-    outer.setAttribute("role", "progressbar");
-    outer.setAttribute("aria-valuemin", "0");
-    outer.setAttribute("aria-valuemax", "100");
-    outer.setAttribute("aria-valuenow", "0");
-    const bar = document.createElement("div");
-    bar.className = "progress-bar";
-    bar.style.width = "0%";
-    header.append(nameEl, statusEl);
-    outer.append(bar);
-    item.append(header, outer);
-    return item;
   }
 
   function expandTo(dir) {
@@ -7924,11 +7887,11 @@ async function init(root) {
   // to be right the moment somebody switches modes or jumps into a hit, both of
   // which read the cache back, so this half is synchronous.
   function paletteDraft() {
+    // The two texts belong to find in files, another mode's filter is no search.
+    const held = findsInFiles() ? null : searchDraft || {};
     return {
-      // While a chooser borrows the field, the query is the parked one: the
-      // chooser's filter is nobody's search.
-      query: currentQuery(),
-      replace: quickOpenReplaceInput.value,
+      query: held ? held.query || "" : currentQuery(),
+      replace: held ? held.replace || "" : quickOpenReplaceInput.value,
       folder: scopeFolder,
       mask: maskPatterns.join(", "),
       regex: !!editorSettings.search_regex,
@@ -8740,9 +8703,10 @@ async function init(root) {
       scheduleSearch(0, single);
     } catch (err) {
       if (err.blocked && err.blocked.length) {
-        await fireDialog({
+        await notice({
           title: "Unsaved files stand in the way",
-          html: `<div class="text-secondary">Nothing was replaced. Save or close these first:<br><code>${escapeHtml(err.blocked.join(", "))}</code></div>`,
+          text: "Nothing was replaced. Save or close these first.",
+          details: err.blocked.map((path) => ({ as: "item", icon: "file", label: "File", value: path, mono: true })),
           confirmText: "Got it",
         });
         return;
@@ -8758,8 +8722,8 @@ async function init(root) {
     const scope = `${countLabel(lastSearch.total, "match", "matches")} in ${countLabel(lastSearch.files, "file", "files")}`;
     const ok = await confirmDialog({
       title: `Replace ${scope}?`,
-      html: `<div class="text-secondary">Every match in the chosen folder and mask is written, the ones below the shown list included. This cannot be undone from here.</div>`,
-      confirmText: "Replace all",
+      warning: "Every match in the chosen folder and mask is written, the ones below the shown list included. This cannot be undone from here.",
+      kind: "danger", confirmText: "Replace all",
     });
     if (!ok) return;
     await runReplace({});
@@ -10447,7 +10411,8 @@ async function init(root) {
     const ok = await confirmDialog({
       title: drop ? `Delete coder "${sessionName}"?`
         : coder ? `Stop coder "${sessionName}"?` : `Delete shell "${sessionName}"?`,
-      text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+      warning: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+      kind: coder && !drop ? "danger" : "delete",
       confirmText: coder && !drop ? "Stop" : "Delete",
     });
     if (!ok) return;
@@ -12655,11 +12620,11 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
 // promptName asks for just a name; the location (selected folder, or project
 // root) is shown so the user never types a path. Returns the trimmed name, or
 // null when cancelled/empty.
-async function promptName(kind, dir) {
-  const where = dir ? `${dir}/` : "project root";
+async function promptName(kind, dir, project) {
   return promptText({
     title: `New ${kind}`,
-    html: `<div class="text-secondary small mb-2">in <code>${escapeHtml(where)}</code></div>`,
+    details: [dir ? { as: "folder", label: "Folder", value: `${dir}/` } : { as: "project", label: "Project", value: project }],
+    icon: `${kind}-plus`,
     placeholder: kind === "folder" ? "folder name" : "file name",
     confirmText: "Create",
     validatorMessage: "Please enter a name.",

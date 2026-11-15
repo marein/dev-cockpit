@@ -41,7 +41,11 @@ func TestSeveralCodersAreOneApproval(t *testing.T) {
 		t.Fatalf("the waiting delete answered %v", answer)
 	}
 	q := f.waitQuestion(t)
-	want := []askpass.Detail{{Label: "Coder", Value: "worker · 22222222"}, {Label: "Project", Value: "shop"}, {Label: "Coder", Value: "helper · 33333333"}, {Label: "Project", Value: "shop"}}
+	want := []askpass.Detail{
+		{As: askpass.AsWarning, Value: coderDeleteWarning},
+		{Label: "Coders", Value: "worker", As: askpass.AsItem, ID: "22222222", Place: "shop", Icon: "terminal-2"},
+		{Label: "Coders", Value: "helper", As: askpass.AsItem, ID: "33333333", Place: "shop", Icon: "terminal-2"},
+	}
 	if q.Action != "Delete 2 coders" || !reflect.DeepEqual(q.Details, want) {
 		t.Fatalf("the question reads %+v", q)
 	}
@@ -113,8 +117,9 @@ func TestALocalCallWithoutAnAssistantIsRefusedFirst(t *testing.T) {
 	}
 }
 
-// Several projects travel on the one delete route, and the approval touches
-// each of them: a user deleting either one declines it.
+// Several projects travel on the one delete route, the dialog lists them one
+// line each, and the approval touches each of them: a user deleting either
+// one declines it.
 func TestSeveralProjectsAreOneApproval(t *testing.T) {
 	f := newDeleteFixture(t)
 	cart := filepath.Join(filepath.Dir(f.dir), "cart")
@@ -125,7 +130,13 @@ func TestSeveralProjectsAreOneApproval(t *testing.T) {
 	if answer := decodeJSON(t, rec); answer["pending"] != true || answer["what"] != "Delete 2 projects" {
 		t.Fatalf("the waiting delete answered %d %v", rec.Code, answer)
 	}
-	f.waitQuestion(t)
+	if q := f.waitQuestion(t); !reflect.DeepEqual(q.Details, []askpass.Detail{
+		{As: askpass.AsWarning, Value: projectDeleteWarning},
+		{Label: "Projects", Value: f.project, As: askpass.AsItem, Icon: "folder"},
+		{Label: "Projects", Value: "cart", As: askpass.AsItem, Icon: "folder"},
+	}) {
+		t.Fatalf("the rows read %+v", q.Details)
+	}
 	if rec := f.post(t, "/projects/delete", url.Values{"project": {"cart"}}, false, ""); rec.Code != http.StatusOK {
 		t.Fatalf("the browser's delete answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -158,8 +169,12 @@ func TestTheDialogTellsSameNamedAssistantsApart(t *testing.T) {
 		t.Fatalf("the waiting delete answered %d %v", rec.Code, answer)
 	}
 	q := f.waitQuestion(t)
-	want := []askpass.Detail{{Label: "Assistant", Value: name + " · " + coder.ShortID(ids[0])}, {Label: "Assistant", Value: name + " · " + coder.ShortID(ids[1])}}
-	if !reflect.DeepEqual(q.Details, want) || q.Assistant != f.s.assistantLabel(f.owner)+" · "+coder.ShortID(f.owner) {
+	want := []askpass.Detail{
+		{As: askpass.AsWarning, Value: assistantDeleteWarning},
+		{Label: "Assistants", Value: name, As: askpass.AsItem, ID: coder.ShortID(ids[0]), Icon: "sparkles"},
+		{Label: "Assistants", Value: name, As: askpass.AsItem, ID: coder.ShortID(ids[1]), Icon: "sparkles"},
+	}
+	if !reflect.DeepEqual(q.Details, want) || q.Assistant != f.s.assistantLabel(f.owner) || q.AssistantID != coder.ShortID(f.owner) {
 		t.Fatalf("the question reads %+v", q)
 	}
 }

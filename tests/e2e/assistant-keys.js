@@ -42,8 +42,8 @@ function dialogState(page) {
     const popup = document.querySelector(".swal2-popup");
     return {
       shown: Boolean(popup) && popup.getClientRects().length > 0,
-      title: document.querySelector(".swal2-title")?.textContent.trim() || "",
-      text: document.querySelector(".swal2-html-container")?.textContent.trim() || "",
+      title: document.querySelector(".dc-ask-title")?.textContent.trim() || "",
+      text: document.querySelector(".dc-ask-body")?.textContent.trim() || "",
       confirm: document.querySelector(".swal2-confirm")?.textContent.trim() || "",
     };
   });

@@ -105,7 +105,7 @@ L.runFeature("EDITOR-TERMINAL-TABS", async ({ engine, browser, page, run, mobile
     const focus = await p.evaluate(() => { const e = document.activeElement; return e ? `${e.tagName}#${e.id} in ${e.closest("[data-terminal-view]")?.dataset.terminalView || "-"}` : "none"; });
     throw new Error(`the tab of ${id} never showed ${needle} (focus ${focus}, sent ${JSON.stringify((inputs[id] || []).slice(-4))}): ${JSON.stringify((await mirror(p, id)).slice(-300))}`);
   };
-  const mounted = (p, id) => p.waitForSelector(`${boxSel(id)} terminal-attach[embedded] .xterm-screen canvas`, { timeout: 20000 });
+  const mounted = (p, id) => p.waitForFunction((s) => !!document.querySelector(`${s} terminal-attach[embedded] .xterm-screen canvas`) && !!document.querySelector(`${s} .attach-selection`)?.textContent.trim(), boxSel(id), { timeout: 20000 });
   const activeTabPath = (p) => p.evaluate(() => {
     const g = document.querySelector(".editor-group-focused") || document;
     return g.querySelector(".editor-tab.active")?.dataset.path || "";
@@ -964,8 +964,8 @@ L.runFeature("EDITOR-TERMINAL-TABS", async ({ engine, browser, page, run, mobile
         await sleep(500);
       }
       const swalTitle = async (p) => {
-        await p.waitForSelector(".swal2-title", { state: "visible", timeout: 8000 });
-        return (await p.textContent(".swal2-title")).trim();
+        await p.waitForSelector(".dc-ask-title", { state: "visible", timeout: 8000 });
+        return (await p.textContent(".dc-ask-title")).trim();
       };
       await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
       const chipX = `#project-${project} form[data-inactive-coder="${one}"] button`;

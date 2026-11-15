@@ -109,11 +109,11 @@ func (s *Server) forgeRetryApproval(owner string, w forge.Watch, target forge.Re
 	named := target.Retry()
 	project, branch, address := w.Project, w.Branch, w.Binding.Address()
 	pipeline := forgePipelineName(target)
-	what := fmt.Sprintf("%s failed jobs of %s on %s in %s", kind.Retry, pipeline, plaintext.Visible(branch), project)
-	details := []askpass.Detail{{Label: "Action", Value: kind.Retry + " failed jobs"}}
+	title := fmt.Sprintf("%s failed jobs of %s", kind.Retry, pipeline)
+	details := forgeChips(project, branch)
 	if job := target.Job; job != nil {
-		what = fmt.Sprintf("%s job %q of %s on %s in %s", kind.Retry, job.Name, pipeline, plaintext.Visible(branch), project)
-		details = []askpass.Detail{{Label: "Action", Value: kind.Retry + " job"}, {Label: "Job", Value: job.Name}}
+		title = fmt.Sprintf("%s job %q of %s", kind.Retry, job.Name, pipeline)
+		details = append(details, askpass.Detail{Label: "Job", Value: job.Name, As: askpass.AsMono})
 	} else {
 		var names []string
 		for _, j := range target.Pipeline.Jobs {
@@ -121,22 +121,18 @@ func (s *Server) forgeRetryApproval(owner string, w forge.Watch, target forge.Re
 				names = append(names, j.Name)
 			}
 		}
-		details = append(details, askpass.Detail{Label: "Failed jobs", Value: strings.Join(names, ", ")})
+		details = append(details, askpass.Detail{Label: "Failed jobs", Value: strings.Join(names, ", "), As: askpass.AsMono})
 		if left := target.Pipeline.LeftOut(); len(left) > 0 {
 			details = append(details, askpass.Detail{Label: "Left as they are", Value: forge.Unretried(left)})
 		}
 	}
-	details = append(details,
-		askpass.Detail{Label: "Pipeline", Value: forgePipelineRow(target)},
-		askpass.Detail{Label: "Branch", Value: branch},
-		askpass.Detail{Label: "Forge", Value: kind.Label + " · " + address},
-		askpass.Detail{Label: "Project", Value: project},
-	)
+	details = append(details, forgePipelineDetail(target), forgeDetail(w))
 	return approval.Request{
 		Owner:    owner,
 		Kind:     approvalForgeRetry,
 		Key:      strings.Join([]string{project, branch, named.Head, named.Pipeline, named.Job}, "\n"),
-		What:     what,
+		What:     fmt.Sprintf("%s on %s in %s", title, plaintext.Visible(branch), project),
+		Title:    title,
 		Details:  details,
 		Projects: []string{project},
 		Run: func() (string, error) {
@@ -198,14 +194,15 @@ func forgePipelineName(r forge.Retried) string {
 	return "the pipeline at " + forge.ShortHead(r.Head)
 }
 
-// forgePipelineRow is the pipeline's row in the approval dialog.
-func forgePipelineRow(r forge.Retried) string {
-	at := "#" + r.Pipeline.ID
+// forgePipelineDetail is the pipeline's row in the approval dialog, a link
+// to its page where the forge named one.
+func forgePipelineDetail(r forge.Retried) askpass.Detail {
+	row := askpass.Detail{Label: "Pipeline", Value: "#" + r.Pipeline.ID, As: askpass.AsMono}
 	if r.Pipeline.ID == "" {
-		at = forge.ShortHead(r.Head)
+		row.Value = forge.ShortHead(r.Head)
 	}
 	if r.Pipeline.URL != "" {
-		return at + " · " + r.Pipeline.URL
+		row.As, row.URL = askpass.AsLink, r.Pipeline.URL
 	}
-	return at
+	return row
 }

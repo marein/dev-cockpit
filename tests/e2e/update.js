@@ -89,8 +89,8 @@ const MODE = process.env.MODE || "available";
       await run("update: available -> daily modal auto-opens once, not again within a day", async () => {
         await page.evaluate(() => localStorage.removeItem("dc-update"));
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
-        await page.waitForSelector(".swal2-title", { state: "visible", timeout: 10000 });
-        const title = await page.textContent(".swal2-title");
+        await page.waitForSelector(".dc-ask-title", { state: "visible", timeout: 10000 });
+        const title = await page.textContent(".dc-ask-title");
         assert(/Update to/i.test(title), `auto modal title: ${title}`);
         const st = await page.evaluate(() => JSON.parse(localStorage.getItem("dc-update") || "{}"));
         assert((st.prompted || 0) > 0, "prompted timestamp not saved");
@@ -111,8 +111,8 @@ const MODE = process.env.MODE || "available";
           localStorage.setItem("dc-update", JSON.stringify(st));
         });
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
-        await page.waitForSelector(".swal2-title", { state: "visible", timeout: 10000 });
-        const title = await page.textContent(".swal2-title");
+        await page.waitForSelector(".dc-ask-title", { state: "visible", timeout: 10000 });
+        const title = await page.textContent(".dc-ask-title");
         assert(/Update to/i.test(title), `modal title: ${title}`);
         const version = await page.evaluate(() => (JSON.parse(localStorage.getItem("dc-update") || "{}").promptedVersion || ""));
         assert(version && version !== "998.0.0", `promptedVersion not advanced: ${version}`);
@@ -128,17 +128,26 @@ const MODE = process.env.MODE || "available";
         assert(/update to/i.test(st.text), `footer link text: '${st.text}'`);
       });
 
-      await run("update: changelog dialog shows version + notes + apply button", async () => {
+      await run("update: changelog dialog shows version + notes in their box, links in a new tab + apply button", async () => {
         await page.locator("dc-update-check a[data-update-open]").first().click();
         await page.waitForFunction(
-          () => /update to/i.test((document.querySelector(".swal2-title") || {}).textContent || ""),
+          () => /update to/i.test((document.querySelector(".dc-ask-title") || {}).textContent || ""),
           null,
           { timeout: 8000 },
         );
-        const title = await page.textContent(".swal2-title");
+        const title = await page.textContent(".dc-ask-title");
         assert(/Update to/i.test(title), `dialog title: ${title}`);
-        const bodyText = await page.evaluate(() => (document.querySelector(".swal2-html-container") || {}).textContent || "");
-        assert(/Stub release/i.test(bodyText), `changelog notes missing: ${bodyText.slice(0, 80)}`);
+        const look = await page.evaluate(() => {
+          const box = document.querySelector(".swal2-popup .dc-ask-md");
+          return {
+            sign: Boolean(document.querySelector(".swal2-popup .dc-ask-icon .ti-arrow-up-circle")),
+            notes: box ? box.textContent : "",
+            links: box ? [...box.querySelectorAll("a")].map((a) => ({ href: a.getAttribute("href"), target: a.target })) : [],
+          };
+        });
+        assert(look.sign, "the dialog does not wear the update sign");
+        assert(/Stub release/i.test(look.notes), `changelog notes missing from their box: ${look.notes.slice(0, 80)}`);
+        assert(look.links.every((l) => /^https?:\/\//.test(l.href) && l.target === "_blank"), `a link of the notes stays in the tab or is no web address: ${JSON.stringify(look.links)}`);
         const confirm = await page.textContent(".swal2-confirm");
         assert(/Update & restart|Update/i.test(confirm), `confirm label: ${confirm}`);
         await page.click(".swal2-cancel").catch(() => page.keyboard.press("Escape"));
@@ -166,13 +175,13 @@ const MODE = process.env.MODE || "available";
         await page.goto(`${L.BASE}/projects`, { waitUntil: "domcontentloaded" });
         await page.locator("dc-update-check a[data-update-open]").first().click();
         await page.waitForFunction(
-          () => /update to/i.test((document.querySelector(".swal2-title") || {}).textContent || ""),
+          () => /update to/i.test((document.querySelector(".dc-ask-title") || {}).textContent || ""),
           null,
           { timeout: 8000 },
         );
         await page.click(".swal2-confirm");
         await page.waitForFunction(
-          () => /^updating/i.test((document.querySelector(".swal2-title") || {}).textContent || ""),
+          () => /^updating/i.test((document.querySelector(".dc-ask-title") || {}).textContent || ""),
           null,
           { timeout: 8000 },
         );

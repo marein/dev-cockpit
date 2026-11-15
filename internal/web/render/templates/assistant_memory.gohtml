@@ -53,7 +53,7 @@
             </div>
             <div class="flex-shrink-0 d-flex gap-2">
               <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-memory-edit-open aria-label="Edit {{.Title}}" title="Edit"><i class="ti ti-pencil"></i></button>
-              <form method="post" action="/assistants/memory" data-ajax-refresh data-confirm="Delete this memory?" data-confirm-button="Delete">
+              <form method="post" action="/assistants/memory" data-ajax-refresh data-confirm="Delete this memory?" data-confirm-kind="delete" data-confirm-button="Delete">
                 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                 <input type="hidden" name="form" value="delete">
                 <input type="hidden" name="slug" value="{{.Slug}}">

@@ -203,24 +203,23 @@ func (s *Server) forgeChangeApproval(owner string, w forge.Watch, n forge.NewCha
 	if n.Draft {
 		action = "Open draft " + kind.ChangeNoun
 	}
-	body := n.Body
-	if body == "" {
-		body = "(none)"
+	details := append(forgeChips(project, branch),
+		askpass.Detail{Label: "Into", Value: n.Target, As: askpass.AsTarget},
+		askpass.Detail{Label: "Title", Value: n.Title},
+		askpass.Detail{Label: "Commit", Value: forge.ShortHead(w.Head), As: askpass.AsMono},
+		forgeDetail(w),
+		askpass.Detail{Label: "Description", Value: n.Body, As: askpass.AsLong},
+	)
+	if n.Body == "" {
+		details[len(details)-1] = askpass.Detail{Label: "Description", Value: "(none)"}
 	}
 	return approval.Request{
-		Owner: owner,
-		Kind:  approvalForgeChange,
-		Key:   project + "\n" + branch,
-		What:  fmt.Sprintf("%s of %s into %s in %s", action, plaintext.Visible(branch), plaintext.Visible(n.Target), project),
-		Details: []askpass.Detail{
-			{Label: "Action", Value: action},
-			{Label: "Title", Value: n.Title},
-			{Label: "Description", Value: body},
-			{Label: "Branch", Value: fmt.Sprintf("%s at %s", branch, forge.ShortHead(w.Head))},
-			{Label: "Into", Value: n.Target},
-			{Label: "Forge", Value: kind.Label + " · " + address},
-			{Label: "Project", Value: project},
-		},
+		Owner:    owner,
+		Kind:     approvalForgeChange,
+		Key:      project + "\n" + branch,
+		What:     fmt.Sprintf("%s of %s into %s in %s", action, plaintext.Visible(branch), plaintext.Visible(n.Target), project),
+		Title:    action,
+		Details:  details,
 		Projects: []string{project},
 		Run: func() (string, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), forgeWriteTimeout)

@@ -462,11 +462,11 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await openLineMenu(page, 1);
     await pickMenuItem(page, "Delete comment");
     await page.waitForSelector(".swal2-confirm", { timeout: 6000 });
-    assert((await page.locator(".swal2-title").textContent()).includes("Delete this comment"), "no confirm before the line menu delete");
+    assert((await page.locator(".dc-ask-title").textContent()).includes("Delete this comment"), "no confirm before the line menu delete");
     const confirmText = await page.locator(".swal2-html-container").textContent();
     assert(confirmText.includes(`${FILE}:1`) && confirmText.includes("cursor note, edited"), `the confirm does not name file, line and text: ${confirmText}`);
     assert(!confirmText.includes("—"), `the confirm still joins with a dash: ${confirmText}`);
-    assert(await page.locator(".swal2-html-container .text-secondary").textContent() === "cursor note, edited", "the comment text is not the dimmed own line");
+    assert(await page.locator(".swal2-html-container .dc-ask-quote [data-approval-value]").textContent() === "cursor note, edited", "the comment text is not the dimmed own line");
     await page.click(".swal2-confirm");
     await confirmDialogGone(page);
     await waitMarked(page, "3");
@@ -539,10 +539,10 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     await pickMenuItem(page, "Delete");
     await page.waitForSelector(".swal2-confirm", { timeout: 6000 });
-    assert((await page.locator(".swal2-title").textContent()).includes("Delete this comment"), "no confirm before the cell delete");
+    assert((await page.locator(".dc-ask-title").textContent()).includes("Delete this comment"), "no confirm before the cell delete");
     const confirmText = await page.locator(".swal2-html-container").textContent();
     assert(confirmText.includes(`${FILE}:1`) && confirmText.includes("temp note"), `the confirm does not name file, line and text: ${confirmText}`);
-    assert(await page.locator(".swal2-html-container .text-secondary").textContent() === "temp note", "the comment text is not the dimmed own line");
+    assert(await page.locator(".swal2-html-container .dc-ask-quote [data-approval-value]").textContent() === "temp note", "the comment text is not the dimmed own line");
     await page.click(".swal2-cancel");
     await confirmDialogGone(page);
     assert(await sheetCell(page, "temp note").count() === 1, "cancelling the confirm deleted anyway");
@@ -637,7 +637,7 @@ L.runFeature("EDITOR COMMENTS", async ({ engine, browser, page, run, mobilePage,
     await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Delete all comments" }).click();
     await page.waitForSelector("[data-editor-sheet]", { state: "hidden", timeout: 6000 });
     await page.waitForSelector(".swal2-confirm", { timeout: 6000 });
-    assert((await page.locator(".swal2-title").textContent()).includes("Delete all comments"), "no confirm before the clear");
+    assert((await page.locator(".dc-ask-title").textContent()).includes("Delete all comments"), "no confirm before the clear");
     await page.click(".swal2-confirm");
     await confirmDialogGone(page);
     await waitMarked(page, "");

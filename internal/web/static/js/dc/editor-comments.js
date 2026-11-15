@@ -1,5 +1,5 @@
 import { labelNodes } from "@dc/contextmenu";
-import { el, escapeHtml, growTextarea } from "@dc/dom";
+import { el, growTextarea } from "@dc/dom";
 import { ensureOk, postForm, postJSON } from "@dc/http";
 import { notifyError, notifySuccess } from "@dc/toast";
 
@@ -11,8 +11,6 @@ export function sortComments(list) {
 }
 
 const PROJECT_PLACE = "Project comment";
-
-export const placeOf = (comment) => (comment.project ? PROJECT_PLACE : `${comment.path}:${comment.line}`);
 
 const flatLine = (text) => String(text || "").replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
 
@@ -30,6 +28,8 @@ export function findUniqueQuoteLine(doc, quote) {
   return at;
 }
 
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
 const SHORT_ESCAPES = { "\t": "\\t", "\n": "\\n", "\r": "\\r", "\f": "\\f", "\v": "\\v", "\b": "\\b", "\u0007": "\\a" };
 
 function escapeOf(char) {
@@ -45,7 +45,7 @@ function visibleLine(text) {
   const value = String(text || "");
   const nodes = [];
   let at = 0;
-  for (const match of value.matchAll(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g)) {
+  for (const match of value.matchAll(CONTROL)) {
     if (match.index > at) nodes.push(value.slice(at, match.index));
     nodes.push(el("code", {}, escapeOf(match[0])));
     at = match.index + 1;
@@ -131,7 +131,14 @@ export async function writeLineComment(url, payload, failed, refused = notifyErr
 // it by the rule its delete takes.
 export const mayDelete = (comment) => !!comment.deletes;
 
-const noteConfirm = (comment, note) => `${el("div", {}, ...visibleLine(placeOf(comment))).outerHTML}${note.author ? `<div>By ${escapeHtml(note.author)}</div>` : ""}<div class="text-secondary">${escapeHtml(note.text)}</div>`;
+const shownLine = (text) => String(text || "").replace(CONTROL, escapeOf);
+
+const noteDetails = (comment, note) => [
+  comment.project
+    ? { as: "project", label: "Place", value: PROJECT_PLACE }
+    : { as: "place", label: "Line", value: `${shownLine(comment.path)}:${comment.line}` },
+  { as: "quote", label: note.author || "", value: note.text },
+];
 
 // deleteCommentQuestion is the confirm before a thread is deleted, which
 // takes its replies along.
@@ -139,13 +146,15 @@ export function deleteCommentQuestion(comment) {
   const replies = repliesOf(comment).length;
   return {
     title: "Delete this comment?",
-    html: `${noteConfirm(comment, comment)}${replies ? `<div>It takes ${replies === 1 ? "its reply" : `its ${replyCount(replies)}`} along.</div>` : ""}`,
+    details: noteDetails(comment, comment),
+    warning: replies ? `It takes ${replies === 1 ? "its reply" : `its ${replyCount(replies)}`} along.` : "",
+    kind: "delete",
     confirmText: "Delete",
   };
 }
 
 // deleteReplyQuestion is the confirm before one reply of a thread is deleted.
-export const deleteReplyQuestion = (comment, reply) => ({ title: "Delete this reply?", html: noteConfirm(comment, reply), confirmText: "Delete" });
+export const deleteReplyQuestion = (comment, reply) => ({ title: "Delete this reply?", details: noteDetails(comment, reply), kind: "delete", confirmText: "Delete" });
 
 // deleteLineComments posts a delete of line comment threads to the delete
 // route of a project's line comments and answers whether it went, false

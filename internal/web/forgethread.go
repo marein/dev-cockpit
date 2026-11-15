@@ -121,25 +121,27 @@ func (s *Server) forgeThreadApproval(owner string, w forge.Watch, target forge.T
 	case write.Resolve && !target.Thread.Resolved:
 		action = "Reply and resolve the thread"
 	}
-	details := []askpass.Detail{{Label: "Action", Value: action}, {Label: "Thread", Value: forgeThreadOpening(target.Thread)}}
+	icon := ""
+	details := forgeChips(project, branch)
+	if t := target.Thread; t.Path != "" {
+		details = append(details, askpass.Detail{Label: "File", Value: fmt.Sprintf("%s:%d", t.Path, t.Line), As: askpass.AsPlace})
+	}
+	if len(target.Thread.Notes) > 0 {
+		details = append(details, forgeThreadQuote(target.Thread.Notes[0]))
+	}
 	if write.Body != "" {
-		details = append(details, askpass.Detail{Label: "Reply", Value: write.Body})
+		details = append(details, askpass.Detail{Label: "Reply", Value: write.Body, As: askpass.AsLong})
+	} else {
+		icon = "circle-check"
 	}
-	on := fmt.Sprintf("%s %s · %s", kind.ChangeNoun, ref, target.Change.Title)
-	if target.Change.URL != "" {
-		on += " · " + target.Change.URL
-	}
-	details = append(details,
-		askpass.Detail{Label: "On", Value: on},
-		askpass.Detail{Label: "Branch", Value: branch},
-		askpass.Detail{Label: "Forge", Value: kind.Label + " · " + address},
-		askpass.Detail{Label: "Project", Value: project},
-	)
+	details = append(details, forgeChangeDetail(kind, target.Change), forgeDetail(w))
 	return approval.Request{
 		Owner:    owner,
 		Kind:     approvalForgeThread,
+		Icon:     icon,
 		Key:      strings.Join([]string{project, branch, write.Thread}, "\n"),
 		What:     fmt.Sprintf("%s %s on %s %s of %s in %s", action, forgeThreadPlace(target.Thread), kind.ChangeNoun, ref, plaintext.Visible(branch), project),
+		Title:    fmt.Sprintf("%s on %s %s", action, kind.ChangeNoun, ref),
 		Details:  details,
 		Projects: []string{project},
 		Run: func() (string, error) {
@@ -174,22 +176,14 @@ func forgeThreadPlace(t forge.Thread) string {
 	return fmt.Sprintf("at %s:%d", plaintext.Visible(t.Path), t.Line)
 }
 
-// forgeThreadOpening is where a thread stands and the start of the note it
-// opens with, the way an approval names the thread.
-func forgeThreadOpening(t forge.Thread) string {
-	at := fmt.Sprintf("%s:%d", t.Path, t.Line)
-	if t.Path == "" {
-		at = "the conversation"
-	}
-	if len(t.Notes) == 0 {
-		return at
-	}
-	first := t.Notes[0]
+// forgeThreadQuote is the start of the note a thread opens with, its author
+// and its first line, the way an approval quotes the thread.
+func forgeThreadQuote(first forge.Note) askpass.Detail {
 	text, _, _ := strings.Cut(strings.TrimSpace(first.Body), "\n")
 	if runes := []rune(text); len(runes) > maxThreadOpening {
 		text = string(runes[:maxThreadOpening]) + "…"
 	}
-	return fmt.Sprintf("%s · %s: %s", at, first.Author, text)
+	return askpass.Detail{Label: first.Author, Value: text, As: askpass.AsQuote}
 }
 
 // forgeThreadText is what an assistant reads of a write on a thread that went

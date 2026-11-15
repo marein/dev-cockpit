@@ -386,7 +386,8 @@ class TerminalSplit extends HTMLElement {
       const ok = await confirm({
         title: drop ? `Delete coder "${paneName}"?`
           : paneKind === "coder" ? `Stop coder "${paneName}"?` : `Delete shell "${paneName}"?`,
-        text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+        warning: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+        kind: paneKind === "coder" && !drop ? "danger" : "delete",
         confirmText: paneKind === "coder" && !drop ? "Stop" : "Delete",
       });
       if (!ok) return;

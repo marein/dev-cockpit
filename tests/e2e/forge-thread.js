@@ -235,10 +235,8 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
     await p.click(`${MODAL} .btn-close`);
     await p.waitForFunction((sel) => !document.querySelector(sel)?.classList.contains("show") && getComputedStyle(document.querySelector(sel)).display === "none", MODAL, { timeout: 6000 });
   };
-  const dialogRows = () => page.locator(`${DIALOG} dl[data-approval-details]`).evaluate((list) => {
-    const labels = [...list.querySelectorAll("dt")].map((dt) => dt.textContent.trim());
-    return [...list.querySelectorAll("dd")].map((dd, i) => [labels[i], dd.textContent.trim()]);
-  });
+  const dialogRows = () => page.locator(`${DIALOG} [data-approval-details]`).evaluate((root) => [...root.querySelectorAll("[data-approval-detail]")]
+    .map((el) => [el.dataset.approvalDetail, (el.querySelector("[data-approval-value]") || el).textContent.trim()]));
   // approvalNote reads the assistant's page with a fetch, not a visit, see
   // forge-publish.js.
   const approvalNote = async (verdict, count) => {
@@ -483,16 +481,15 @@ L.runFeature("FORGE_THREAD", async ({ browser, page, run, mobilePage, bag }) => 
       const what = `Reply and resolve the thread at ${FILE}:4 on merge request !4 of feature in ${project}`;
       assert(answer.status === 200 && answer.json.pending === true && answer.json.what === what, `the socket answered ${answer.status} ${answer.raw}`);
       await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
-      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === what, "the dialog's first line is another");
+      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === "Reply and resolve the thread on merge request !4", "the dialog's head is another");
       const want = [
-        ["Asked by", `Assistant · ${assistant.slice(0, 8)}`],
-        ["Action", "Reply and resolve the thread"],
-        ["Thread", `${FILE}:4 · alice: New name bb?`],
-        ["Reply", "fixed in abc123"],
-        ["On", `merge request !4 · Fix the login · ${mrPage}`],
-        ["Branch", "feature"],
-        ["Forge", `GitLab · ${address}`],
         ["Project", project],
+        ["Branch", "feature"],
+        ["File", `${FILE}:4`],
+        ["alice", "New name bb?"],
+        ["Reply", "fixed in abc123"],
+        ["Merge request", "!4 Fix the login"],
+        ["Forge", `GitLab · ${address}`],
       ];
       const rows = await dialogRows();
       assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);

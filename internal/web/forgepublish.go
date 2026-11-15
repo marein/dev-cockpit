@@ -26,9 +26,12 @@ import (
 // statefile.NewID mints and more.
 const maxForgeCommentID = 64
 
-// maxApprovalComments bounds the comments an approval of a publish shows one
-// by one, the rest it counts.
-const maxApprovalComments = 10
+// maxApprovalCommentBytes bounds the comments one publish of an assistant
+// takes, their places and texts together. Its approval shows every one of
+// them whole and rides on every page, as many as MaxPerOwner per assistant,
+// so it carries no more than any value of an approval may; a larger review
+// publishes in parts.
+const maxApprovalCommentBytes = 64 << 10
 
 // forgeDraft is a comment the way it publishes: the comment, the draft of it
 // at its line in the pushed head, and that line's text there, a general
@@ -99,7 +102,12 @@ func (s *Server) handleProjectForgePublish(c *gin.Context) {
 			c.JSON(forgePublishCode(err), gin.H{"error": err.Error()})
 			return
 		}
-		if s.askApproval(c, s.forgePublishApproval(owner, w, target.Change, drafts)) {
+		req, err := s.forgePublishApproval(owner, w, target.Change, drafts)
+		if err != nil {
+			c.JSON(forgePublishCode(err), gin.H{"error": err.Error()})
+			return
+		}
+		if s.askApproval(c, req) {
 			return
 		}
 		ids, said = forgeSaid(drafts)
@@ -337,41 +345,37 @@ func forgePublishCode(err error) int {
 // HEAD is on and the comments again by name, and publishes them only where
 // each still says what the user saw: one changed, gone or published meanwhile
 // refuses it, and so does a project bound elsewhere or on another branch.
-func (s *Server) forgePublishApproval(owner string, w forge.Watch, change forge.Change, drafts []forgeDraft) approval.Request {
+// It shows every comment, and refuses comments beyond
+// maxApprovalCommentBytes before anybody is asked.
+func (s *Server) forgePublishApproval(owner string, w forge.Watch, change forge.Change, drafts []forgeDraft) (approval.Request, error) {
 	kind := w.Binding.Host.Kind
 	project, branch, address := w.Project, w.Branch, w.Binding.Address()
 	ref := kind.ChangeRef(change.Number)
-	details := []askpass.Detail{{Label: "Action", Value: "Publish " + commentsNoun(drafts, false)}}
-	for i, d := range drafts {
-		if i >= maxApprovalComments {
-			break
-		}
+	details := append(forgeChips(project, branch),
+		forgeChangeDetail(kind, change),
+		askpass.Detail{Label: "Commit", Value: forge.ShortHead(w.Head), As: askpass.AsMono},
+		forgeDetail(w),
+	)
+	size := 0
+	for _, d := range drafts {
 		at := fmt.Sprintf("%s:%d", d.draft.Path, d.draft.Line)
 		if d.draft.General {
 			at = "project"
 		}
-		details = append(details, askpass.Detail{Label: "Comment", Value: at + " · " + d.comment.Text})
+		size += len(at) + len(d.comment.Text)
+		details = append(details, askpass.Detail{Label: at, Value: d.comment.Text, As: askpass.AsQuote})
 	}
-	if rest := len(drafts) - maxApprovalComments; rest > 0 {
-		details = append(details, askpass.Detail{Label: "And", Value: fmt.Sprintf("%d more comments", rest)})
+	if size > maxApprovalCommentBytes {
+		return approval.Request{}, &forge.PublishRefusal{Reason: fmt.Sprintf("These %d comments come to %d KiB, one publish takes at most %d KiB of them: publish them in parts by their ids.", len(drafts), (size+1023)>>10, maxApprovalCommentBytes>>10)}
 	}
-	on := fmt.Sprintf("%s %s · %s", kind.ChangeNoun, ref, change.Title)
-	if change.URL != "" {
-		on += " · " + change.URL
-	}
-	details = append(details,
-		askpass.Detail{Label: "On", Value: on},
-		askpass.Detail{Label: "Branch", Value: fmt.Sprintf("%s at %s", branch, forge.ShortHead(w.Head))},
-		askpass.Detail{Label: "Forge", Value: kind.Label + " · " + address},
-		askpass.Detail{Label: "Project", Value: project},
-	)
 	ids, said := forgeSaid(drafts)
 	key := slices.Sorted(slices.Values(ids))
 	return approval.Request{
 		Owner:    owner,
 		Kind:     approvalForgePublish,
 		Key:      project + "\n" + strings.Join(key, "\n"),
-		What:     fmt.Sprintf("Publish %s on %s %s of %s in %s", commentsNoun(drafts, true), kind.ChangeNoun, ref, plaintext.Visible(branch), project),
+		What:     fmt.Sprintf("Publish %s on %s %s of %s in %s", commentsNoun(drafts), kind.ChangeNoun, ref, plaintext.Visible(branch), project),
+		Title:    fmt.Sprintf("Publish %s on %s %s", commentsNoun(drafts), kind.ChangeNoun, ref),
 		Details:  details,
 		Projects: []string{project},
 		Run: func() (string, error) {
@@ -397,13 +401,12 @@ func (s *Server) forgePublishApproval(owner string, w forge.Watch, change forge.
 			}
 			return forgePublishedText(w, done).Note, nil
 		},
-	}
+	}, nil
 }
 
-// commentsNoun names the comments of drafts, line comments, project comments
-// or comments where both kinds publish, counted, or bare as an action names
-// them.
-func commentsNoun(drafts []forgeDraft, counted bool) string {
+// commentsNoun names the comments of drafts, counted: line comments, project
+// comments or comments where both kinds publish.
+func commentsNoun(drafts []forgeDraft) string {
 	general := 0
 	for _, d := range drafts {
 		if d.draft.General {
@@ -417,10 +420,7 @@ func commentsNoun(drafts []forgeDraft, counted bool) string {
 	case general > 0:
 		kind = "comment"
 	}
-	switch {
-	case !counted:
-		return kind + "s"
-	case len(drafts) == 1:
+	if len(drafts) == 1 {
 		return "a " + kind
 	}
 	return fmt.Sprintf("%d %ss", len(drafts), kind)

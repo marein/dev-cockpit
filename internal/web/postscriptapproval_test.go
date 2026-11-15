@@ -57,7 +57,7 @@ func TestAnAssistantsPostScriptWriteWaitsForTheApproval(t *testing.T) {
 		t.Fatalf("the write answered %d %v", rec.Code, answer)
 	}
 	q := f.waitQuestion(t)
-	if !reflect.DeepEqual(q.Details, []askpass.Detail{{Label: "Script", Value: "#!/bin/sh\necho hi\n"}}) {
+	if !reflect.DeepEqual(q.Details, []askpass.Detail{{Label: "Post script", Value: "#!/bin/sh\necho hi\n", As: askpass.AsCode}, {As: askpass.AsNote, Value: "It runs in every worktree project made from now on."}}) {
 		t.Fatalf("the question reads %+v", q)
 	}
 	if f.postScript() != "" {
@@ -76,7 +76,11 @@ func TestAnAssistantsPostScriptWriteWaitsForTheApproval(t *testing.T) {
 	}
 	f.waitNoQuestion(t)
 	f.postScriptAs(t, http.MethodPost, f.owner, "")
-	f.decide(t, f.waitQuestion(t), false, false)
+	q = f.waitQuestion(t)
+	if !reflect.DeepEqual(q.Details, []askpass.Detail{{As: askpass.AsNote, Value: "Worktree projects made from now on run no post script."}}) {
+		t.Fatalf("the delete's question reads %+v", q)
+	}
+	f.decide(t, q, false, false)
 	if note := f.waitApprovalNotes(t, f.owner, 2)[1]; note.Note.Verdict != approval.Declined || f.postScript() == "" {
 		t.Fatalf("the denied delete left %q, note %s", f.postScript(), note.Content)
 	}

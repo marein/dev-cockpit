@@ -9,7 +9,8 @@ export function shareItem(id) {
 export async function deleteAssistant(url, name) {
   const ok = await confirm({
     title: name ? `Delete "${name}"?` : "Delete this assistant?",
-    text: "Its thread goes with it. The coders it steers are released and yours again, the shared memory is kept.",
+    warning: "Its thread goes with it. The coders it steers are released and yours again, the shared memory is kept.",
+    kind: "delete",
     confirmText: "Delete",
   });
   if (!ok) return false;

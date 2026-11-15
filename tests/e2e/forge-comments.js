@@ -318,7 +318,7 @@ L.runFeature("FORGE_COMMENTS", async ({ browser, page, run, mobilePage, bag }) =
       await ensureSheet(page);
       await page.locator("[data-editor-sheet-body] .dropdown-item", { hasText: "Delete all comments" }).click();
       await page.waitForSelector(".swal2-popup", { state: "visible", timeout: 6000 });
-      const said = await page.locator(".swal2-html-container").innerText();
+      const said = await page.locator(".dc-ask-body").innerText();
       assert(said === "This removes the one comment of this project. The review threads of the forge stay.", `the confirm says ${said}`);
       await page.click(".swal2-confirm");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 });

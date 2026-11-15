@@ -126,7 +126,7 @@ module.exports.threadChecks = async function threadChecks({ page, run, scratch, 
     assert(!(await L.seen(field)) && await L.seen(card().locator("[data-line-thread-reply-open]")), "the field stands after the save");
     await noteButton(2, "Delete reply").click();
     await page.waitForSelector(".swal2-confirm", { timeout: 6000 });
-    assert((await page.locator(".swal2-title").textContent()).includes("Delete this reply"), "no confirm before the reply's delete");
+    assert((await page.locator(".dc-ask-title").textContent()).includes("Delete this reply"), "no confirm before the reply's delete");
     assert((await page.locator(".swal2-html-container").textContent()).includes("from the phone, edited"), "the confirm does not name the reply");
     await page.click(".swal2-confirm");
     await confirmDialogGone(page);

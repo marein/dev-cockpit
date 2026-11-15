@@ -368,7 +368,7 @@ L.runFeature("EDITOR-FOCUS", async ({ engine, page, run, mobilePage }) => {
 
     await run("a viewer tab takes no editor focus, and a text tab after it takes it again", async () => {
       await page.setInputFiles("[data-editor-upload-input]", [{ name: "pic.png", mimeType: "image/png", buffer: Buffer.from(PNG, "base64") }]);
-      await page.waitForSelector(".editor-upload-list", { timeout: 6000 });
+      await page.waitForSelector("[data-upload-item]", { timeout: 6000 });
       await page.click(".swal2-confirm");
       await page.waitForSelector(".swal2-container", { state: "detached", timeout: 6000 });
       await page.click('.editor-file[data-path="pic.png"]');

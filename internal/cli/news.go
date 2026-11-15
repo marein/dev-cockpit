@@ -53,7 +53,7 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			who, what := "", ""
 			for _, q := range askBroker.Questions() {
 				if q.Key == key {
-					who, what = q.Assistant, q.Action
+					who, what = q.Asker(), q.Action
 					break
 				}
 			}

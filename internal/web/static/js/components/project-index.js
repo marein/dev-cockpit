@@ -99,7 +99,8 @@ class ProjectIndex extends HTMLElement {
     const name = row.dataset.indexProject || "";
     const ok = await confirm({
       title: `Delete project "${name}"?`,
-      text: row.dataset.indexDeleteNote,
+      warning: row.dataset.indexDeleteNote,
+      kind: "delete",
       confirmText: "Delete",
     });
     if (!ok) return;

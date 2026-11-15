@@ -104,6 +104,10 @@ func DocsTopics() []DocsTopic {
 					Desc:  `The three dots <i class="ti ti-dots align-text-bottom" aria-hidden="true"></i> on a project row, a right click, or a held finger: open the project or its editor, start a coder or a shell, edit its tags, git and compose actions, delete.`,
 				},
 				{
+					Title: "Questions before an action",
+					Desc:  `A question before something is deleted wears a red trash <i class="ti ti-trash align-text-bottom" aria-hidden="true"></i>, before it is stopped, closed, discarded, reverted, replaced, overwritten, revoked, force pushed or run as a compose command marked to ask first a red warning sign <i class="ti ti-alert-triangle align-text-bottom" aria-hidden="true"></i>, both with a red button, and where more goes along with it, a red box spells it out. Every other question wears a question mark <i class="ti ti-help-circle align-text-bottom" aria-hidden="true"></i>, or the sign of what it starts like an upload or an update, and a blue button. Enter takes the focused button, the main one when the question opens, Escape or Cancel changes nothing.`,
+				},
+				{
 					Title: "Project tags",
 					Desc:  `The dashed chip after a row's tags, or <em>Edit tags</em> in its menu: the project's tags come first, the cross takes one off, then type to find or create a tag or tap another one. A tag's name holds A to Z, a to z, 0 to 9, - and _, at most 40, and is the same in any case. A new tag takes the color the fewest tags wear. A board row names its tags above its terminals, past eight they fold behind <em>+N</em>. The list column and the switchers show one small disc, a slice per tag in its color, its tooltip names them. A worktree carries no tags. A backup carries them in the Projects section.`,
 				},

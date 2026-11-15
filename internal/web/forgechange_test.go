@@ -412,15 +412,15 @@ func TestAnAssistantsOpenWaitsForTheApproval(t *testing.T) {
 	}
 	q := f.waitQuestion(t)
 	want := []askpass.Detail{
-		{Label: "Action", Value: "Open draft merge request"},
+		{Label: "Project", Value: "app", As: askpass.AsProject},
+		{Label: "Branch", Value: "feature", As: askpass.AsBranch},
+		{Label: "Into", Value: "master", As: askpass.AsTarget},
 		{Label: "Title", Value: "Add the <login>"},
-		{Label: "Description", Value: "* Add the <login>\n* Fix the login"},
-		{Label: "Branch", Value: "feature at " + f.pushed[:12]},
-		{Label: "Into", Value: "master"},
-		{Label: "Forge", Value: "GitLab · " + f.address},
-		{Label: "Project", Value: "app"},
+		{Label: "Commit", Value: f.pushed[:12], As: askpass.AsMono},
+		{Label: "Forge", Value: "GitLab · " + f.address, As: askpass.AsLink, URL: f.s.forgeByProject(f.s.projects.List())["app"].WebURL()},
+		{Label: "Description", Value: "* Add the <login>\n* Fix the login", As: askpass.AsLong},
 	}
-	if q.Action != what || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.opens()) != 0 {
+	if q.Action != what || q.Title != "Open draft merge request" || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.opens()) != 0 {
 		t.Fatalf("the question reads %+v, opened %v", q, f.gitlab.opens())
 	}
 	if code, answer := f.open(t, f.owner, url.Values{"title": {"Other"}}); code != http.StatusConflict || !strings.Contains(answer["error"].(string), "already waits") {
@@ -455,8 +455,8 @@ func TestAnApprovedOpenOfABranchOpenedMeanwhileOpensNothing(t *testing.T) {
 	if note.Note.Verdict != approval.Done || !strings.Contains(note.Content, `has the open merge request !4 "Theirs" into master already: `) || len(f.gitlab.opens()) != 0 {
 		t.Fatalf("the approval sent %v, note %s", f.gitlab.opens(), note.Content)
 	}
-	if q.Details[2] != (askpass.Detail{Label: "Description", Value: "(none)"}) || q.Details[0].Value != "Open merge request" {
-		t.Fatalf("the question reads %+v", q.Details)
+	if q.Details[len(q.Details)-1] != (askpass.Detail{Label: "Description", Value: "(none)"}) || !strings.HasPrefix(q.Action, "Open merge request of ") {
+		t.Fatalf("the question reads %q %+v", q.Action, q.Details)
 	}
 }
 

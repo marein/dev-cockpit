@@ -1,5 +1,7 @@
+import { confirmView, formView, promptView } from "@dc/prompt-view";
+
 // SweetAlert2 wrappers. Falls back to native confirm/prompt when SweetAlert
-// is unavailable, so flows still work. Theming happens in style.css through
+// is unavailable, so flows still work. Theming happens in dialog.css through
 // the --swal2-* custom properties, so open popups follow live theme flips.
 export function available() {
   return Boolean(window.Swal);
@@ -57,9 +59,9 @@ function plainTitle({ title, ...options }) {
   return { ...options, titleText: title };
 }
 
-export function fire(options = {}) {
+export function fire({ native, ...options } = {}) {
   if (!window.Swal) {
-    const message = nativeMessage(options);
+    const message = nativeMessage(native || options);
     if (options.showCancelButton) {
       return Promise.resolve({ isConfirmed: window.confirm(message) });
     }
@@ -78,45 +80,61 @@ export function fire(options = {}) {
 export async function confirm({
   title,
   text,
-  html,
-  icon = "warning",
-  confirmText = "Confirm",
-  cancelText = "Cancel",
+  warning,
+  details,
+  kind,
+  confirmText,
+  cancelText,
   target,
   heightAuto,
 } = {}) {
   if (!window.Swal) {
     return window.confirm(title || text || "Are you sure?");
   }
-  const result = await fire({
-    title,
-    text,
-    html,
-    icon,
-    showCancelButton: true,
-    confirmButtonText: confirmText,
-    cancelButtonText: cancelText,
-    reverseButtons: true,
-    target,
-    heightAuto,
-  });
+  const view = confirmView({ title, text, warning, details, kind, confirmText, cancelText });
+  const result = await fire({ ...view, target, heightAuto });
   return result.isConfirmed;
 }
 
-export function loading({ title, text } = {}) {
+export function confirmForm(form, options = {}) {
+  const ask = form.dataset;
+  return confirm({
+    title: ask.confirm,
+    text: ask.confirmText,
+    warning: ask.confirmWarning,
+    kind: ask.confirmKind,
+    confirmText: ask.confirmButton || "Confirm",
+    ...options,
+  });
+}
+
+export function notice({ title, text, details, kind = "info", confirmText = "OK", timer } = {}) {
+  return fire({
+    ...confirmView({ title, text, details, kind, confirmText }),
+    showCancelButton: false,
+    ...(timer && { timer, showConfirmButton: false }),
+  });
+}
+
+// The loader starts in didRender: didOpen waits a task, and an answer that came
+// quicker would already stand in the popup and get the loader instead.
+export function loading({ title, text, icon } = {}) {
   if (!window.Swal) return Promise.resolve({ isConfirmed: false });
   return fire({
-    title,
-    text,
+    ...formView({ title, text, icon, confirmText: "" }),
+    showCancelButton: false,
     allowOutsideClick: false,
     allowEscapeKey: false,
-    didOpen: () => window.Swal.showLoading(),
+    didRender: () => window.Swal.showLoading(),
   });
 }
 
 export async function promptText({
   title,
-  html,
+  text,
+  details,
+  icon,
+  tone,
   placeholder,
   value,
   confirmText = "Create",
@@ -129,20 +147,8 @@ export async function promptText({
     const trimmed = answer.trim();
     return trimmed || allowEmpty ? trimmed : null;
   }
-  const result = await fire({
-    title,
-    html,
-    input: "text",
-    inputPlaceholder: placeholder,
-    inputValue: value || "",
-    showCancelButton: true,
-    confirmButtonText: confirmText,
-    cancelButtonText: "Cancel",
-    reverseButtons: true,
-    inputValidator: allowEmpty
-      ? undefined
-      : (input) => (input && input.trim() ? undefined : validatorMessage),
-  });
+  const required = allowEmpty ? "" : validatorMessage;
+  const result = await fire(promptView({ title, text, details, icon, tone, placeholder, value, required, confirmText }));
   if (!result.isConfirmed) return null;
   const trimmed = (result.value || "").trim();
   return trimmed || allowEmpty ? trimmed : null;

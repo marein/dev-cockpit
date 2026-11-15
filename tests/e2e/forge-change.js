@@ -193,10 +193,8 @@ L.runFeature("FORGE_CHANGE", async ({ browser, page, run, mobilePage, bag }) => 
     await p.click(`${MODAL} [data-bs-dismiss="modal"]`);
     await p.waitForFunction(() => !document.querySelector("[data-form-modal].show"), null, { timeout: 8000 });
   };
-  const dialogRows = () => page.locator(`${DIALOG} dl[data-approval-details]`).evaluate((list) => {
-    const labels = [...list.querySelectorAll("dt")].map((dt) => dt.textContent.trim());
-    return [...list.querySelectorAll("dd")].map((dd, i) => [labels[i], dd.textContent]);
-  });
+  const dialogRows = () => page.locator(`${DIALOG} [data-approval-details]`).evaluate((root) => [...root.querySelectorAll("[data-approval-detail]")]
+    .map((el) => [el.dataset.approvalDetail, (el.querySelector("[data-approval-value]") || el).textContent.trim()]));
   // approvalNote reads the assistant's page with a fetch, not a visit: a
   // visit leaves the page's conversation stream connecting, and the next
   // navigation that cuts it is a page error in WebKit.
@@ -441,19 +439,22 @@ L.runFeature("FORGE_CHANGE", async ({ browser, page, run, mobilePage, bag }) => 
       const what = `Open draft merge request of login into main in ${project}`;
       assert(answer.status === 200 && answer.json.pending === true && answer.json.what === what, `the socket answered ${answer.status} ${answer.raw}`);
       await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
-      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === what, "the dialog's first line is another");
+      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === "Open draft merge request", "the dialog's head is another");
+      const asker = (await page.textContent(`${DIALOG} [data-approval-asker]`)).replace(/\s+/g, " ").trim();
+      assert(asker === `Assistant ${assistant.slice(0, 8)}`, `the dialog names who asks as "${asker}"`);
       const rows = await dialogRows();
       const want = [
-        ["Asked by", `Assistant · ${assistant.slice(0, 8)}`],
-        ["Action", "Open draft merge request"],
-        ["Title", "Add the login <form>"],
-        ["Description", "* Add the login <form>\n* Fix the login"],
-        ["Branch", `login at ${pushed.slice(0, 12)}`],
-        ["Into", "main"],
-        ["Forge", `GitLab · ${address}`],
         ["Project", project],
+        ["Branch", "login"],
+        ["Into", "main"],
+        ["Title", "Add the login <form>"],
+        ["Commit", pushed.slice(0, 12)],
+        ["Forge", `GitLab · ${address}`],
+        ["Description", "* Add the login <form>\n* Fix the login"],
       ];
       assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
+      const forgeLink = await page.locator(`${DIALOG} [data-approval-detail="Forge"] a`).evaluate((a) => [a.getAttribute("href"), a.target, a.rel]);
+      assert(JSON.stringify(forgeLink) === JSON.stringify([`http://${address}`, "_blank", "noopener noreferrer"]), `the forge links ${JSON.stringify(forgeLink)}`);
       assert(state.changes.length === 0, "a waiting open opened something");
       const again = await asAssistant(assistant, `/projects/${project}/forge/change`, { title: "Other" });
       assert(again.status === 409 && again.json.error === `${what} already waits for the user's approval.`, `a second open answered ${again.status} ${again.raw}`);
@@ -471,6 +472,48 @@ L.runFeature("FORGE_CHANGE", async ({ browser, page, run, mobilePage, bag }) => 
       await sleep(1000);
       assert(await page.locator(DIALOG).count() === 0, "the user was asked about an open one");
       assert(state.changes.length === 1, "a second one opened");
+    });
+
+    await run("an assistant's long description shows whole in a box that scrolls inside, one beyond 64 KiB its first 64 KiB with the note", async () => {
+      state.changes = [];
+      await refresh();
+      const box = async (body) => {
+        const answer = await asAssistant(assistant, `/projects/${project}/forge/change`, { title: "Long description", body, target: "main" });
+        assert(answer.status === 200 && answer.json.pending === true, `the socket answered ${answer.status} ${answer.raw.slice(0, 200)}`);
+        const value = `${DIALOG} [data-approval-detail="Description"] [data-approval-value]`;
+        await page.waitForSelector(value, { state: "visible", timeout: 15000 });
+        const seen = await page.evaluate(([sel, dialog]) => {
+          const el = document.querySelector(sel);
+          const cut = document.querySelector(`${dialog} [data-approval-cut]`);
+          const actions = document.querySelector(`${dialog} .swal2-actions`).getBoundingClientRect();
+          return {
+            text: el.textContent,
+            scrolls: el.scrollHeight > el.clientHeight + 1 && getComputedStyle(el).overflowY === "auto",
+            footer: actions.height > 0 && actions.bottom <= innerHeight,
+            cut: cut && cut.getClientRects().length > 0 ? cut.innerText.trim() : "",
+            above: !!cut && !!cut.closest(".dc-ask-section-head") && cut.getBoundingClientRect().bottom <= el.getBoundingClientRect().top,
+            head: el.parentElement.querySelector(".dc-ask-section-head").innerText.trim(),
+          };
+        }, [value, DIALOG]);
+        await Promise.all([
+          page.waitForResponse((r) => r.url().endsWith("/git/prompt") && r.request().method() === "POST", { timeout: 15000 }),
+          page.click(`${DIALOG} .swal2-deny`),
+        ]);
+        await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+        return seen;
+      };
+      const long = Array.from({ length: 120 }, (_, i) => `* Step ${i + 1} of the login`).join("\n") + "\nhttps://example.invalid/last";
+      const whole = await box(long);
+      assert(whole.text === long, `the dialog shows ${whole.text.length} of ${long.length} characters, ending ${JSON.stringify(whole.text.slice(-40))}`);
+      assert(whole.scrolls && whole.footer, `the box scrolls ${whole.scrolls}, the footer in view ${whole.footer}`);
+      assert(whole.cut === "" && whole.head === "Description", `a whole description says "${whole.cut}" under the head "${whole.head}"`);
+      await approvalNote("declined", 1);
+      const huge = `a${"ü".repeat(40000)}`;
+      const cut = await box(huge);
+      assert(cut.text === `a${"ü".repeat(32767)}`, `the dialog shows ${Buffer.byteLength(cut.text)} bytes of ${Buffer.byteLength(huge)}`);
+      assert(cut.cut === "Only the first 64 KiB are shown, the run takes the whole value." && cut.above, `the cut note reads "${cut.cut}", above the box in its head ${cut.above}`);
+      await approvalNote("declined", 2);
+      assert(state.changes.length === 0, "a denied open opened something");
     });
 
     await run("the Approvals tab lists the Change request approval, off opens at once as named, the socket cannot move it", async () => {

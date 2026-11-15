@@ -28,7 +28,7 @@
           {{if .Import}}
           <div class="text-secondary small mb-3">Backup{{if .Import.Host}} from <strong>{{.Import.Host}}</strong>{{end}}{{if .Import.Created}}, created {{.Import.Created}}{{end}}{{if .Import.Version}}, version {{.Import.Version}}{{end}}. Pick what to import, existing files are overwritten.</div>
           <dc-backup-busy busy-text="Importing, this can take a while.">
-          <form method="post" action="/settings/backup" id="backup-apply" data-confirm="Import the selected sections? Existing files are overwritten." data-confirm-button="Import">
+          <form method="post" action="/settings/backup" id="backup-apply" data-confirm="Import the selected sections?" data-confirm-warning="Existing files are overwritten." data-confirm-kind="danger" data-confirm-button="Import">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
             <input type="hidden" name="form" value="apply">
             <input type="hidden" name="token" value="{{.Import.Token}}">
@@ -85,7 +85,7 @@
         <div id="settings-backup-review" class="mt-4">
           <div class="d-flex align-items-center gap-2 mb-2">
             <h3 class="card-title mb-0 flex-fill">Overwritten files</h3>
-            <form method="post" action="/settings/backup" class="flex-shrink-0" data-confirm="Drop every previous version and keep all imported files?" data-confirm-button="Keep all">
+            <form method="post" action="/settings/backup" class="flex-shrink-0" data-confirm="Drop every previous version and keep all imported files?" data-confirm-kind="danger" data-confirm-button="Keep all">
               <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
               <input type="hidden" name="form" value="review-keep-all">
               <button type="submit" class="btn btn-sm">Keep all imported</button>
@@ -126,7 +126,7 @@
       {{else}}
       {{if .Error}}<span class="badge bg-red-lt" title="{{.Error}}">Failed</span>{{end}}
       {{if .Done}}<a class="btn btn-icon" href="/settings/backup/download?id={{.ID}}" data-no-pe aria-label="Download backup {{.Name}}" title="Download"><i class="ti ti-download"></i></a>{{end}}
-      <form method="post" action="/settings/backup" data-confirm="Delete backup &quot;{{.Name}}&quot;?" data-confirm-button="Delete">
+      <form method="post" action="/settings/backup" data-confirm="Delete backup &quot;{{.Name}}&quot;?" data-confirm-kind="delete" data-confirm-button="Delete">
         <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
         <input type="hidden" name="form" value="backup-delete">
         <input type="hidden" name="id" value="{{.ID}}">
@@ -155,7 +155,7 @@
       <input type="hidden" name="id" value="{{.ID}}">
       <button type="submit" class="btn btn-sm">Keep imported</button>
     </form>
-    <form method="post" action="/settings/backup" data-confirm="Overwrite the imported file with the previous version?{{if .Restart}} Dev Cockpit restarts afterwards.{{end}}" data-confirm-button="Restore">
+    <form method="post" action="/settings/backup" data-confirm="Overwrite the imported file with the previous version?"{{if .Restart}} data-confirm-warning="Dev Cockpit restarts afterwards."{{end}} data-confirm-kind="danger" data-confirm-button="Restore">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="form" value="review-restore">
       <input type="hidden" name="id" value="{{.ID}}">

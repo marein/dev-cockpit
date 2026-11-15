@@ -43,6 +43,8 @@ export async function openShell(id, kind, name, filter) {
 function promptLogsFilter(name) {
   return promptText({
     title: `Filter the logs of "${name}"`,
+    icon: "filter",
+    tone: "docker",
     placeholder: "case insensitive regex",
     confirmText: "Open",
     validatorMessage: "Please enter a pattern.",
@@ -72,7 +74,12 @@ export async function compose(project, stack, action) {
   if (action.confirm) {
     const ok = await confirm({
       title: `Run "${label}"?`,
-      text: `${action.command} in ${stack ? stack : project}`,
+      details: [
+        { as: "project", label: "Project", value: project },
+        ...(stack ? [{ as: "stack", label: "Stack", value: stack }] : []),
+        { as: "code", label: "command", value: action.command },
+      ],
+      kind: "danger",
       confirmText: "Run",
     });
     if (!ok) return false;

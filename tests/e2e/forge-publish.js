@@ -239,10 +239,8 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
   // forge's icon and the author there.
   const forgeCell = (p, text, icon, author) => p.waitForFunction(({ text, icon, author }) => [...document.querySelectorAll("[data-editor-sheet-body] .row .dropdown-item")]
     .some((e) => e.textContent.includes(text) && e.querySelector(`[data-comment-author] .${icon}`) && e.querySelector("[data-comment-author]").textContent.trim() === author), { text, icon, author }, { timeout: 15000 });
-  const dialogRows = () => page.locator(`${DIALOG} dl[data-approval-details]`).evaluate((list) => {
-    const labels = [...list.querySelectorAll("dt")].map((dt) => dt.textContent.trim());
-    return [...list.querySelectorAll("dd")].map((dd, i) => [labels[i], dd.textContent.trim()]);
-  });
+  const dialogRows = () => page.locator(`${DIALOG} [data-approval-details]`).evaluate((root) => [...root.querySelectorAll("[data-approval-detail]")]
+    .map((el) => [el.dataset.approvalDetail, (el.querySelector("[data-approval-value]") || el).textContent.trim()]));
   // approvalNote reads the assistant's page with a fetch, not a visit: a
   // visit leaves the page's conversation stream connecting, and the next
   // navigation that cuts it is a page error in WebKit.
@@ -363,7 +361,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       await openSheet(page);
       await page.locator("[data-editor-sheet-body] > .dropdown-item", { hasText: "Publish all comments" }).click();
       await page.waitForSelector(DIALOG, { state: "visible", timeout: 6000 });
-      const said = { title: (await page.textContent(`${DIALOG} .swal2-title`)).trim(), text: (await page.textContent(`${DIALOG} .swal2-html-container`)).trim() };
+      const said = { title: (await page.textContent(`${DIALOG} .dc-ask-title`)).trim(), text: (await page.textContent(`${DIALOG} .dc-ask-body`)).trim() };
       assert(said.title === "Publish all 2 comments?" && said.text === "Each becomes a review thread of its own on merge request !4 on GitLab, for everybody who can read it there.", `the dialog says ${JSON.stringify(said)}`);
       assert(posts().length === 1, "asking posted something");
       await comment("late", 5, "Written while asked.");
@@ -448,18 +446,19 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       const what = `Publish a line comment on merge request !4 of feature in ${project}`;
       assert(answer.status === 200 && answer.json.pending === true && answer.json.what === what, `the socket answered ${answer.status} ${answer.raw}`);
       await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
-      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === what, "the dialog's first line is another");
+      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === "Publish a line comment on merge request !4", "the dialog's head is another");
       const want = [
-        ["Asked by", `Assistant · ${assistant.slice(0, 8)}`],
-        ["Action", "Publish line comments"],
-        ["Comment", `${FILE}:5 · Is c needed?`],
-        ["On", `merge request !4 · Fix the login · ${mrPage}`],
-        ["Branch", `feature at ${pushed.slice(0, 12)}`],
-        ["Forge", `GitLab · ${FAKE_ADDR}:${FAKE_PORT}/gl/team/sub/app`],
         ["Project", project],
+        ["Branch", "feature"],
+        ["Merge request", "!4 Fix the login"],
+        ["Commit", pushed.slice(0, 12)],
+        ["Forge", `GitLab · ${FAKE_ADDR}:${FAKE_PORT}/gl/team/sub/app`],
+        [`${FILE}:5`, "Is c needed?"],
       ];
       const rows = await dialogRows();
       assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
+      const mrLink = await page.locator(`${DIALOG} [data-approval-detail="Merge request"] a`).evaluate((a) => [a.getAttribute("href"), a.target, a.rel]);
+      assert(JSON.stringify(mrLink) === JSON.stringify([mrPage, "_blank", "noopener noreferrer"]), `the merge request links ${JSON.stringify(mrLink)}`);
       const again = await asAssistant(assistant, `/projects/${project}/forge/publish`, { all: "1" });
       assert(again.status === 409 && again.json.error === `${what} already waits for the user's approval.`, `the same publish again answered ${again.status} ${again.raw}`);
       assert(posts().length === sent, "a waiting publish posted something");
@@ -486,6 +485,59 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       const note = await approvalNote("failed", 1);
       assert(note.text.includes(`The comment at "${FILE}":6 changed since you were asked, nothing was published.`), `the note says ${note.text}`);
       assert(posts().length === sent && !(await byID("changed")).forge, "the approval of a changed comment published it");
+    });
+
+    await run("an assistant's publish of 12 comments shows every one whole in a dialog that scrolls with the footer in view, one beyond 64 KiB is refused before it asks", async () => {
+      const lines = [1, 3, 4, 5, 6, 7, 8];
+      const made = [];
+      try {
+        const want = [];
+        for (let i = 0; i < 12; i += 1) {
+          const text = i % 4 === 0
+            ? Array.from({ length: 25 }, (_, k) => `Point ${k + 1} of comment ${i + 1}: the error is dropped here, return it to the caller.`).join("\n")
+            : `Comment ${i + 1}: name it after what it holds.`;
+          made.push(`many${i}`);
+          await comment(`many${i}`, lines[i % lines.length], text);
+          want.push([`${FILE}:${lines[i % lines.length]}`, text]);
+        }
+        want.sort(([a], [b]) => Number(a.split(":").at(-1)) - Number(b.split(":").at(-1)));
+        await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+        const sent = posts().length;
+        const answer = await asAssistant(assistant, `/projects/${project}/forge/publish`, made.map((n) => ["id", ids[n]]));
+        assert(answer.status === 200 && answer.json.pending === true, `the socket answered ${answer.status} ${answer.raw}`);
+        await page.waitForSelector(`${DIALOG} [data-approval-details]`, { state: "visible", timeout: 15000 });
+        const rows = (await dialogRows()).slice(5);
+        assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog shows ${rows.length} comments: ${JSON.stringify(rows.map(([at, text]) => `${at} ${text.length}`))}`);
+        const seen = await page.evaluate((d) => {
+          const html = document.querySelector(`${d} .swal2-html-container`);
+          const scrolls = html.scrollHeight > html.clientHeight + 1 && getComputedStyle(html).overflowY === "auto";
+          html.scrollTop = html.scrollHeight;
+          const last = [...document.querySelectorAll(`${d} .dc-ask-quote`)].at(-1).getBoundingClientRect();
+          const box = html.getBoundingClientRect();
+          const actions = document.querySelector(`${d} .swal2-actions`).getBoundingClientRect();
+          return { scrolls, last: last.top >= box.top - 1 && last.bottom <= box.bottom + 1, footer: actions.height > 0 && actions.bottom <= innerHeight, note: !!document.querySelector(`${d} [data-approval-detail="note"]`) };
+        }, DIALOG);
+        assert(seen.scrolls && seen.last && seen.footer && !seen.note, `the dialog scrolls ${seen.scrolls}, its last comment in view ${seen.last}, the footer ${seen.footer}, a note of more ${seen.note}`);
+        await Promise.all([
+          page.waitForResponse((r) => r.url().endsWith("/git/prompt") && r.request().method() === "POST", { timeout: 15000 }),
+          page.click(`${DIALOG} .swal2-deny`),
+        ]);
+        await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+        await approvalNote("declined", 1);
+        assert(posts().length === sent, "a denied publish posted something");
+        const big = [];
+        for (let i = 0; i < 4; i += 1) {
+          made.push(`big${i}`);
+          big.push(`big${i}`);
+          await comment(`big${i}`, 1, String.fromCharCode(97 + i).repeat(16 << 10));
+        }
+        const refused = await asAssistant(assistant, `/projects/${project}/forge/publish`, big.map((n) => ["id", ids[n]]));
+        assert(refused.status === 409 && refused.json.error === "These 4 comments come to 65 KiB, one publish takes at most 64 KiB of them: publish them in parts by their ids.", `four comments of 16 KiB answered ${refused.status} ${refused.raw}`);
+        await sleep(1000);
+        assert(await page.locator(DIALOG).count() === 0 && posts().length === sent, "a refused publish asked or posted");
+      } finally {
+        for (const name of made) await uncomment(name).catch(() => {});
+      }
     });
 
     await run("the Approvals tab lists the Review comment approval, off publishes an assistant's comments at once, the socket cannot move it", async () => {
@@ -536,7 +588,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       assert(answer.status === 200 && answer.json.pending === true && answer.json.what === what, `the socket answered ${answer.status} ${answer.raw}`);
       await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
       const rows = await dialogRows();
-      assert(JSON.stringify(rows.slice(1, 3)) === JSON.stringify([["Action", "Publish project comments"], ["Comment", "project · Squash it?"]]), `the dialog's rows read ${JSON.stringify(rows)}`);
+      assert(JSON.stringify(rows.slice(-1)) === JSON.stringify([["project", "Squash it?"]]), `the dialog's rows read ${JSON.stringify(rows)}`);
       await page.click(`${DIALOG} .swal2-confirm`);
       await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
       const note = await approvalNote("done", 2);
@@ -586,7 +638,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       await waitPublishRow(page, "each a review thread on pull request #7, a project comment a general one");
       await page.locator("[data-editor-sheet-body] > .dropdown-item", { hasText: "Publish all comments" }).click();
       await page.waitForSelector(DIALOG, { state: "visible", timeout: 6000 });
-      const said = { title: (await page.textContent(`${DIALOG} .swal2-title`)).trim(), text: (await page.textContent(`${DIALOG} .swal2-html-container`)).trim() };
+      const said = { title: (await page.textContent(`${DIALOG} .dc-ask-title`)).trim(), text: (await page.textContent(`${DIALOG} .dc-ask-body`)).trim() };
       assert(said.title === "Publish all 2 comments?" && said.text === "Each becomes a review thread of its own on pull request #7 on GitHub, a project comment a general one, for everybody who can read it there.", `the dialog says ${JSON.stringify(said)}`);
       await page.click(`${DIALOG} .swal2-cancel`);
       await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
@@ -658,7 +710,7 @@ L.runFeature("FORGE_PUBLISH", async ({ browser, page, run, mobilePage, bag }) =>
       const item = page.locator("section#forges .list-group-item", { hasText: /^\s*Publish line comments/ });
       assert(await item.count() === 1, "no docs entry for the publish of line comments");
       const text = await item.innerText();
-      for (const said of ["Publish comment", "Publish all comments", "in the pushed head and in the change request's diff", "else the publish is refused as a whole", "A project comment publishes as a general comment of the change request", "becomes that review thread", "A guest's comment and one with replies do not publish", "goes behind a backslash", "forge-comment-publish", "only once you approve"]) {
+      for (const said of ["Publish comment", "Publish all comments", "in the pushed head and in the change request's diff", "else the publish is refused as a whole", "A project comment publishes as a general comment of the change request", "becomes that review thread", "A guest's comment and one with replies do not publish", "goes behind a backslash", "forge-comment-publish", "only once you approve", "shows every comment whole", "at most 64 KiB of comments, a larger review goes in parts"]) {
         assert(text.includes(said), `the entry lacks "${said}": ${text}`);
       }
       const tokens = await page.locator("section#forges .list-group-item", { hasText: "Tokens and the connection test" }).innerText();

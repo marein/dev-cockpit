@@ -247,7 +247,7 @@
     <button type="submit" class="btn btn-primary" data-share-save>Save</button>
   </div>
 </form>
-<form method="post" action="{{.URL}}" id="share-revoke-{{.ID}}" data-confirm="Revoke the link &quot;{{.Name}}&quot;? It stops working at once." data-confirm-button="Revoke" hidden>
+<form method="post" action="{{.URL}}" id="share-revoke-{{.ID}}" data-confirm="Revoke the link &quot;{{.Name}}&quot;?" data-confirm-warning="It stops working at once." data-confirm-kind="danger" data-confirm-button="Revoke" hidden>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="revoke">
 </form>

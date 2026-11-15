@@ -3,9 +3,11 @@ package web
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/forge"
 	"github.com/marein/dev-cockpit/internal/git"
 	"github.com/marein/dev-cockpit/internal/gitfacts"
@@ -163,4 +165,28 @@ func (s *Server) forgetForge(name string) {
 	if s.forge != nil {
 		s.forge.Forget(name)
 	}
+}
+
+// forgeChips are the project and branch an approval of a forge write stands
+// on, the chips above its rows.
+func forgeChips(project, branch string) []askpass.Detail {
+	return []askpass.Detail{{Label: "Project", Value: project, As: askpass.AsProject}, {Label: "Branch", Value: branch, As: askpass.AsBranch}}
+}
+
+// forgeDetail is the forge row of an approval of a forge write: the forge and
+// the repository's address, a link to its page.
+func forgeDetail(w forge.Watch) askpass.Detail {
+	kind := w.Binding.Host.Kind
+	return askpass.Detail{Label: "Forge", Value: kind.Label + " · " + w.Binding.Address(), As: askpass.AsLink, URL: w.Binding.WebURL()}
+}
+
+// forgeChangeDetail is the row of the change request an approval writes on,
+// a link to its page where the forge named one.
+func forgeChangeDetail(kind forge.Kind, change forge.Change) askpass.Detail {
+	noun := strings.ToUpper(kind.ChangeNoun[:1]) + kind.ChangeNoun[1:]
+	row := askpass.Detail{Label: noun, Value: kind.ChangeRef(change.Number) + " " + change.Title}
+	if change.URL != "" {
+		row.As, row.URL = askpass.AsLink, change.URL
+	}
+	return row
 }

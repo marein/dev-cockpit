@@ -1,7 +1,7 @@
 import { FLASH_MS, el, flash, isModEnter, keepGrown, syncAnimations } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 import { getJSON, getText, postForm, postJSON, ensureOk } from "@dc/http";
-import { confirm } from "@dc/dialog";
+import { confirm, confirmForm } from "@dc/dialog";
 import { openMenu, wireRowMenus } from "@dc/contextmenu";
 import { THREAD_FIELDS, answerLocal, closeNoteEdit, closeReply, deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, growField, mayDelete, noteEditOf, openNoteEdit, openReply, paintReply, placeChildren, postForgeThread, publishComments, publishQuestion, refuse, replyOf, typingIn, writeLineComment } from "@dc/editor-comments";
 import { inlineDiff } from "@dc/inline-diff";
@@ -1108,15 +1108,10 @@ class AssistantList extends HTMLElement {
     if (!(form instanceof HTMLFormElement) || form.dataset.ajaxRefresh === undefined) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (form.dataset.confirm) {
-      const ok = await confirm({
-        title: form.dataset.confirm,
-        confirmText: form.dataset.confirmButton || "Confirm",
-        target: this.modal?.classList.contains("show") ? this.modal : undefined,
-        heightAuto: false,
-      });
-      if (!ok) return;
-    }
+    if (form.dataset.confirm && !(await confirmForm(form, {
+      target: this.modal?.classList.contains("show") ? this.modal : undefined,
+      heightAuto: false,
+    }))) return;
     const buttons = Array.from(form.querySelectorAll("button[type=submit]"));
     buttons.forEach((button) => { button.disabled = true; });
     try {

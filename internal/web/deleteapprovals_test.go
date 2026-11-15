@@ -17,7 +17,9 @@ import (
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
@@ -109,7 +111,12 @@ func TestAnAssistantsCoderDeleteWaitsForTheApproval(t *testing.T) {
 		t.Fatal("a delete that waits removed the session")
 	}
 	q := f.waitQuestion(t)
-	want := []askpass.Detail{{Label: "Coder", Value: "worker · 22222222"}, {Label: "Project", Value: "shop"}}
+	want := []askpass.Detail{
+		{As: askpass.AsWarning, Value: coderDeleteWarning},
+		{Label: "Coder", Value: "worker"},
+		{Label: "ID", Value: "22222222", As: askpass.AsMono},
+		{Label: "Project", Value: "shop"},
+	}
 	if q.Kind != askpass.KindApproval || q.Action != "Delete coder worker" || !reflect.DeepEqual(q.Details, want) {
 		t.Fatalf("the question reads %+v", q)
 	}
@@ -231,7 +238,12 @@ func TestAnAssistantsAssistantDeleteWaitsForTheApproval(t *testing.T) {
 		t.Fatal("a delete that waits removed the assistant")
 	}
 	q := f.waitQuestion(t)
-	if q.Action != "Delete assistant Helper" || !reflect.DeepEqual(q.Details, []askpass.Detail{{Label: "Assistant", Value: "Helper · " + coder.ShortID(other)}}) {
+	want := []askpass.Detail{
+		{As: askpass.AsWarning, Value: assistantDeleteWarning},
+		{Label: "Assistant", Value: "Helper"},
+		{Label: "ID", Value: coder.ShortID(other), As: askpass.AsMono},
+	}
+	if q.Action != "Delete assistant Helper" || !reflect.DeepEqual(q.Details, want) {
 		t.Fatalf("the question reads %+v", q)
 	}
 	f.decide(t, q, true, false)
@@ -372,4 +384,253 @@ func (f *composeFixture) addWorktreeProject(t *testing.T) string {
 		t.Fatalf("the main project reads %+v, %v", main, err)
 	}
 	return worktree
+}
+
+// deleteAs posts the delete of the fixture's project over the local socket,
+// as the given assistant, empty for a call that names none.
+func (f *composeFixture) deleteAs(t *testing.T, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/projects/delete", strings.NewReader(url.Values{"project": {f.project}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), localCallKey, true))
+	if id != "" {
+		req.Header.Set(localapi.AssistantHeader, id)
+	}
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	return rec
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// An assistant's delete waits for the user: the answer says so at once and
+// deletes nothing, the question stands with the project alone and is news,
+// and an approval deletes the project and writes the outcome as a note.
+func TestAnAssistantsProjectDeleteWaitsForTheApproval(t *testing.T) {
+	f := newDeleteFixture(t)
+	rec := f.deleteAs(t, f.owner)
+	answer := decodeJSON(t, rec)
+	if rec.Code != http.StatusOK || answer["pending"] != true || answer["what"] != "Delete project shop" {
+		t.Fatalf("the waiting delete answered %d %v", rec.Code, answer)
+	}
+	if !exists(f.dir) {
+		t.Fatal("a delete that waits removed the directory")
+	}
+	q := f.waitQuestion(t)
+	id, _ := askpass.ApprovalID(q.Key)
+	want := []askpass.Detail{
+		{As: askpass.AsWarning, Value: projectDeleteWarning},
+		{Label: "Project", Value: "shop", As: askpass.AsMono},
+		{Label: "Path", Value: f.dir, As: askpass.AsMono},
+	}
+	if q.Kind != askpass.KindApproval || q.Action != "Delete project shop" || q.Icon != "trash" || q.Tone != "danger" || !reflect.DeepEqual(q.Details, want) {
+		t.Fatalf("the question reads %+v", q)
+	}
+	f.waitNews(t, notify.ApprovalTarget(id))
+	f.decide(t, q, true, false)
+	note := f.waitApprovalNotes(t, f.owner, 1)[0]
+	if note.Note.Verdict != approval.Done || note.Note.Name != "Delete project shop" || !strings.Contains(note.Content, "Project shop is deleted") {
+		t.Fatalf("the note reads %+v\n%s", note.Note, note.Content)
+	}
+	if exists(f.dir) {
+		t.Fatal("the approved delete left the directory")
+	}
+	f.waitNoQuestion(t)
+}
+
+// A denial keeps the project and says so in the thread; so does a question
+// that ends before anybody decided, which is what the expiry does.
+func TestADeniedOrUnansweredProjectDeleteKeepsTheProject(t *testing.T) {
+	f := newDeleteFixture(t)
+	f.deleteAs(t, f.owner)
+	f.decide(t, f.waitQuestion(t), false, false)
+	note := f.waitApprovalNotes(t, f.owner, 1)[0]
+	if note.Note.Verdict != approval.Declined || note.Note.Headline != "Declined: Delete project shop" || !strings.Contains(note.Content, "declined by the user") {
+		t.Fatalf("the denied delete's note reads %+v\n%s", note.Note, note.Content)
+	}
+	other, err := f.s.assistants.Create("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.deleteAs(t, other.ID)
+	q := f.waitQuestion(t)
+	f.broker.Find(q.Key).End()
+	note = f.waitApprovalNotes(t, other.ID, 1)[0]
+	if note.Note.Verdict != approval.Declined || !strings.Contains(note.Content, "the approval expired unanswered") {
+		t.Fatalf("the unanswered delete's note reads %+v\n%s", note.Note, note.Content)
+	}
+	f.waitNoQuestion(t)
+	if !exists(f.dir) {
+		t.Fatal("a declined delete removed the directory")
+	}
+}
+
+// An approval that comes after the project went another way deletes nothing
+// and says why.
+func TestAnApprovedDeleteOfAProjectThatIsGoneFails(t *testing.T) {
+	f := newDeleteFixture(t)
+	f.deleteAs(t, f.owner)
+	q := f.waitQuestion(t)
+	if err := os.RemoveAll(f.dir); err != nil {
+		t.Fatal(err)
+	}
+	f.decide(t, q, true, false)
+	note := f.waitApprovalNotes(t, f.owner, 1)[0]
+	if note.Note.Verdict != approval.Failed || !strings.Contains(note.Content, "the project no longer exists") {
+		t.Fatalf("the note reads %+v\n%s", note.Note, note.Content)
+	}
+}
+
+// An approval that finds another delete of the project running claims
+// nothing, and the note says that delete's end is not known here rather
+// than calling the project gone.
+func TestAnApprovedDeleteBehindARunningOneSaysSo(t *testing.T) {
+	f := newDeleteFixture(t)
+	f.deleteAs(t, f.owner)
+	q := f.waitQuestion(t)
+	if !f.s.deletes.start("shop", f.dir) {
+		t.Fatal("the running delete could not be claimed")
+	}
+	defer f.s.deletes.finish("shop", "")
+	f.decide(t, q, true, false)
+	note := f.waitApprovalNotes(t, f.owner, 1)[0]
+	if note.Note.Verdict != approval.Failed || !strings.Contains(note.Content, "a delete of the project is already running") {
+		t.Fatalf("the note reads %+v\n%s", note.Note, note.Content)
+	}
+	if !exists(f.dir) {
+		t.Fatal("the approval deleted behind the running delete")
+	}
+}
+
+// With the Project delete approval off the delete runs at once and asks
+// nobody; the compose approval is a switch of its own and moves nothing here.
+func TestTheProjectDeleteApprovalOffDeletesAtOnce(t *testing.T) {
+	f := newDeleteFixture(t)
+	setApprovalAsks(f.s.settings, approvalComposeActions, false)
+	if !ApprovalAsks(f.s.settings, approvalProjectDelete) {
+		t.Fatal("the compose switch turned the project delete question off")
+	}
+	f.postApprovals(t, url.Values{"approval-" + approvalProjectDelete: {"0"}})
+	rec := f.deleteAs(t, f.owner)
+	answer := decodeJSON(t, rec)
+	if rec.Code != http.StatusOK || answer["pending"] == true || len(f.broker.Questions()) != 0 || answer["name"] != "shop" || answer["deleting"] != nil {
+		t.Fatalf("the delete asked with the approval off: %d %v", rec.Code, answer)
+	}
+	if exists(f.dir) {
+		t.Fatal("the delete left the directory")
+	}
+}
+
+// A local call that names no live assistant is refused rather than read as
+// the user, so leaving --as off is no way around the question.
+func TestALocalProjectDeleteWithoutAnAssistantIsRefused(t *testing.T) {
+	f := newDeleteFixture(t)
+	for _, id := range []string{"", "gone"} {
+		rec := f.deleteAs(t, id)
+		if rec.Code != http.StatusForbidden || decodeJSON(t, rec)["error"] != assistantCallerRefusal {
+			t.Fatalf("a local delete as %q answered %d: %s", id, rec.Code, rec.Body.String())
+		}
+	}
+	if !exists(f.dir) || len(f.broker.Questions()) != 0 {
+		t.Fatal("a refused delete moved something")
+	}
+}
+
+// One project waits for one delete, whoever asks for it.
+func TestASecondDeleteOfAWaitingProjectIsRefused(t *testing.T) {
+	f := newDeleteFixture(t)
+	f.deleteAs(t, f.owner)
+	f.waitQuestion(t)
+	other, err := f.s.assistants.Create("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := f.deleteAs(t, other.ID)
+	if rec.Code != http.StatusConflict || !strings.Contains(decodeJSON(t, rec)["error"].(string), "already waits for the user's approval") {
+		t.Fatalf("the second delete answered %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(f.broker.Questions()) != 1 {
+		t.Fatalf("the refusal put up a question: %+v", f.broker.Questions())
+	}
+}
+
+// An approved delete of a project that runs containers waits for the
+// deletion's real end: a compose down that fails is the note's failure and
+// the project stays.
+func TestAnApprovedDeleteReportsAFailingComposeDown(t *testing.T) {
+	f := newDeleteFixture(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\necho no daemon\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f.s.docker.SetStateForTest(docker.State{Available: true, Host: "tcp://fake:1", Containers: []docker.Container{
+		{Name: "web", Service: "web", Project: "shop", State: "running", WorkingDir: f.dir},
+	}})
+	f.deleteAs(t, f.owner)
+	f.decide(t, f.waitQuestion(t), true, false)
+	note := f.waitApprovalNotes(t, f.owner, 1)[0]
+	if note.Note.Verdict != approval.Failed || !strings.Contains(note.Content, "Compose down in") {
+		t.Fatalf("the note reads %+v\n%s", note.Note, note.Content)
+	}
+	if !exists(f.dir) {
+		t.Fatal("the failed down removed the directory")
+	}
+}
+
+// The dialog warns with the owner's own delete note where the project calls
+// for it: the containers the delete brings down, volumes included, and a
+// worktree elsewhere that loses its repository. Several projects carry it
+// under the project's name.
+func TestAProjectDeleteWarnsWhatItsDeleteTakes(t *testing.T) {
+	f := newDeleteFixture(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f.s.docker.SetStateForTest(docker.State{Available: true, Host: "tcp://fake:1", Containers: []docker.Container{
+		{Name: "web", Service: "web", Project: "shop", State: "running", WorkingDir: f.dir},
+	}})
+	elsewhere := filepath.Join(t.TempDir(), "spike")
+	gitDir := filepath.Join(f.dir, ".git", "worktrees", "spike")
+	for path, content := range map[string]string{
+		filepath.Join(f.dir, ".git", "HEAD"): "ref: refs/heads/master\n",
+		filepath.Join(gitDir, "HEAD"):        "ref: refs/heads/spike\n",
+		filepath.Join(gitDir, "commondir"):   "../..\n",
+		filepath.Join(gitDir, "gitdir"):      filepath.Join(elsewhere, ".git") + "\n",
+		filepath.Join(elsewhere, ".git"):     "gitdir: " + gitDir + "\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	note := "Its directory goes, and its containers are brought down with compose first, volumes included. The worktree at " + elsewhere + " loses its repository."
+	f.deleteAs(t, f.owner)
+	q := f.waitQuestion(t)
+	if len(q.Details) < 2 || !reflect.DeepEqual(q.Details[:2], []askpass.Detail{{As: askpass.AsWarning, Value: projectDeleteWarning}, {As: askpass.AsWarning, Value: note}}) {
+		t.Fatalf("the warnings read %+v", q.Details)
+	}
+	f.decide(t, q, false, false)
+	f.waitNoQuestion(t)
+	cart := filepath.Join(filepath.Dir(f.dir), "cart")
+	if err := os.MkdirAll(cart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.post(t, "/projects/delete", url.Values{"project": {f.project, "cart"}}, true, f.owner)
+	if q := f.waitQuestion(t); !reflect.DeepEqual(q.Details, []askpass.Detail{
+		{As: askpass.AsWarning, Value: projectDeleteWarning},
+		{As: askpass.AsWarning, Value: "Project shop: " + note},
+		{Label: "Projects", Value: f.project, As: askpass.AsItem, Icon: "folder"},
+		{Label: "Projects", Value: "cart", As: askpass.AsItem, Icon: "folder"},
+	}) {
+		t.Fatalf("the rows read %+v", q.Details)
+	}
 }
