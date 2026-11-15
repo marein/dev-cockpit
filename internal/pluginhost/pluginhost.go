@@ -8,13 +8,14 @@ package pluginhost
 import (
 	"fmt"
 	"html/template"
+	"slices"
 	"strings"
 )
 
 // ServesHTTP reports whether the plugin's subtree answers anything, which is
 // what decides whether the router registers it at all.
 func ServesHTTP(s *Serve) bool {
-	return s.Handler() != nil || s.Assets() != nil || len(s.CustomElements()) > 0
+	return s.Handler() != nil || s.Assets() != nil || len(s.CustomElements()) > 0 || s.Page() != nil
 }
 
 // AssetPrefix is the manifest path prefix of one plugin's added assets,
@@ -90,4 +91,41 @@ func SlotHTML(serves []*Serve, slot string) template.HTML {
 		b.WriteString(s.SlotHTML(slot))
 	}
 	return template.HTML(b.String())
+}
+
+// PageLink is one plugin page as the rail and the Cockpit sheet show it:
+// Label is the resolved name of the entry, NavLabel or else Title, Title is
+// the page's heading and the rail's tooltip.
+type PageLink struct {
+	Title string
+	Label string
+	Icon  string
+	URL   string
+	Tab   string
+}
+
+// PageTab is the active tab name of a plugin's page.
+func PageTab(s *Serve) string { return "plugin-" + s.ID() }
+
+// PageURL is where a plugin's page answers, the root of its subtree.
+func PageURL(s *Serve) string { return "/plugins/" + s.ID() + "/" }
+
+// Pages answers the pages the plugins added, in plugin order.
+func Pages(serves []*Serve) []PageLink {
+	var links []PageLink
+	for _, s := range serves {
+		if p := s.Page(); p != nil {
+			label := p.NavLabel
+			if strings.TrimSpace(label) == "" {
+				label = p.Title
+			}
+			links = append(links, PageLink{Title: p.Title, Label: label, Icon: p.Icon, URL: PageURL(s), Tab: PageTab(s)})
+		}
+	}
+	return links
+}
+
+// IsPageTab answers whether tab is the active tab name of a plugin's page.
+func IsPageTab(serves []*Serve, tab string) bool {
+	return slices.ContainsFunc(Pages(serves), func(p PageLink) bool { return p.Tab == tab })
 }

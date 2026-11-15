@@ -57,6 +57,10 @@ func TestServesHTTP(t *testing.T) {
 		plugin.Named[plugin.ServePlugin]{ID: "routed", Plugin: &testPlugin{routeBody: "answer"}},
 		plugin.Named[plugin.ServePlugin]{ID: "files", Plugin: &testPlugin{assets: fstest.MapFS{}}},
 		plugin.Named[plugin.ServePlugin]{ID: "elemental", Plugin: &testPlugin{elements: [][2]string{{"widget", "widget.js"}}}},
+		plugin.Named[plugin.ServePlugin]{ID: "paged", Plugin: serveFunc(func(s plugin.Serve) error {
+			s.AddPage(plugin.Page{Title: "Paged", Icon: "ti-box"})
+			return nil
+		})},
 	)
 	if ServesHTTP(serves[0]) {
 		t.Fatal("a plugin that added nothing must not mount a subtree")
@@ -129,5 +133,35 @@ func TestSlotHTML(t *testing.T) {
 	}
 	if empty := SlotHTML(serves, "unknown-slot"); empty != "" {
 		t.Fatalf("unknown slot answered %q, want empty", empty)
+	}
+}
+
+func TestPagesInPluginOrder(t *testing.T) {
+	page := func(p plugin.Page) plugin.ServePlugin {
+		return serveFunc(func(s plugin.Serve) error {
+			s.AddPage(plugin.Page{Title: "Replaced", Icon: "ti-x", NavLabel: "Replaced"})
+			s.AddPage(p)
+			return nil
+		})
+	}
+	serves := configured(t,
+		plugin.Named[plugin.ServePlugin]{ID: "second", Plugin: page(plugin.Page{Title: "Second", Icon: "ti-box", HTML: "<x></x>"})},
+		plugin.Named[plugin.ServePlugin]{ID: "bare", Plugin: &testPlugin{}},
+		plugin.Named[plugin.ServePlugin]{ID: "first", Plugin: page(plugin.Page{Title: "First page", Icon: "ti-box", NavLabel: "First"})},
+		plugin.Named[plugin.ServePlugin]{ID: "blank", Plugin: page(plugin.Page{Title: "Blank", Icon: "ti-box", NavLabel: " "})},
+	)
+	got := Pages(serves)
+	want := []PageLink{
+		{Title: "Second", Label: "Second", Icon: "ti-box", URL: "/plugins/second/", Tab: "plugin-second"},
+		{Title: "First page", Label: "First", Icon: "ti-box", URL: "/plugins/first/", Tab: "plugin-first"},
+		{Title: "Blank", Label: "Blank", Icon: "ti-box", URL: "/plugins/blank/", Tab: "plugin-blank"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Pages() = %+v, want %+v", got, want)
+	}
+	for tab, want := range map[string]bool{"plugin-first": true, "plugin-bare": false, "settings": false, "": false} {
+		if got := IsPageTab(serves, tab); got != want {
+			t.Fatalf("IsPageTab(%q) = %v, want %v", tab, got, want)
+		}
 	}
 }

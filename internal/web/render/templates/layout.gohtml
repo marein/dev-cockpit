@@ -336,6 +336,9 @@
   <a class="dc-rail-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" href="/terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "assistants"}} active{{end}}" href="/assistants" title="Assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></a>
+  {{- range pluginPages}}
+  <a class="dc-rail-btn{{if eq $.ActiveTab .Tab}} active{{end}}" href="{{.URL}}" title="{{.Title}}" aria-label="{{.Title}}"><i class="ti {{.Icon}} icon" aria-hidden="true"></i><span class="dc-trunc mw-100">{{.Label}}</span></a>
+  {{- end}}
   <span class="dc-rail-gap"></span>
   <div class="dc-rail-foot">
     <a class="dc-rail-btn{{if eq .ActiveTab "settings"}} active{{end}}" href="/settings/general"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{template "backup_reviews_badge.gohtml" (dict "Count" .BackupReviewCount "Class" "dc-rail-count")}}</a>
@@ -434,9 +437,9 @@
        open backup review. No number, the counts stand inside the sheet. Its
        name carries both (CockpitLabel, @dc/cockpit live). The server renders
        it all on every page, host-status.js and notifications.js keep it live.
-       It stands active on the settings, the docs and the costs pages, the
-       areas a phone reaches through its sheet alone. */}}
-  <button type="button" class="dc-tabbar-btn{{if or (eq .ActiveTab "settings") (eq .ActiveTab "docs") (eq .ActiveTab "costs")}} active{{end}}" data-ctx-area="cockpit"{{with .CockpitLabel}} aria-label="{{.}}"{{end}}><span class="dc-news-anchor">{{template "host_status_tab.gohtml" .}}<span class="status-dot status-dot-animated status-blue dc-news-dot{{if not .CockpitNews}} d-none{{end}}" data-cockpit-dot data-unread="{{.UnreadNews}}" data-reviews="{{.BackupReviewCount}}" aria-hidden="true"></span></span><span>Cockpit</span></button>
+       It stands active on the settings, the docs and the costs pages and on
+       a plugin's page, the areas a phone reaches through its sheet alone. */}}
+  <button type="button" class="dc-tabbar-btn{{if or (eq .ActiveTab "settings") (eq .ActiveTab "docs") (eq .ActiveTab "costs") (pluginPageTab .ActiveTab)}} active{{end}}" data-ctx-area="cockpit"{{with .CockpitLabel}} aria-label="{{.}}"{{end}}><span class="dc-news-anchor">{{template "host_status_tab.gohtml" .}}<span class="status-dot status-dot-animated status-blue dc-news-dot{{if not .CockpitNews}} d-none{{end}}" data-cockpit-dot data-unread="{{.UnreadNews}}" data-reviews="{{.BackupReviewCount}}" aria-hidden="true"></span></span><span>Cockpit</span></button>
 </nav>
 {{end}}
 

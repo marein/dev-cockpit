@@ -1,0 +1,8 @@
+{{define "plugin_page.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">{{.Title}}</h1>
+{{template "work_body.gohtml" .}}
+{{.Body}}
+{{template "app_end.gohtml" .}}
+{{end}}

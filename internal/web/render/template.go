@@ -30,6 +30,8 @@ func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plu
 		"appVersion":     func() string { return version },
 		"pluginElements": func() []pluginhost.Element { return pluginhost.Elements(plugins, assetPath) },
 		"pluginSlot":     func(slot string) template.HTML { return pluginhost.SlotHTML(plugins, slot) },
+		"pluginPages":    func() []pluginhost.PageLink { return pluginhost.Pages(plugins) },
+		"pluginPageTab":  func(tab string) bool { return pluginhost.IsPageTab(plugins, tab) },
 		"coderLabel":     CoderLabel,
 		"coderRename": func(coder string) string {
 			if rename == nil {

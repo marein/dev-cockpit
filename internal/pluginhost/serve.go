@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/marein/dev-cockpit/plugin"
@@ -42,6 +43,7 @@ type Serve struct {
 	assets         fs.FS
 	elements       []Registration
 	slots          map[string][]string
+	page           *plugin.Page
 	memory         []assistantMemory
 	settings       []settingValues
 }
@@ -93,6 +95,18 @@ func (s *Serve) AddSlotHTML(slot, html string) {
 	s.slots[slot] = append(s.slots[slot], html)
 }
 
+// tablerIcon is one Tabler icon class, the icon lands in a class list and must
+// not bring classes of its own.
+var tablerIcon = regexp.MustCompile(`^ti-[a-z0-9-]+$`)
+
+func (s *Serve) AddPage(page plugin.Page) {
+	s.add()
+	if strings.TrimSpace(page.Title) == "" || !tablerIcon.MatchString(page.Icon) {
+		panic(fmt.Sprintf("plugin %s: AddPage needs a Title and a Tabler icon class like ti-box, got %q", s.id, page.Icon))
+	}
+	s.page = &page
+}
+
 func (s *Serve) AddAssistantMemory(files fs.FS, overwrite bool) {
 	s.add()
 	if files == nil {
@@ -133,6 +147,9 @@ func (s *Serve) Assets() fs.FS { return s.assets }
 
 // CustomElements answers the added elements, in call order.
 func (s *Serve) CustomElements() []Registration { return s.elements }
+
+// Page answers the added page, nil for none.
+func (s *Serve) Page() *plugin.Page { return s.page }
 
 // SlotHTML answers the markup added for a slot, "" for none.
 func (s *Serve) SlotHTML(slot string) string { return strings.Join(s.slots[slot], "") }

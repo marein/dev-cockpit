@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"html/template"
 	"mime"
 	"net/http"
 	"path"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/pluginhost"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // coderPagePaths are a coder's scoped pages relative to their base. The
@@ -504,6 +506,7 @@ func (s *Server) registerStaticRoutes(r *gin.Engine) {
 // its assets or the starter.
 func (s *Server) servePlugin(p *pluginhost.Serve) gin.HandlerFunc {
 	base := "/plugins/" + p.ID()
+	pageURL, pageTab := pluginhost.PageURL(p), pluginhost.PageTab(p)
 	var routes http.Handler
 	if added := p.Handler(); added != nil {
 		routes = http.StripPrefix(base, added)
@@ -511,6 +514,13 @@ func (s *Server) servePlugin(p *pluginhost.Serve) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if asset, ok := s.assets.byURL[c.Request.URL.Path]; ok {
 			serveStaticAsset(c, asset)
+			return
+		}
+		if page := p.Page(); page != nil && c.Request.Method == http.MethodGet && c.Request.URL.Path == pageURL {
+			c.HTML(http.StatusOK, "plugin_page.gohtml", render.PluginPageData{
+				Page: s.page(c, page.Title, pageTab),
+				Body: template.HTML(page.HTML),
+			})
 			return
 		}
 		if strings.HasPrefix(c.Request.URL.Path, base+"/assets/") || routes == nil {
