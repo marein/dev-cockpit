@@ -39,22 +39,17 @@ func toolApprovalArgs(t *testing.T, args []string) map[string]string {
 }
 
 // A turn of a claude that can ask hands its permission prompts to the tool
-// approval server behind its own wrapper, unattended for a check or a
-// reaction, and hides that tool from the model. The Ollama route carries the
-// same flags behind the launcher.
+// approval server behind its own wrapper and hides that tool from the model.
+// The Ollama route carries the same flags behind the launcher.
 func TestATurnAsksItsToolApprovalsThroughTheCockpit(t *testing.T) {
 	withOllamaOnPath(t)
 	r := &runner{sessions: stubSessions{}, launched: newOllamaSessions(t.TempDir()), asksTools: true}
 	workdir := filepath.Join(t.TempDir(), "instances", "abc", "workspace")
-	for _, tc := range []struct {
-		req  assistant.TurnRequest
-		args []string
-	}{
-		{assistant.TurnRequest{SessionID: sessionID, Workdir: workdir, Prompt: "hello"}, []string{"tool-approval-serve"}},
-		{assistant.TurnRequest{SessionID: sessionID, Workdir: workdir, Prompt: "check", Unattended: true}, []string{"tool-approval-serve", "--unattended"}},
-		{assistant.TurnRequest{SessionID: sessionID, Workdir: workdir, Prompt: "hello", Model: "ollama/qwen3.5:cloud"}, []string{"tool-approval-serve"}},
+	for _, req := range []assistant.TurnRequest{
+		{SessionID: sessionID, Workdir: workdir, Prompt: "hello"},
+		{SessionID: sessionID, Workdir: workdir, Prompt: "hello", Model: "ollama/qwen3.5:cloud"},
 	} {
-		cmd, err := r.Command(tc.req)
+		cmd, err := r.Command(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,8 +69,8 @@ func TestATurnAsksItsToolApprovalsThroughTheCockpit(t *testing.T) {
 			t.Fatalf("want the server configured inline, got %q: %v", got["--mcp-config"], err)
 		}
 		server, ok := config.MCPServers["dev-cockpit"]
-		if !ok || len(config.MCPServers) != 1 || server.Type != "stdio" || server.Command != filepath.Join(workdir, "cockpit") || !slices.Equal(server.Args, tc.args) {
-			t.Fatalf("want the wrapper serving it with %q, got %+v", tc.args, config)
+		if !ok || len(config.MCPServers) != 1 || server.Type != "stdio" || server.Command != filepath.Join(workdir, "cockpit") || !slices.Equal(server.Args, []string{"tool-approval-serve"}) {
+			t.Fatalf("want the wrapper serving it, got %+v", config)
 		}
 	}
 }
@@ -83,7 +78,7 @@ func TestATurnAsksItsToolApprovalsThroughTheCockpit(t *testing.T) {
 // A claude without the flags runs its turns the way it always did.
 func TestATurnOfAClaudeThatCannotAskAsksNothing(t *testing.T) {
 	r := &runner{sessions: stubSessions{}}
-	cmd, err := r.Command(assistant.TurnRequest{SessionID: sessionID, Workdir: "/work", Prompt: "hello", Unattended: true})
+	cmd, err := r.Command(assistant.TurnRequest{SessionID: sessionID, Workdir: "/work", Prompt: "hello"})
 	if err != nil {
 		t.Fatal(err)
 	}

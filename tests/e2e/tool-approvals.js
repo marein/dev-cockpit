@@ -11,7 +11,7 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // that server, calls its tool and answers what came back. The question is the
 // app-wide approval dialog (@dc/gitprompt's second kind in the look of
 // @dc/prompt-view): the head "Use the tool <name>" with the tool icon, who
-// asks and "waits up to 30 min", the tool as a mono row and its input as a
+// asks and "waits up to 5 min", the tool as a mono row and its input as a
 // code block, the box "Always allow this tool", plus its news entry
 // (`approval:<id>`). Approve lets the turn's tool run, Deny tells the turn
 // with the cockpit's sentence, no note lands in the thread either way. The
@@ -142,7 +142,7 @@ L.runFeature("TOOL APPROVALS", async ({ page, run }) => {
     const asker = (await page.textContent(`${DIALOG} [data-approval-asker]`)).replace(/\s+/g, " ").trim();
     assert(asker === `PERMIT:${TOOL}`.slice(0, 32) + "… " + assistantID.slice(0, 8), `the dialog names who asks as "${asker}"`);
     const meta = (await page.textContent(`${DIALOG} .dc-ask-meta`)).replace(/\s+/g, " ");
-    assert(meta.includes("waits up to 30 min"), `the head's line reads "${meta}"`);
+    assert(meta.includes("waits up to 5 min"), `the head's line reads "${meta}"`);
     const rows = await dialogRows(page);
     const want = [["Tool", TOOL], ["Input", INPUT]];
     assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);

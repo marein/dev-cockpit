@@ -152,7 +152,7 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	)
 	args = append(args, allowedTools(req.Workdir)...)
 	if r.asksTools {
-		args = append(args, toolApproval(req.Workdir, req.Unattended)...)
+		args = append(args, toolApproval(req.Workdir)...)
 	}
 	args = append(args,
 		"--output-format", "stream-json",
@@ -204,8 +204,8 @@ func allowedTools(workdir string) []string {
 // anyway. The model never sees that tool: it is the CLI's to call, and a turn
 // calling it itself would only put questions before the user. Every flag
 // takes its value in the equals form, --mcp-config is variadic.
-func toolApproval(workdir string, unattended bool) []string {
-	argv := assistant.ToolApprovalServer(workdir, unattended)
+func toolApproval(workdir string) []string {
+	argv := assistant.ToolApprovalServer(workdir)
 	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
 		assistant.ToolApprovalServerName: map[string]any{"type": "stdio", "command": argv[0], "args": argv[1:]},
 	}})

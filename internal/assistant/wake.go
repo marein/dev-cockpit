@@ -159,13 +159,12 @@ func (s *Service) startOwnSession(owner, prompt string, name func(string) string
 	rec.Deadline = rec.StartedAt.Add(wakeTimeout)
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	p, err := s.launch(&a.rec, co.Runner, TurnRequest{
-		Instance:   c.ID,
-		SessionID:  sessionID,
-		Title:      name(c.Title),
-		Workdir:    workdir,
-		Prompt:     prompt,
-		Model:      rec.Model,
-		Unattended: true,
+		Instance:  c.ID,
+		SessionID: sessionID,
+		Title:     name(c.Title),
+		Workdir:   workdir,
+		Prompt:    prompt,
+		Model:     rec.Model,
 	})
 	if err != nil {
 		s.mu.Lock()

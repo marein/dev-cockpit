@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/localapi"
 	"github.com/marein/dev-cockpit/internal/statefile"
@@ -22,19 +21,16 @@ import (
 // turn's wrapper, see assistant.ToolApprovalServer. It is nobody's command to
 // type, so it stays out of the help the assistant reads.
 func newToolApprovalServeCommand(opts *inspectOptions) *cobra.Command {
-	var unattended bool
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:    assistant.ToolApprovalCommand,
 		Short:  "Serve the MCP tool a turn asks the user its tool approvals through",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ask := func(call toolCall) toolVerdict { return askToolApproval(*opts, unattended, call) }
+			ask := func(call toolCall) toolVerdict { return askToolApproval(*opts, call) }
 			return serveToolApprovals(cmd.InOrStdin(), cmd.OutOrStdout(), ask)
 		},
 	}
-	cmd.Flags().BoolVar(&unattended, strings.TrimPrefix(assistant.ToolApprovalUnattended, "--"), false, "the turn is a check or a trigger reaction, nobody watches it")
-	return cmd
 }
 
 // toolCall is one permission prompt as the coder hands it to the tool.
@@ -57,14 +53,15 @@ type toolVerdict struct {
 // dialog cuts it.
 const toolInputBytes = 96 << 10
 
-// toolApprovalSlack is how much longer than the longest question the request
-// may take: the server ends every question itself, this only keeps a request
-// from hanging on a server that went away without closing its socket.
+// toolApprovalSlack is how much longer than the question's wait the request
+// may take: the server ends every question itself and answers why, this only
+// keeps a request from hanging on a server that went away without closing its
+// socket.
 const toolApprovalSlack = time.Minute
 
 // askToolApproval asks the running cockpit and waits for the user. Whatever
 // keeps the question from being asked denies the call, never lets it through.
-func askToolApproval(opts inspectOptions, unattended bool, call toolCall) toolVerdict {
+func askToolApproval(opts inspectOptions, call toolCall) toolVerdict {
 	input := call.Input
 	if len(input) == 0 || string(input) == "null" {
 		input = json.RawMessage("{}")
@@ -92,12 +89,11 @@ func askToolApproval(opts inspectOptions, unattended bool, call toolCall) toolVe
 		return deny(err)
 	}
 	answer, err := client.PostJSON("/assistants/tool-approvals", map[string]any{
-		"tool":       call.Name,
-		"call":       call.ID,
-		"input":      string(shown),
-		"cut":        cut,
-		"unattended": unattended,
-	}, approval.Timeout+toolApprovalSlack)
+		"tool":  call.Name,
+		"call":  call.ID,
+		"input": string(shown),
+		"cut":   cut,
+	}, assistant.ToolApprovalWait+toolApprovalSlack)
 	if err != nil {
 		return deny(err)
 	}

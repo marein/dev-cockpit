@@ -57,7 +57,7 @@ func slackCall(id string) map[string]any {
 }
 
 // A turn's tool call stands as an approval naming the assistant, the tool and
-// its input, with the box that allows the tool for good and the chat's wait.
+// its input, with the box that allows the tool for good and its short wait.
 // Approving with the box ticked lets it run and stores the tool, and from then
 // on that tool runs at once, for every assistant, without a question. Nothing
 // of it lands in the thread.
@@ -67,7 +67,7 @@ func TestAToolCallWaitsForTheUserAndCanBeAllowedForGood(t *testing.T) {
 	q := f.waitQuestion(t)
 	want := []askpass.Detail{{Label: "Tool", Value: slackTool, As: askpass.AsMono}, {Label: "Input", Value: "{\n  \"query\": \"general\"\n}", As: askpass.AsCode}}
 	if q.Kind != askpass.KindApproval || q.Action != "Use the tool slack_search_channels" || q.Title != "" || q.Icon != "tool" || q.Tone != "" || !slices.Equal(q.Details, want) ||
-		q.Remember != "Always allow this tool" || q.WaitMinutes != 30 || q.Assistant != assistant.Name || q.AssistantID != coder.ShortID(f.owner) {
+		q.Remember != "Always allow this tool" || q.WaitMinutes != 5 || q.Assistant != assistant.Name || q.AssistantID != coder.ShortID(f.owner) {
 		t.Fatalf("the question reads %+v", q)
 	}
 	id, _ := askpass.ApprovalID(q.Key)
@@ -91,16 +91,15 @@ func TestAToolCallWaitsForTheUserAndCanBeAllowedForGood(t *testing.T) {
 }
 
 // A denial lets nothing run and tells the turn so, and remembers nothing even
-// with the box ticked. A check or a reaction waits a few minutes only, and an
-// input the server had to cut says so.
+// with the box ticked. An input the server had to cut says so.
 func TestADeniedToolCallTellsTheTurn(t *testing.T) {
 	f := newComposeFixture(t)
 	call := slackCall("toolu_1")
-	call["unattended"], call["cut"] = true, true
+	call["cut"] = true
 	done := f.askTool(context.Background(), t, call)
 	q := f.waitQuestion(t)
-	if q.WaitMinutes != 5 || len(q.Details) != 2 || !q.Details[1].Cut {
-		t.Fatalf("an unattended question of a cut input reads %+v", q)
+	if len(q.Details) != 2 || !q.Details[1].Cut {
+		t.Fatalf("the question of a cut input reads %+v", q)
 	}
 	f.decide(t, q, false, true)
 	got := toolAnswer(t, done)

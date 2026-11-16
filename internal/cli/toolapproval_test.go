@@ -122,10 +122,10 @@ func TestTheToolApprovalServerAsksEachCallOnItsOwn(t *testing.T) {
 }
 
 // A call goes to the running cockpit as the assistant whose turn it is, with
-// its input shown indented and whether the turn is watched, and the input goes
-// back to the coder as it came. A denial carries the cockpit's sentence, and
-// a cockpit that cannot be asked denies the call. An input past what travels
-// goes cut on a character and says so, the coder gets it back whole.
+// its input shown indented, and the input goes back to the coder as it came.
+// A denial carries the cockpit's sentence, and a cockpit that cannot be asked
+// denies the call. An input past what travels goes cut on a character and says
+// so, the coder gets it back whole.
 func TestAToolCallIsAskedOfTheCockpit(t *testing.T) {
 	var got map[string]any
 	var as string
@@ -141,26 +141,26 @@ func TestAToolCallIsAskedOfTheCockpit(t *testing.T) {
 	})
 	opts := inspectOptions{stateDir: dir, assistantID: "bot"}
 	input := json.RawMessage(`{"search":"bot"}`)
-	v := askToolApproval(opts, true, toolCall{Name: "mcp__x__list", Input: input, ID: "toolu_1"})
+	v := askToolApproval(opts, toolCall{Name: "mcp__x__list", Input: input, ID: "toolu_1"})
 	if v.Behavior != "allow" || string(v.UpdatedInput) != string(input) {
 		t.Fatalf("want the call allowed with its input, got %+v", v)
 	}
-	if as != "bot" || got["tool"] != "mcp__x__list" || got["call"] != "toolu_1" || got["unattended"] != true || got["cut"] != false || got["input"] != "{\n  \"search\": \"bot\"\n}" {
+	if as != "bot" || got["tool"] != "mcp__x__list" || got["call"] != "toolu_1" || got["cut"] != false || got["input"] != "{\n  \"search\": \"bot\"\n}" {
 		t.Fatalf("the cockpit was asked %v as %q", got, as)
 	}
 	big := json.RawMessage(`{"content":"` + strings.Repeat("ü", toolInputBytes) + `"}`)
-	if v := askToolApproval(opts, false, toolCall{Name: "Write", Input: big, ID: "toolu_2"}); v.Behavior != "allow" || string(v.UpdatedInput) != string(big) {
+	if v := askToolApproval(opts, toolCall{Name: "Write", Input: big, ID: "toolu_2"}); v.Behavior != "allow" || string(v.UpdatedInput) != string(big) {
 		t.Fatalf("want a long input allowed whole, got %s", v.Behavior)
 	}
 	if shown, _ := got["input"].(string); got["cut"] != true || len(shown) > toolInputBytes || !utf8.ValidString(shown) {
 		t.Fatalf("want the input cut on a character within %d bytes, got %d bytes, cut %v", toolInputBytes, len(shown), got["cut"])
 	}
-	v = askToolApproval(opts, false, toolCall{Name: "Denied"})
+	v = askToolApproval(opts, toolCall{Name: "Denied"})
 	if v.Behavior != "deny" || v.Message != "The user denied it." || got["call"] == "" || got["input"] != "{}" {
 		t.Fatalf("want the denial with its sentence, got %+v after %v", v, got)
 	}
 	t.Setenv("DEV_COCKPIT_DIAL_BUDGET", "0s")
-	v = askToolApproval(inspectOptions{stateDir: t.TempDir(), assistantID: "bot"}, false, toolCall{Name: "Read"})
+	v = askToolApproval(inspectOptions{stateDir: t.TempDir(), assistantID: "bot"}, toolCall{Name: "Read"})
 	if v.Behavior != "deny" || !strings.HasPrefix(v.Message, "The cockpit could not ask the user about this tool call") {
 		t.Fatalf("want a cockpit that is not there to deny, got %+v", v)
 	}

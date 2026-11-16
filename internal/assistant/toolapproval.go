@@ -1,5 +1,7 @@
 package assistant
 
+import "time"
+
 // A tool call a coder would stop on with a permission dialog cannot ask in a
 // turn: nobody sits at it. A coder whose CLI lets a tool of an MCP server
 // answer such a question in a turn starts ToolApprovalServer for it, the
@@ -12,18 +14,18 @@ const (
 	// its one tool, as a coder's configuration names them.
 	ToolApprovalServerName = "dev-cockpit"
 	ToolApprovalToolName   = "approve"
-	// ToolApprovalCommand is the command of the wrapper that serves it, and
-	// ToolApprovalUnattended its flag for a turn nobody watches.
-	ToolApprovalCommand    = "tool-approval-serve"
-	ToolApprovalUnattended = "--unattended"
+	// ToolApprovalCommand is the command of the wrapper that serves it.
+	ToolApprovalCommand = "tool-approval-serve"
 )
+
+// ToolApprovalWait is how long a turn's tool call waits for the user before it
+// is denied. The turn holds its run, and a check its slot and deadline, the
+// whole time, so it is far shorter than the wait of an approval that runs
+// later on its own.
+const ToolApprovalWait = 5 * time.Minute
 
 // ToolApprovalServer is the argv of the MCP server a turn in workdir asks its
 // tool approvals through.
-func ToolApprovalServer(workdir string, unattended bool) []string {
-	argv := []string{wrapperIn(workdir), ToolApprovalCommand}
-	if unattended {
-		argv = append(argv, ToolApprovalUnattended)
-	}
-	return argv
+func ToolApprovalServer(workdir string) []string {
+	return []string{wrapperIn(workdir), ToolApprovalCommand}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/settings"
 )
 
@@ -34,19 +35,6 @@ const toolApprovalsPath = "/assistants/tool-approvals"
 // wants approved is never let through for every assistant at once. What the
 // user allows for good is one tool at a time, see allowedToolsKey.
 const toolApprovalKind = "tool-use"
-
-// unattendedToolWait bounds how long a check or a trigger reaction waits for
-// the answer. Nobody watches those, and the turn holds a check slot and its
-// deadline while it waits; a chat turn waits as long as any approval does.
-const unattendedToolWait = 5 * time.Minute
-
-// toolApprovalWait is how long a turn's question waits for the user.
-func toolApprovalWait(unattended bool) time.Duration {
-	if unattended {
-		return unattendedToolWait
-	}
-	return approval.Timeout
-}
 
 // allowedToolsKey holds the tools the user allowed for good, for every
 // assistant, as a sorted JSON list in the settings store. maxAllowedTools bounds
@@ -73,17 +61,16 @@ const maxToolApprovalBody = 128 << 10
 const (
 	toolRememberLabel = "Always allow this tool"
 	toolDeclined      = "The user denied this tool call in the cockpit. Do not call it again for the same purpose; go on without it or tell the user what you could not do."
-	toolExpired       = "Nobody answered the approval of this tool call within %s, so it was denied. Do not call it again in this turn; tell the user it needs their approval."
+	toolExpired       = "Nobody answered the approval of this tool call within %d minutes, so it was denied. Do not call it again in this turn; tell the user it needs their approval."
 	toolWithdrawn     = "The approval of this tool call was withdrawn before the user answered."
 	toolNotAsked      = "The cockpit could not ask the user about this tool call, so it was denied: %s"
 )
 
 type toolApprovalRequest struct {
-	Tool       string `json:"tool"`
-	Call       string `json:"call"`
-	Input      string `json:"input"`
-	Cut        bool   `json:"cut"`
-	Unattended bool   `json:"unattended"`
+	Tool  string `json:"tool"`
+	Call  string `json:"call"`
+	Input string `json:"input"`
+	Cut   bool   `json:"cut"`
 }
 
 // handleToolApproval answers whether a turn's tool call may run: at once for a
@@ -113,7 +100,6 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"allow": true})
 		return
 	}
-	wait := toolApprovalWait(req.Unattended)
 	details := []askpass.Detail{{Label: "Tool", Value: req.Tool, As: askpass.AsMono}}
 	if input := strings.TrimSpace(req.Input); input != "" {
 		details = append(details, askpass.Detail{Label: "Input", Value: input, As: askpass.AsCode, Cut: req.Cut})
@@ -128,7 +114,7 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 		Details:       details,
 		RememberLabel: toolRememberLabel,
 		Remember:      func() { allowTool(s.settings, tool) },
-	}, wait)
+	}, assistant.ToolApprovalWait)
 	switch {
 	case err != nil:
 		c.JSON(http.StatusOK, gin.H{"allow": false, "message": fmt.Sprintf(toolNotAsked, err.Error())})
@@ -137,19 +123,10 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 	case verdict == approval.Declined:
 		c.JSON(http.StatusOK, gin.H{"allow": false, "message": toolDeclined})
 	case verdict == approval.Expired:
-		c.JSON(http.StatusOK, gin.H{"allow": false, "message": fmt.Sprintf(toolExpired, waitWords(wait))})
+		c.JSON(http.StatusOK, gin.H{"allow": false, "message": fmt.Sprintf(toolExpired, int(assistant.ToolApprovalWait/time.Minute))})
 	default:
 		c.JSON(http.StatusOK, gin.H{"allow": false, "message": toolWithdrawn})
 	}
-}
-
-// waitWords says how long a question waited, the way the turn's sentence
-// reads it.
-func waitWords(wait time.Duration) string {
-	if wait == approval.Timeout {
-		return "half an hour"
-	}
-	return fmt.Sprintf("%d minutes", int(wait.Round(time.Minute)/time.Minute))
 }
 
 // toolShortName is the tool's own name without the server an MCP tool comes

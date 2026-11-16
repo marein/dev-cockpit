@@ -26,9 +26,6 @@ type TurnRequest struct {
 	// every turn ran on before a model could be picked; which model a turn
 	// gets is ModelFor's answer.
 	Model string
-	// Unattended marks a check or a trigger reaction: nobody watches it, so a
-	// question it puts to the user waits only briefly, see ToolApprovalServer.
-	Unattended bool
 }
 
 // MaxSessionNameBytes bounds the name a provider session is created with. A
