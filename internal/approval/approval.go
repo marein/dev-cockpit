@@ -5,7 +5,8 @@
 //
 // The question travels through the askpass broker, so every signed-in page
 // shows it and the push channels carry it to a phone. Whatever the user
-// answers, the owner hears how it ended through one hook, Config.Ended. A
+// answers, the owner hears how it ended through one hook, Config.Ended, unless
+// somebody waits for the answer in a request (Await) and hears it there. A
 // kind hands in a Request and nothing else: its key, its line, its rows and
 // its run; this package knows no kind by name. The run lives in this process
 // alone, the entry on disk exists for one reason, so the next process can tell
@@ -13,6 +14,7 @@
 package approval
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -48,6 +50,15 @@ const (
 	Declined = "declined"
 )
 
+// The answers an awaited approval ends in, see Await: the user approved or
+// declined it, nobody answered in time, or it went away unanswered because the
+// caller stopped waiting or its owner was deleted.
+const (
+	Approved  = "approved"
+	Expired   = "expired"
+	Withdrawn = "withdrawn"
+)
+
 // Run is what an approved action does. It answers the outcome the owner
 // reads, or the error that says why it did not go through. It runs long after
 // the ask, so it resolves what it acts on again rather than trusting what
@@ -65,20 +76,23 @@ type Run func() (string, error)
 // command line and the directory it runs in, shown the way a proxied git
 // call's are; Projects, where the action touches any, name the projects
 // whose deletion ends the approval; Run is what happens once the user
-// approves.
+// approves. Remember is what the box under the question does, under the
+// words of RememberLabel; without it the box turns the kind's switch off.
 type Request struct {
-	Owner    string
-	Kind     string
-	Key      string
-	What     string
-	Title    string
-	Icon     string
-	Tone     string
-	Details  []askpass.Detail
-	Command  string
-	Dir      string
-	Projects []string
-	Run      Run
+	Owner         string
+	Kind          string
+	Key           string
+	What          string
+	Title         string
+	Icon          string
+	Tone          string
+	Details       []askpass.Detail
+	Command       string
+	Dir           string
+	Projects      []string
+	Run           Run
+	RememberLabel string
+	Remember      func()
 }
 
 // Approval is one action waiting for the user, as it stands on disk: the
@@ -97,6 +111,9 @@ type Approval struct {
 	Dir       string           `json:"dir,omitempty"`
 	Projects  []string         `json:"projects,omitempty"`
 	CreatedAt time.Time        `json:"createdAt"`
+	// Awaited marks an approval somebody waits for in a request, see Await:
+	// its end is the caller's answer and never a report.
+	Awaited bool `json:"awaited,omitempty"`
 }
 
 // Outcome is how an approval ended: the verdict, the run's outcome or the
@@ -160,7 +177,58 @@ func (s *Service) Ask(req Request) (waiting bool, err error) {
 	if !s.cfg.Asks(req.Kind) {
 		return false, nil
 	}
-	a := Approval{
+	a := entry(req)
+	bridge, err := s.park(a, req, Timeout)
+	if err != nil {
+		return false, err
+	}
+	go s.await(a, bridge, req)
+	return true, nil
+}
+
+// Await puts an action before the user like Ask, and waits for the answer in
+// the caller's request instead of running anything: the caller acts on it
+// itself. With the kind's switch off it answers Approved at once. Nobody
+// answering within wait ends it Expired; ctx ending or the owner going away
+// ends it Withdrawn, and the question goes with it either way. Nothing of it is
+// reported through Ended, the caller is the one who hears how it ended.
+func (s *Service) Await(ctx context.Context, req Request, wait time.Duration) (string, error) {
+	if !s.cfg.Asks(req.Kind) {
+		return Approved, nil
+	}
+	a := entry(req)
+	a.Awaited = true
+	bridge, err := s.park(a, req, wait)
+	if err != nil {
+		return "", err
+	}
+	expiry := time.AfterFunc(wait, bridge.End)
+	stop := context.AfterFunc(ctx, bridge.End)
+	decision, decided := bridge.AskApproval()
+	expiry.Stop()
+	stop()
+	bridge.End()
+	if decided && decision.Approved && decision.Remember {
+		s.remember(req)
+	}
+	if _, ok := s.take(a.ID); !ok {
+		return Withdrawn, nil
+	}
+	switch {
+	case decided && decision.Approved:
+		return Approved, nil
+	case decided:
+		return Declined, nil
+	case ctx.Err() != nil:
+		return Withdrawn, nil
+	default:
+		return Expired, nil
+	}
+}
+
+// entry is the approval a request stands on disk as.
+func entry(req Request) Approval {
+	return Approval{
 		ID:        statefile.NewID(),
 		Owner:     req.Owner,
 		Kind:      req.Kind,
@@ -175,12 +243,15 @@ func (s *Service) Ask(req Request) (waiting bool, err error) {
 		Projects:  req.Projects,
 		CreatedAt: time.Now().UTC(),
 	}
-	bridge, err := s.park(a)
-	if err != nil {
-		return false, err
+}
+
+// remember is what the box under an approved question does.
+func (s *Service) remember(req Request) {
+	if req.Remember != nil {
+		req.Remember()
+		return
 	}
-	go s.await(a, bridge, req.Run)
-	return true, nil
+	s.cfg.StopAsking(req.Kind)
 }
 
 // shown are the rows the way the dialog shows them: each value whole, one
@@ -204,7 +275,7 @@ func shown(details []askpass.Detail) []askpass.Detail {
 // decline that comes after finds both and one that came before finds neither.
 // What the last process left is no action waiting any more, Recover declines
 // it, so it neither blocks the same action nor counts for its owner.
-func (s *Service) park(a Approval) (*askpass.Action, error) {
+func (s *Service) park(a Approval, req Request, wait time.Duration) (*askpass.Action, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.broker == nil {
@@ -237,6 +308,8 @@ func (s *Service) park(a Approval) (*askpass.Action, error) {
 		Details:     a.Details,
 		Command:     a.Command,
 		Dir:         a.Dir,
+		Remember:    req.RememberLabel,
+		WaitMinutes: int(wait.Round(time.Minute) / time.Minute),
 	})
 	if bridge == nil {
 		return nil, errors.New("The approval could not be asked.")
@@ -249,24 +322,25 @@ func (s *Service) park(a Approval) (*askpass.Action, error) {
 // await waits out the question and settles the approval on what comes back.
 // It runs off the request: the command that asked is long answered when the
 // user decides.
-func (s *Service) await(a Approval, bridge *askpass.Action, run Run) {
+func (s *Service) await(a Approval, bridge *askpass.Action, req Request) {
 	// The end of the bridge is what a timeout looks like: the question leaves
 	// the list and nobody decided.
 	expiry := time.AfterFunc(Timeout, bridge.End)
 	decision, decided := bridge.AskApproval()
 	expiry.Stop()
 	bridge.End()
-	// Don't ask again is about the kind, not about this approval: it holds
-	// even where a decline took the approval away while the box was ticked.
+	// Don't ask again is about the kind, or whatever the request remembers,
+	// not about this approval: it holds even where a decline took the
+	// approval away while the box was ticked.
 	if decided && decision.Approved && decision.Remember {
-		s.cfg.StopAsking(a.Kind)
+		s.remember(req)
 	}
 	if _, ok := s.take(a.ID); !ok {
 		return
 	}
 	switch {
 	case decided && decision.Approved:
-		s.cfg.Ended(a, execute(run))
+		s.cfg.Ended(a, execute(req.Run))
 	case decided:
 		s.cfg.Ended(a, Outcome{Verdict: Declined, Text: "declined by the user", Quiet: true})
 	default:
@@ -324,7 +398,8 @@ func (s *Service) DeclineProject(name string) {
 
 // Recover declines the approvals the last process left waiting: their
 // question and their run lived in that process, and nobody can answer them
-// any more. Each owner hears why. An approval asked since the service was
+// any more. Each owner hears why, except of an awaited one: its caller heard
+// it when the request broke off. An approval asked since the service was
 // built is this process's own and keeps waiting, however late this runs.
 func (s *Service) Recover() {
 	s.mu.Lock()
@@ -332,7 +407,7 @@ func (s *Service) Recover() {
 	s.leftover = nil
 	s.mu.Unlock()
 	for _, id := range leftover {
-		if a, ok := s.take(id); ok {
+		if a, ok := s.take(id); ok && !a.Awaited {
 			s.cfg.Ended(a, Outcome{Verdict: Declined, Text: "the approval was lost in a restart"})
 		}
 	}

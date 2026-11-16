@@ -199,14 +199,14 @@ const caretAtEnd = (shown) => {
 export function approvalView(question) {
   const meta = `<span class="dc-ask-by" data-approval-asker>${icon("sparkles")}<span><span class="dc-ask-who">${escapeHtml(question.assistant || "")}</span>`
     + `${question.assistantId ? ` <span class="font-monospace">${escapeHtml(question.assistantId)}</span>` : ""}</span></span>`
-    + `<span class="dc-ask-sep">·</span><span class="dc-ask-by">${icon("clock")}<span>waits up to 30 min</span></span>`;
+    + `<span class="dc-ask-sep">·</span><span class="dc-ask-by">${icon("clock")}<span>waits up to ${Number(question.waitMinutes) || 30} min</span></span>`;
   return {
     html: head(question.icon, question.title || question.action, meta)
       + `<div class="dc-ask-body" data-approval-details>${details(question.details || [])}${command(question)}</div>`,
     width: "42rem",
     input: "checkbox",
     inputValue: 0,
-    inputPlaceholder: "Don't ask again for this kind",
+    inputPlaceholder: escapeHtml(question.remember || "Don't ask again for this kind"),
     showDenyButton: true,
     confirmButtonText: "Approve",
     denyButtonText: "Deny",

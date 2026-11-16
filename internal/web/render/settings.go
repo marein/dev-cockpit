@@ -183,12 +183,13 @@ type SettingsVoiceData struct {
 }
 
 // SettingsAssistantApprovalsData is the Approvals tab: one switch per kind
-// of approval, each for every assistant.
+// of approval, each for every assistant, and the tools allowed for good.
 type SettingsAssistantApprovalsData struct {
 	Page
-	SettingsNav SettingsNav
-	Section     string
-	Approvals   []ApprovalRow
+	SettingsNav  SettingsNav
+	Section      string
+	Approvals    []ApprovalRow
+	AllowedTools []string
 }
 
 // ApprovalRow is one kind of approval on that tab; Ask is whether it waits for

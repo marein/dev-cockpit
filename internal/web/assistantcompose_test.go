@@ -96,6 +96,7 @@ func newComposeFixture(t *testing.T) *composeFixture {
 	r.POST("/settings/docker", s.handleSettingsDockerSave)
 	r.POST("/docker/actions/restore", s.handleDockerActionsRestore)
 	r.POST("/assistants/:id/delete", func(c *gin.Context) { s.assistantDelete(c, c.Param("id")) })
+	r.POST(toolApprovalsPath, s.handleToolApproval)
 	return &composeFixture{s: s, project: "shop", dir: dir, stateDir: stateDir, owner: owner.ID, broker: broker, router: r, notifier: notifier}
 }
 

@@ -50,6 +50,32 @@ func (s *Store) Set(key, value string) {
 	s.save(m)
 }
 
+// Update replaces the value for key with what change makes of it, read and
+// written under one lock, so two changes of one list keep each other. ok is
+// whether the key is there; change answering false takes it out.
+func (s *Store) Update(key string, change func(value string, ok bool) (string, bool)) {
+	if key == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.load()
+	old, had := m[key]
+	value, keep := change(old, had)
+	switch {
+	case keep:
+		if had && value == old {
+			return
+		}
+		m[key] = value
+	case had:
+		delete(m, key)
+	default:
+		return
+	}
+	s.save(m)
+}
+
 // Delete takes the key out of the file, which is not the same as storing an
 // empty value: a setting whose empty value is a real choice reads as set
 // afterwards, and Lookup is what tells the two apart. Removing it is what puts

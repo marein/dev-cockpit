@@ -184,6 +184,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// as JSON: this is how assistants see each other. The page renders its own
 	// list from fragments, not from these.
 	auth.POST("/assistants/order", s.handleAssistantOrder)
+	auth.POST(toolApprovalsPath, s.handleToolApproval)
 	auth.POST("/assistants/delete", s.handleDeletes(s.assistantDeleteKind(), "assistant", nil))
 	// The create is a control on the area's pages and no page of its own, so
 	// its GET is the area's entry: that is where a login redirect or a

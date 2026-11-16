@@ -20,6 +20,22 @@
   </div>
   <button type="submit" class="btn btn-primary">Save</button>
 </form>
+<h3 class="mt-4 mb-1">Always allowed tools</h3>
+<div class="text-secondary small mb-3">A tool call an assistant's turn would stop on to ask, such as a connector tool your organization wants approved first, waits for your approval. These tools run without asking, for every assistant.</div>
+<div class="list-group list-group-flush mb-3" data-allowed-tools>
+  {{range .AllowedTools}}
+  <div class="list-group-item d-flex align-items-center gap-3" data-allowed-tool="{{.}}">
+    <code class="flex-fill text-break">{{.}}</code>
+    <form method="post" action="/settings/assistant/approvals">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="forget-tool" value="{{.}}">
+      <button type="submit" class="btn btn-sm" aria-label="Remove {{.}}">Remove</button>
+    </form>
+  </div>
+  {{else}}
+  <div class="list-group-item text-secondary" data-allowed-tools-empty>No tool yet. Approving a tool call with Always allow this tool adds it here.</div>
+  {{end}}
+</div>
 {{template "assistant_settings_end.gohtml"}}
 {{template "app_end.gohtml" .}}
 {{end}}

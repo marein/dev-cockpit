@@ -13,6 +13,8 @@ tools=""
 stream=0
 partial=0
 model=""
+mcp_config=""
+prompt_tool=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -30,6 +32,9 @@ Options:
   --name <name>
   --permission-mode <mode>
   --settings <file-or-json>
+  --mcp-config <configs...>
+  --disallowedTools <tools...>
+  --permission-prompts <target>  "host" (the SDK host or --permission-prompt-tool) or "none"
 HELP
       exit 0
       ;;
@@ -48,6 +53,8 @@ HELP
     --permission-mode) shift 2 ;;
     --settings) shift 2 ;;
     --model) model="$2"; shift 2 ;;
+    --mcp-config=*) mcp_config="${1#--mcp-config=}"; shift ;;
+    --permission-prompt-tool=*) prompt_tool="${1#--permission-prompt-tool=}"; shift ;;
     --)
       # The cockpit puts the prompt behind the end of options separator, because
       # claude reads a positional starting with a dash as an option. Everything
@@ -171,6 +178,47 @@ if [ "$stream" = "0" ] || [ "$partial" = "0" ]; then
 fi
 
 emit() { printf '%s\n' "$1"; }
+
+# permit asks the turn's permission prompt tool about one call of the tool it
+# names, the way claude does for a call that would show a dialog: it starts the
+# MCP server the cockpit configured inline, speaks the handshake and calls the
+# tool, which waits for the user. It prints the verdict, "allowed" or
+# "denied: <message>", or why it could not ask.
+permit() {
+  MCP_CONFIG="$mcp_config" PROMPT_TOOL="$prompt_tool" python3 - "$1" <<'PY'
+import json, os, subprocess, sys
+tool = sys.argv[1]
+config, prompt_tool = os.environ.get("MCP_CONFIG", ""), os.environ.get("PROMPT_TOOL", "")
+if not config or not prompt_tool.startswith("mcp__"):
+    print("no permission prompt tool")
+    sys.exit(0)
+server, name = prompt_tool[len("mcp__"):].rsplit("__", 1)
+spec = json.loads(config)["mcpServers"][server]
+proc = subprocess.Popen([spec["command"]] + spec.get("args", []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+def send(msg):
+    proc.stdin.write(json.dumps(msg) + "\n")
+    proc.stdin.flush()
+def reply(want):
+    for line in proc.stdout:
+        msg = json.loads(line)
+        if msg.get("id") == want:
+            return msg
+    return {}
+send({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}}})
+reply(0)
+send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+send({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {"tool_name": tool, "input": {"query": "general", "limit": 5}, "tool_use_id": "toolu_" + os.urandom(6).hex()}}})
+answer = reply(1)
+proc.stdin.close()
+proc.wait()
+try:
+    verdict = json.loads(answer["result"]["content"][0]["text"])
+except Exception:
+    print("no verdict: " + json.dumps(answer))
+    sys.exit(0)
+print("allowed" if verdict.get("behavior") == "allow" else "denied: " + verdict.get("message", ""))
+PY
+}
 
 # restart_server kills the cockpit that started this turn and puts it back the
 # way it was. A turn is a detached process writing into a file of its own, so it
@@ -320,6 +368,13 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
     ;;
   # The model the turn was started with, which is how a pick at the ring is
   # proven to reach the argv; a turn without the flag says so.
+  # PERMIT:<tool> calls a tool that would ask, through the permission prompt
+  # tool the cockpit handed the turn, and answers what came of it.
+  *PERMIT:*)
+    tool=$(printf '%s' "$prompt" | sed -n 's/.*PERMIT:\([^[:space:]]*\).*/\1/p' | head -1)
+    emit '{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"tool_use","name":"'"$tool"'"}}}'
+    answer="Tool $tool: $(permit "$tool")"
+    ;;
   *MODEL*) answer="model: ${model:-default}" ;;
   *MAGIC*) answer="AIRPORT" ;;
   # A turn an event bought answers under the note's contract: NOTHING on the
