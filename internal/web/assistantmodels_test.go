@@ -147,9 +147,10 @@ func TestTheModelFormStoresTheThreeModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	claude := coderclaude.New(t.TempDir(), "", nil, ollama.New(nil, "http://127.0.0.1:1/catalog", ""))
+	launcher := ollama.New(nil, "http://127.0.0.1:1/catalog", "")
+	claude := coderclaude.New(t.TempDir(), "", nil, launcher)
 	s := &Server{
-		assistants: conversations, workspace: workspace,
+		assistants: conversations, workspace: workspace, ollama: launcher,
 		coders: []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), claude, project.NewRepository(t.TempDir(), nil))},
 	}
 	r := gin.New()
