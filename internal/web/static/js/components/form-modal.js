@@ -15,7 +15,7 @@ import { errorText, notifySuccess } from "@dc/toast";
 // comment dialog: this is server rendered markup with selects, custom elements
 // and a POST target of its own, and the app's pe.js glue already closes open
 // modals and drops their backdrop on every boosted navigation.
-const PATHS = ["/coders/new", "/shells/new", "/projects/new", "/assistants/triggers"];
+const PATHS = ["/coders/new", "/shells/new", "/projects/new", "/assistants/triggers", "/settings/plugins/new"];
 const PATTERNS = [/^\/projects\/[^/]+\/(tags|forge|forge\/change)$/, /^\/settings\/(sharing|forges)\/[^/]+$/, /^\/settings\/forges\/[^/]+\/token$/];
 
 // A touch keyboard must not jump up over the dialog the moment it opens, so

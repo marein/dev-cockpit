@@ -106,7 +106,8 @@ cannot show stays at that function, within the comment rule below.
   put `--` before paths, keep option shaped input out of option position.
 - Every short lived external process runs with a timeout and an output
   cap (`exec.CommandContext`). Long running ones (tmux control mode,
-  `detach`, coder servers) belong to the package that starts them.
+  `detach`, coder servers, external plugins) belong to the package that
+  starts them.
   Background git never prompts.
 - Paths from a request resolve under their root via `internal/filesystem`
   (`ResolveUnder`), including symlinks. Nothing reads outside an
@@ -115,7 +116,10 @@ cannot show stays at that function, within the comment rule below.
   outside the shared settings store, or never stored and never logged.
 - HTTP to a user supplied URL (webhooks, Web Push, the Ollama host, the forge
   hosts) never follows redirects and refuses link local targets
-  (`internal/netguard`). Every forge request goes through the one client in
+  (`internal/netguard`). The exception is a plugin's release fetch
+  (`pluginhost.fetchClient`): forges serve release files behind a redirect,
+  so it follows at most five, https only, with netguard on every hop. Every
+  forge request goes through the one client in
   `internal/forge`, which also carries the token in a header alone and backs
   off from a server's rate limit.
 - Containers the cockpit runs are built locally from embedded build
@@ -169,7 +173,8 @@ finding per output.
 The cockpit is a single Go binary. `cmd/dev-cockpit` is a thin main,
 `distro` is the importable facade (a custom distribution calls
 `distro.Main`), `plugin` is the experimental plugin surface and
-`internal/pluginhost` is its host side, used by `cli` and `web`.
+`internal/pluginhost` is its host side for compiled and external plugins,
+used by `cli` and `web`.
 Everything else is in `internal/`.
 The layers are listed top down, a layer imports only the layers below it.
 
@@ -220,10 +225,22 @@ The layers are listed top down, a layer imports only the layers below it.
   cache that every docker surface reads. `editorintelligence` and
   `voice` build and run their own containers through the docker CLI.
 - A plugin declares, the cockpit applies. What a plugin contributes to the
-  state directory or the settings goes through an Add on its `plugin.Serve`
-  and is written by `internal/pluginhost` at the moment the target is ready,
-  never by the plugin into a path it would have to know. Only its own
-  `PluginStateDir` belongs to the plugin, it writes there itself.
+  state directory or the settings goes through an Add on its `plugin.Serve`,
+  or for an external plugin through its manifest, and is written by
+  `internal/pluginhost` at the moment the target is ready, never by the
+  plugin into a path it would have to know. Only its own `PluginStateDir`
+  belongs to the plugin, it writes there itself.
+- Every plugin surface, now and in the future, serves compiled and external
+  plugins alike: what `plugin.Serve` adds or answers, an external plugin's
+  manifest or callback socket adds or answers too, the README's table maps
+  them. A new surface is done only when both kinds have it, with tests for
+  both. The plugin set is dynamic, every surface asks `pluginhost.Set` when
+  it renders or routes and keeps no list of its own.
+- An optional compiled plugin comes and goes like an external one: every
+  switch on configures it with a fresh `Serve`, every switch off ends that
+  `Serve`'s context, nothing of it runs or is written while off. Surfaces
+  treat every live `Serve` (`Serve.Live`) alike, on and off behave the same
+  for both kinds.
 - Work that must outlive the server runs through `internal/detach`.
 - Texts written for a model are `text/template` files in
   `internal/assistant/templates`, fed with typed data.

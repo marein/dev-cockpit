@@ -741,7 +741,7 @@ func TestProjectsActionsSlotStandsLeftOfTheCreateButton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("configure serve: %v", err)
 	}
-	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", serves, nil)
+	tmpl := HTMLTemplate(func(p string) string { return p }, "test", "test", pluginhost.NewSet(serves, nil), nil)
 	var b strings.Builder
 	if err := tmpl.ExecuteTemplate(&b, "projects_list.gohtml", projectsData(nil)); err != nil {
 		t.Fatalf("render projects list: %v", err)

@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"html/template"
 	"mime"
 	"net/http"
 	"path"
@@ -10,8 +9,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/marein/dev-cockpit/internal/pluginhost"
-	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // coderPagePaths are a coder's scoped pages relative to their base. The
@@ -302,16 +299,16 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.GET("/settings/backup/merge", s.handleSettingsBackupMerge)
 	auth.POST("/settings/backup/merge", s.handleSettingsBackupMergeSave)
 
-	// Every plugin serves its whole subtree behind one wildcard route: the
-	// assets and the generated starter out of the manifest, everything else
-	// through its own handler. The routes sit in the auth group, so a
-	// plugin page is signed in and CSRF protected like any app route.
-	for _, p := range s.plugins {
-		if !pluginhost.ServesHTTP(p) {
-			continue
-		}
-		auth.Any("/plugins/"+p.ID()+"/*path", s.servePlugin(p))
-	}
+	// One wildcard route serves every plugin's subtree and resolves the
+	// plugin per request, since live plugins come and go. It sits in the auth
+	// group, so a plugin page is signed in and CSRF protected.
+	auth.Any("/plugins/:id/*path", s.servePlugins)
+	auth.GET("/plugin-regions/:region", s.handlePluginRegion)
+	auth.GET(settingsPluginsPath, s.handleSettingsPlugins)
+	auth.POST(settingsPluginsPath, s.handleSettingsPluginsSave)
+	auth.GET(settingsPluginsPath+"/:id/log", s.handleSettingsPluginLog)
+	auth.GET(settingsPluginNewPath, s.handleSettingsPluginNew)
+	auth.POST(settingsPluginNewPath, s.handleSettingsPluginNewSave)
 
 	auth.GET("/notifications", s.handleNotificationsList)
 	auth.POST("/notifications/read", s.handleNotificationsRead)
@@ -496,38 +493,6 @@ func (s *Server) registerStaticRoutes(r *gin.Engine) {
 		assetURL, asset := assetURL, asset
 		r.GET(assetURL, func(c *gin.Context) { serveStaticAsset(c, asset) })
 		r.HEAD(assetURL, func(c *gin.Context) { serveStaticAsset(c, asset) })
-	}
-}
-
-// servePlugin serves one plugin's subtree: the hashed and raw asset URLs and
-// the generated starter out of the asset manifest with the same cache
-// headers as every other asset, everything else through the added routes.
-// The manifest is asked first, so a plugin's own handler can never shadow
-// its assets or the starter.
-func (s *Server) servePlugin(p *pluginhost.Serve) gin.HandlerFunc {
-	base := "/plugins/" + p.ID()
-	pageURL, pageTab := pluginhost.PageURL(p), pluginhost.PageTab(p)
-	var routes http.Handler
-	if added := p.Handler(); added != nil {
-		routes = http.StripPrefix(base, added)
-	}
-	return func(c *gin.Context) {
-		if asset, ok := s.assets.byURL[c.Request.URL.Path]; ok {
-			serveStaticAsset(c, asset)
-			return
-		}
-		if page := p.Page(); page != nil && c.Request.Method == http.MethodGet && c.Request.URL.Path == pageURL {
-			c.HTML(http.StatusOK, "plugin_page.gohtml", render.PluginPageData{
-				Page: s.page(c, page.Title, pageTab),
-				Body: template.HTML(page.HTML),
-			})
-			return
-		}
-		if strings.HasPrefix(c.Request.URL.Path, base+"/assets/") || routes == nil {
-			c.Status(http.StatusNotFound)
-			return
-		}
-		routes.ServeHTTP(c.Writer, c.Request)
 	}
 }
 

@@ -152,9 +152,9 @@ func TestPagesInPluginOrder(t *testing.T) {
 	)
 	got := Pages(serves)
 	want := []PageLink{
-		{Title: "Second", Label: "Second", Icon: "ti-box", URL: "/plugins/second/", Tab: "plugin-second"},
-		{Title: "First page", Label: "First", Icon: "ti-box", URL: "/plugins/first/", Tab: "plugin-first"},
-		{Title: "Blank", Label: "Blank", Icon: "ti-box", URL: "/plugins/blank/", Tab: "plugin-blank"},
+		{Title: "Second", Label: "Second", Icon: "ti-box", URL: "/plugins/second/", Tab: "plugin-second", Key: "second"},
+		{Title: "First page", Label: "First", Icon: "ti-box", URL: "/plugins/first/", Tab: "plugin-first", Key: "first"},
+		{Title: "Blank", Label: "Blank", Icon: "ti-box", URL: "/plugins/blank/", Tab: "plugin-blank", Key: "blank"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Pages() = %+v, want %+v", got, want)

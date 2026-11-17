@@ -609,6 +609,7 @@ func DocsTopics() []DocsTopic {
 		},
 		docsForgeTopic(),
 		docsSharingTopic(),
+		docsPluginsTopic(),
 		{
 			Key:      "settings",
 			Title:    "Settings and data",

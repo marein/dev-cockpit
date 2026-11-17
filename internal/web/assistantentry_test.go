@@ -133,7 +133,7 @@ func withShell(t *testing.T, r *gin.Engine, s *Server, serves []*pluginhost.Serv
 	projectsDir := t.TempDir()
 	projects := project.NewRepository(projectsDir, recent.New(filepath.Join(stateDir, "recent-projects.json")))
 	s.assets = assets
-	s.plugins = serves
+	s.plugins = pluginhost.NewSet(serves, nil)
 	s.projects = projects
 	s.shells = shell.NewShells(config.Config{}, tmux.New(), projects, func() bool { return false })
 	s.settings = settings.New(filepath.Join(stateDir, "settings.json"))
@@ -141,7 +141,7 @@ func withShell(t *testing.T, r *gin.Engine, s *Server, serves []*pluginhost.Serv
 	s.watcher = assistant.NewWatcher(s.assistants, assistant.NewJobs(assistant.NewStore(stateDir)), nil, nil)
 	s.backups = backup.New(stateDir, projectsDir, "test")
 	s.activity = activity.NewTracker()
-	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
+	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", pluginhost.NewSet(serves, nil), nil))
 }
 
 // The page pulls itself again on every assistant event, in background windows

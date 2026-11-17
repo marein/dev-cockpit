@@ -2,7 +2,6 @@ package update
 
 import (
 	"archive/tar"
-	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -17,10 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -49,14 +46,7 @@ var (
 type Updater struct {
 	current string
 	exePath string
-	apiURL  string
-	format  FeedFormat
-	client  *http.Client
-
-	mu        sync.Mutex
-	etag      string
-	cached    []release
-	checkedAt time.Time
+	feed    *Feed
 }
 
 type Status struct {
@@ -90,9 +80,7 @@ func New(current, feedURL string, format FeedFormat, dev bool) (*Updater, error)
 	return &Updater{
 		current: current,
 		exePath: exe,
-		apiURL:  resolveFeedURL(feedURL, dev),
-		format:  format,
-		client:  &http.Client{Timeout: httpTimeout},
+		feed:    NewFeed(resolveFeedURL(feedURL, dev), format, &http.Client{Timeout: httpTimeout}),
 	}, nil
 }
 
@@ -111,24 +99,18 @@ func (u *Updater) ExePath() string { return u.exePath }
 
 func (u *Updater) Status(ctx context.Context, force bool) Status {
 	st := Status{Current: u.current, Writable: u.writable()}
-	rels, err := u.releases(ctx, force)
+	rels, err := u.feed.Releases(ctx, force)
 	if err != nil {
 		log.Printf("update check: %v", err)
 	}
 	pending := u.pending(rels)
 	st.Releases = make([]Release, 0, len(pending))
 	for _, r := range pending {
-		st.Releases = append(st.Releases, Release{
-			Version:   strings.TrimPrefix(r.Tag, "v"),
-			Name:      r.Name,
-			Notes:     r.Notes,
-			NotesHTML: renderNotes(r.Notes),
-			Date:      r.Date,
-		})
+		st.Releases = append(st.Releases, r.Release())
 	}
 	if len(pending) > 0 {
 		st.Available = true
-		st.Latest = strings.TrimPrefix(pending[len(pending)-1].Tag, "v")
+		st.Latest = pending[len(pending)-1].Version
 	}
 	return st
 }
@@ -137,7 +119,7 @@ func (u *Updater) Status(ctx context.Context, force bool) Status {
 // pending release when version is empty. It refreshes the release feed first,
 // then installs exactly the resolved release, never silently something newer.
 func (u *Updater) Apply(ctx context.Context, version string) error {
-	rels, err := u.releases(ctx, true)
+	rels, err := u.feed.Releases(ctx, true)
 	if err != nil && rels == nil {
 		return fmt.Errorf("check release: %w", err)
 	}
@@ -146,21 +128,20 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 		return ErrUpToDate
 	}
 	newest := pending[len(pending)-1]
-	if version != "" && !sameVersion(newest.Tag, version) {
+	if version != "" && !SameVersion(newest.Tag, version) {
 		return fmt.Errorf("version %s was requested but %s is the newest release: %w",
-			strings.TrimPrefix(version, "v"), strings.TrimPrefix(newest.Tag, "v"), ErrSuperseded)
+			strings.TrimPrefix(version, "v"), newest.Version, ErrSuperseded)
 	}
 
-	binAsset, ok := findAsset(newest.Assets, platformAssetSuffix())
+	binAsset, ok := newest.Pick(platformAssetSuffix())
 	if !ok {
 		return fmt.Errorf("release %s has no asset for %s/%s", newest.Tag, runtime.GOOS, runtime.GOARCH)
 	}
-	sumAsset, ok := findAsset(newest.Assets, checksumsSuffix)
+	sumAsset, ok := newest.Pick(checksumsSuffix)
 	if !ok {
 		return fmt.Errorf("release %s has no checksums file", newest.Tag)
 	}
-
-	sums, err := u.downloadChecksums(ctx, sumAsset.URL)
+	sums, err := u.feed.checksumsAt(ctx, sumAsset.URL)
 	if err != nil {
 		return err
 	}
@@ -169,12 +150,12 @@ func (u *Updater) Apply(ctx context.Context, version string) error {
 		return fmt.Errorf("no checksum for %s", binAsset.Name)
 	}
 
-	archive, err := u.download(ctx, binAsset.URL)
+	archive, err := u.feed.bytesAt(ctx, binAsset.URL)
 	if err != nil {
 		return err
 	}
 	if got := sha256.Sum256(archive); hex.EncodeToString(got[:]) != want {
-		return errors.New("checksum mismatch: download corrupt or tampered")
+		return ErrChecksumMismatch
 	}
 
 	bin, err := extractBinary(archive)
@@ -188,65 +169,14 @@ func (u *Updater) Restart() error {
 	return syscall.Exec(u.exePath, os.Args, os.Environ())
 }
 
-func (u *Updater) pending(rels []release) []release {
-	var out []release
+func (u *Updater) pending(rels []Published) []Published {
+	var out []Published
 	for _, r := range rels {
-		if r.Prerelease || parseSemver(r.Tag) == nil {
-			continue
-		}
 		if isNewer(u.current, r.Tag) && assetsReady(r) {
 			out = append(out, r)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return compareSemver(parseSemver(out[i].Tag), parseSemver(out[j].Tag)) < 0
-	})
 	return out
-}
-
-func (u *Updater) releases(ctx context.Context, force bool) ([]release, error) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	if !force && !u.checkedAt.IsZero() && time.Since(u.checkedAt) < checkTTL {
-		return u.cached, nil
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.apiURL, nil)
-	if err != nil {
-		return u.cached, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	u.format.prepare(req)
-	// The conditional request is plain HTTP, not one dialect's: a feed that
-	// answered with an ETag is asked with If-None-Match the next round, one
-	// that never sends one is asked plainly.
-	if u.etag != "" {
-		req.Header.Set("If-None-Match", u.etag)
-	}
-
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return u.cached, err
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusNotModified:
-		u.checkedAt = time.Now()
-		return u.cached, nil
-	case http.StatusOK:
-		rels, err := u.format.decode(io.LimitReader(resp.Body, 8<<20))
-		if err != nil {
-			return u.cached, fmt.Errorf("decode releases: %w", err)
-		}
-		u.cached = rels
-		u.etag = resp.Header.Get("ETag")
-		u.checkedAt = time.Now()
-		return u.cached, nil
-	default:
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return u.cached, fmt.Errorf("%s releases: %s: %s", u.format.name, resp.Status, strings.TrimSpace(string(body)))
-	}
 }
 
 func (u *Updater) writable() bool {
@@ -288,40 +218,6 @@ func (u *Updater) swap(bin []byte) error {
 	return nil
 }
 
-func (u *Updater) download(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download %s: %s", url, resp.Status)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxDownload))
-}
-
-func (u *Updater) downloadChecksums(ctx context.Context, url string) (map[string]string, error) {
-	raw, err := u.download(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-	sums := make(map[string]string)
-	sc := bufio.NewScanner(bytes.NewReader(raw))
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) != 2 {
-			continue
-		}
-		sums[strings.TrimPrefix(fields[1], "*")] = fields[0]
-	}
-	return sums, sc.Err()
-}
-
 func extractBinary(archive []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
@@ -359,11 +255,6 @@ func smokeTest(path string) error {
 	return nil
 }
 
-func sameVersion(a, b string) bool {
-	av, bv := parseSemver(a), parseSemver(b)
-	return av != nil && bv != nil && compareSemver(av, bv) == 0
-}
-
 const checksumsSuffix = "_checksums.txt"
 
 // platformAssetSuffix is the tail of the release archive name for this build's
@@ -377,21 +268,12 @@ func platformAssetSuffix() string {
 // published the build workflow has not uploaded these yet, so gating on them
 // keeps a half published release from showing as available and from failing an
 // apply until the assets land.
-func assetsReady(r release) bool {
-	if _, ok := findAsset(r.Assets, platformAssetSuffix()); !ok {
+func assetsReady(r Published) bool {
+	if _, ok := r.Pick(platformAssetSuffix()); !ok {
 		return false
 	}
-	_, ok := findAsset(r.Assets, checksumsSuffix)
+	_, ok := r.Pick(checksumsSuffix)
 	return ok
-}
-
-func findAsset(assets []releaseAsset, suffix string) (releaseAsset, bool) {
-	for _, a := range assets {
-		if strings.HasSuffix(a.Name, suffix) {
-			return a, true
-		}
-	}
-	return releaseAsset{}, false
 }
 
 func isNewer(current, tag string) bool {

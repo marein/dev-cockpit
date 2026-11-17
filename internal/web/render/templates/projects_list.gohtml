@@ -201,7 +201,7 @@
   <div class="mb-3">Create one, or point the cockpit at a directory that holds some.</div>
   <div class="btn-list justify-content-center">
     <a href="/projects/new" class="btn btn-primary"><i class="ti ti-plus me-1"></i> Create project</a>{{with pluginSlot "projects-empty-actions"}}
-    {{.}}{{end}}
+    {{.}}{{end}}{{if not .Access.Guest}}{{template "plugin_region_slot" (dict "Slot" "projects-empty-actions")}}{{end}}
   </div>
 </div>
 {{end}}

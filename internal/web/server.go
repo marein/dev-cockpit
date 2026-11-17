@@ -160,10 +160,9 @@ type Server struct {
 	// paying for two; guarded by audioMu.
 	audioMu   sync.Mutex
 	audioBusy map[string]*spokenAnswer
-	// plugins carry what the compiled in plugins added at ConfigureServe,
-	// empty on a plain build. The router mounts their subtrees, the templates
-	// render their modules and slot markup.
-	plugins []*pluginhost.Serve
+	// plugins is the set of compiled and live plugins, asked at every render
+	// and route.
+	plugins *pluginhost.Set
 	// createProject is the one project creation path, shared with the plugin
 	// facade; see NewProjectCreator.
 	createProject func(ctx context.Context, name string) (string, error)
@@ -198,11 +197,11 @@ var localCallKey localCallKeyType
 // NewServer constructs a Server serving the given coders. bus is the app
 // wide event stream; it is built by the caller because the plugins configure
 // before this server exists, against the same bus.
-func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, tracker *activity.Tracker, settingsStore *settings.Store, launcher *ollama.Client, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, voiceService *voice.Service, plugins []*pluginhost.Serve, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
+func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells, conversations *assistant.Service, workspace *assistant.Workspace, watcher *assistant.Watcher, projects *project.Repository, notifier *notify.Service, tracker *activity.Tracker, settingsStore *settings.Store, launcher *ollama.Client, pusher *push.Service, restorer *restore.Service, backups *backup.Service, dockerService *docker.Service, intel *editorintelligence.Service, voiceService *voice.Service, plugins *pluginhost.Set, bus *eventbus.Bus, version, updateFeedURL, updateFeedFormat string, devBuild bool) (*Server, error) {
 	if len(coders) == 0 {
 		return nil, fmt.Errorf("at least one coder is required")
 	}
-	assets, err := newStaticAssetManifest(plugins)
+	assets, err := newStaticAssetManifest(plugins.Compiled())
 	if err != nil {
 		return nil, err
 	}

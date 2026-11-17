@@ -3,6 +3,6 @@
 {{template "work_start.gohtml" .}}
 <h1 class="dc-work-title">{{.Title}}</h1>
 {{template "work_body.gohtml" .}}
-{{.Body}}
+{{if .Region}}{{template "plugin_region_page" .Region}}{{else}}{{.Body}}{{end}}
 {{template "app_end.gohtml" .}}
 {{end}}

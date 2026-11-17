@@ -337,3 +337,31 @@ func TestSealedServeRefusesDefaults(t *testing.T) {
 		})
 	}
 }
+
+// An external plugin's manifest settings and memory apply like a compiled
+// plugin's, read beneath its directory before the handles close.
+func TestAnExternalPluginsSettingsAndMemoryApply(t *testing.T) {
+	h := newTestHost(t)
+	dir := writePlugin(t, h.Dir(), "demo", "ok", func(m map[string]any) {
+		m["settings"] = map[string]any{"values": map[string]string{"demo-key": "from the manifest"}}
+		m["memory"] = map[string]any{"dir": "memory"}
+	})
+	if err := os.MkdirAll(filepath.Join(dir, "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "memory", "demo-notes.md"), []byte("# Demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.Scan()
+	serves := NewSet(nil, h.Host).Serves()
+	store := settings.New(filepath.Join(t.TempDir(), "settings.json"))
+	ApplySettings(serves, store)
+	memory := t.TempDir()
+	applyMemory(serves, memory)
+	if got, _ := store.Lookup("demo-key"); got != "from the manifest" {
+		t.Fatalf("the setting is %q", got)
+	}
+	if got := dirNames(t, memory); !slices.Equal(got, []string{"demo-notes.md"}) {
+		t.Fatalf("the memory holds %v", got)
+	}
+}
