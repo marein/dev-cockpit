@@ -3,12 +3,13 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/localapi"
@@ -48,54 +49,48 @@ type toolVerdict struct {
 	Message      string          `json:"message,omitempty"`
 }
 
-// toolInputBytes is how much of a call's input travels to the question,
-// above what the dialog shows of a value, so the cockpit decides where the
-// dialog cuts it.
-const toolInputBytes = 96 << 10
-
 // toolApprovalSlack is how much longer than the question's wait the request
 // may take: the server ends every question itself and answers why, this only
 // keeps a request from hanging on a server that went away without closing its
 // socket.
 const toolApprovalSlack = time.Minute
 
+// The denials the model reads when the cockpit could not be asked or gave no
+// answer. A restart breaks the request off with a transport error, which
+// would only confuse the model.
+const (
+	toolNoCockpit = "No running cockpit could ask the user about this tool call, so it was denied. Do not call it again in this turn; tell the user it needs their approval."
+	toolNoAnswer  = "The cockpit restarted or stopped answering before the user decided, so this tool call was denied. Do not call it again in this turn; tell the user it needs their approval."
+	toolRefused   = "The cockpit could not ask the user about this tool call, so it was denied: "
+)
+
 // askToolApproval asks the running cockpit and waits for the user. Whatever
-// keeps the question from being asked denies the call, never lets it through.
+// keeps the question from being asked or answered denies the call, never lets
+// it through.
 func askToolApproval(opts inspectOptions, call toolCall) toolVerdict {
 	input := call.Input
 	if len(input) == 0 || string(input) == "null" {
 		input = json.RawMessage("{}")
 	}
-	shown, err := json.MarshalIndent(input, "", "  ")
-	if err != nil {
-		shown = input
-	}
-	cut := len(shown) > toolInputBytes
-	if cut {
-		end := toolInputBytes
-		for end > 0 && !utf8.RuneStart(shown[end]) {
-			end--
-		}
-		shown = shown[:end]
-	}
 	if call.ID == "" {
 		call.ID = statefile.NewID()
 	}
-	deny := func(err error) toolVerdict {
-		return toolVerdict{Behavior: "deny", Message: "The cockpit could not ask the user about this tool call, so it was denied: " + err.Error()}
-	}
+	deny := func(message string) toolVerdict { return toolVerdict{Behavior: "deny", Message: message} }
 	client, err := localapi.Dial(opts.stateDir, opts.assistantID)
 	if err != nil {
-		return deny(err)
+		return deny(toolNoCockpit)
 	}
 	answer, err := client.PostJSON("/assistants/tool-approvals", map[string]any{
 		"tool":  call.Name,
 		"call":  call.ID,
-		"input": string(shown),
-		"cut":   cut,
+		"input": assistant.ToolFields(input),
 	}, assistant.ToolApprovalWait+toolApprovalSlack)
-	if err != nil {
-		return deny(err)
+	var lost *url.Error
+	switch {
+	case errors.As(err, &lost):
+		return deny(toolNoAnswer)
+	case err != nil:
+		return deny(toolRefused + err.Error())
 	}
 	if jsonBool(answer["allow"]) {
 		return toolVerdict{Behavior: "allow", UpdatedInput: input}
@@ -104,7 +99,7 @@ func askToolApproval(opts inspectOptions, call toolCall) toolVerdict {
 	if strings.TrimSpace(message) == "" {
 		message = "The tool call was denied."
 	}
-	return toolVerdict{Behavior: "deny", Message: message}
+	return deny(message)
 }
 
 // rpcMessage is one JSON-RPC message of MCP over stdio, one per line.

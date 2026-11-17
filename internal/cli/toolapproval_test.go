@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/marein/dev-cockpit/internal/approval"
+	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/notify"
 )
 
 // mcpSession runs the server over pipes, the way a coder starts it.
@@ -122,46 +127,104 @@ func TestTheToolApprovalServerAsksEachCallOnItsOwn(t *testing.T) {
 }
 
 // A call goes to the running cockpit as the assistant whose turn it is, with
-// its input shown indented, and the input goes back to the coder as it came.
-// A denial carries the cockpit's sentence, and a cockpit that cannot be asked
-// denies the call. An input past what travels goes cut on a character and says
-// so, the coder gets it back whole.
+// each key of its input shown on its own as it will run, and the input goes
+// back to the coder as it came. A denial carries the cockpit's sentence, a
+// refusal says why, and a cockpit that cannot be asked denies the call. A
+// value past what the dialog shows goes cut on a character and says so, the
+// coder gets it back whole.
 func TestAToolCallIsAskedOfTheCockpit(t *testing.T) {
-	var got map[string]any
+	var got struct {
+		Tool  string                `json:"tool"`
+		Call  string                `json:"call"`
+		Input []assistant.ToolField `json:"input"`
+	}
 	var as string
 	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
 		as = r.Header.Get(localapi.AssistantHeader)
+		got.Input = nil
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		w.Header().Set("Content-Type", "application/json")
-		if got["tool"] == "Denied" {
+		switch got.Tool {
+		case "Denied":
 			_ = json.NewEncoder(w).Encode(map[string]any{"allow": false, "message": "The user denied it."})
-			return
+		case "Refused":
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "The tool name is not one a coder calls."})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"allow": r.URL.Path == "/assistants/tool-approvals"})
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"allow": r.URL.Path == "/assistants/tool-approvals"})
 	})
 	opts := inspectOptions{stateDir: dir, assistantID: "bot"}
-	input := json.RawMessage(`{"search":"bot"}`)
-	v := askToolApproval(opts, toolCall{Name: "mcp__x__list", Input: input, ID: "toolu_1"})
+	input := json.RawMessage(`{"command":"make && ls > out 2>&1 <done>","description":"<@user>"}`)
+	v := askToolApproval(opts, toolCall{Name: "Bash", Input: input, ID: "toolu_1"})
 	if v.Behavior != "allow" || string(v.UpdatedInput) != string(input) {
 		t.Fatalf("want the call allowed with its input, got %+v", v)
 	}
-	if as != "bot" || got["tool"] != "mcp__x__list" || got["call"] != "toolu_1" || got["cut"] != false || got["input"] != "{\n  \"search\": \"bot\"\n}" {
-		t.Fatalf("the cockpit was asked %v as %q", got, as)
+	want := []assistant.ToolField{{Key: "command", Value: "make && ls > out 2>&1 <done>"}, {Key: "description", Value: "<@user>"}}
+	if as != "bot" || got.Tool != "Bash" || got.Call != "toolu_1" || !slices.Equal(got.Input, want) {
+		t.Fatalf("the cockpit was asked %+v as %q", got, as)
 	}
-	big := json.RawMessage(`{"content":"` + strings.Repeat("ü", toolInputBytes) + `"}`)
+	big := json.RawMessage(`{"file_path":"/tmp/a","content":"` + strings.Repeat("ü", 1<<19) + `"}`)
 	if v := askToolApproval(opts, toolCall{Name: "Write", Input: big, ID: "toolu_2"}); v.Behavior != "allow" || string(v.UpdatedInput) != string(big) {
 		t.Fatalf("want a long input allowed whole, got %s", v.Behavior)
 	}
-	if shown, _ := got["input"].(string); got["cut"] != true || len(shown) > toolInputBytes || !utf8.ValidString(shown) {
-		t.Fatalf("want the input cut on a character within %d bytes, got %d bytes, cut %v", toolInputBytes, len(shown), got["cut"])
+	if len(got.Input) != 2 || got.Input[0] != (assistant.ToolField{Key: "file_path", Value: "/tmp/a"}) || !got.Input[1].Cut ||
+		len(got.Input[1].Value) > approval.MaxDetailBytes || !utf8.ValidString(got.Input[1].Value) {
+		t.Fatalf("want the content cut on a character within %d bytes, got %d bytes, cut %v", approval.MaxDetailBytes, len(got.Input[1].Value), got.Input[1].Cut)
 	}
 	v = askToolApproval(opts, toolCall{Name: "Denied"})
-	if v.Behavior != "deny" || v.Message != "The user denied it." || got["call"] == "" || got["input"] != "{}" {
-		t.Fatalf("want the denial with its sentence, got %+v after %v", v, got)
+	if v.Behavior != "deny" || v.Message != "The user denied it." || got.Call == "" || got.Input == nil || len(got.Input) != 0 {
+		t.Fatalf("want the denial with its sentence, got %+v after %+v", v, got)
+	}
+	v = askToolApproval(opts, toolCall{Name: "Refused"})
+	if v.Behavior != "deny" || v.Message != toolRefused+"The tool name is not one a coder calls." {
+		t.Fatalf("want a refusal to say why, got %+v", v)
 	}
 	t.Setenv("DEV_COCKPIT_DIAL_BUDGET", "0s")
 	v = askToolApproval(inspectOptions{stateDir: t.TempDir(), assistantID: "bot"}, toolCall{Name: "Read"})
-	if v.Behavior != "deny" || !strings.HasPrefix(v.Message, "The cockpit could not ask the user about this tool call") {
+	if v.Behavior != "deny" || v.Message != toolNoCockpit {
 		t.Fatalf("want a cockpit that is not there to deny, got %+v", v)
+	}
+}
+
+// A cockpit that goes away while the user is asked, a restart among them,
+// denies the call with one sentence the model can act on, never the error of
+// the broken request.
+func TestACockpitGoneDuringTheQuestionDeniesTheCall(t *testing.T) {
+	asked := make(chan struct{}, 1)
+	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		asked <- struct{}{}
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		_ = conn.Close()
+	})
+	v := askToolApproval(inspectOptions{stateDir: dir, assistantID: "bot"}, toolCall{Name: "Bash", Input: json.RawMessage(`{"command":"ls"}`), ID: "toolu_1"})
+	<-asked
+	if v.Behavior != "deny" || v.Message != toolNoAnswer || strings.Contains(v.Message, "Post ") || strings.Contains(v.Message, "EOF") {
+		t.Fatalf("want the lost question denied with one sentence, got %+v", v)
+	}
+}
+
+// The news a tool question rings with, and the push made of it, name who asks
+// and the tool, never the input: markup in it reaches no channel at all.
+func TestAToolQuestionRingsWithoutItsInput(t *testing.T) {
+	broker := askpass.New(t.TempDir())
+	hostile := `<script>alert(1)</script><img src=x onerror=alert(2)>`
+	bridge := broker.BeginApproval(askpass.ApprovalKey("a1"), askpass.Question{Assistant: "Ops", AssistantID: "1a2b3c4d", Action: "Use the tool Bash",
+		Details: []askpass.Detail{{Label: "Tool", Value: "Bash", As: askpass.AsMono}, {Label: "command", Value: hostile, As: askpass.AsCode}}})
+	go bridge.AskApproval()
+	t.Cleanup(bridge.End)
+	for deadline := time.Now().Add(5 * time.Second); len(broker.Questions()) == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the question never stood")
+		}
+	}
+	info := notifyResolver(nil, nil, nil, nil, nil, nil, broker)(notify.ApprovalTarget("a1"))
+	if info.Title != "Assistant asks approval." || info.Detail != "Ops · 1a2b3c4d: Use the tool Bash" {
+		t.Fatalf("the news reads %q %q", info.Title, info.Detail)
 	}
 }

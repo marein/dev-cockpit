@@ -36,11 +36,11 @@ const Timeout = 30 * time.Minute
 // the bound is what keeps a turn in a loop from burying the user in them.
 const MaxPerOwner = 100
 
-// maxDetailBytes bounds what the dialog shows of one value. Below it the
+// MaxDetailBytes bounds what the dialog shows of one value. Below it the
 // user approves what they read, whole. Every page and the phone carry each
 // question, up to MaxPerOwner of them per assistant, and this bound is what
 // keeps that sane; the run takes the whole value all the same.
-const maxDetailBytes = 64 << 10
+const MaxDetailBytes = 64 << 10
 
 // The verdicts an approval ends in: approved and the run went through,
 // approved and the run failed, or never run.
@@ -254,21 +254,29 @@ func (s *Service) remember(req Request) {
 	s.cfg.StopAsking(req.Kind)
 }
 
-// shown are the rows the way the dialog shows them: each value whole, one
-// beyond maxDetailBytes cut on a character's start and marked Cut.
+// shown are the rows the way the dialog shows them, see ShownValue.
 func shown(details []askpass.Detail) []askpass.Detail {
 	out := make([]askpass.Detail, 0, len(details))
 	for _, d := range details {
-		if len(d.Value) > maxDetailBytes {
-			end := maxDetailBytes
-			for end > maxDetailBytes-utf8.UTFMax && !utf8.RuneStart(d.Value[end]) {
-				end--
-			}
-			d.Value, d.Cut = d.Value[:end], true
-		}
+		var cut bool
+		d.Value, cut = ShownValue(d.Value)
+		d.Cut = d.Cut || cut
 		out = append(out, d)
 	}
 	return out
+}
+
+// ShownValue is a value the way the dialog shows it: whole, or one beyond
+// MaxDetailBytes cut on a character's start, and whether it was cut.
+func ShownValue(value string) (string, bool) {
+	if len(value) <= MaxDetailBytes {
+		return value, false
+	}
+	end := MaxDetailBytes
+	for end > MaxDetailBytes-utf8.UTFMax && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end], true
 }
 
 // park registers the approval and puts its bridge up under one lock, so a

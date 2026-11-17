@@ -52,10 +52,6 @@ var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,200}$`)
 // toolCallPattern is what the id of one tool call may be.
 var toolCallPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
-// maxToolApprovalBody bounds what the server posts: the input up to its own
-// bound, which lies above the one the dialog shows of a value.
-const maxToolApprovalBody = 128 << 10
-
 // The words for the user and for the turn. The denials are read by the model,
 // each says what happened and what to do instead of trying again.
 const (
@@ -67,10 +63,9 @@ const (
 )
 
 type toolApprovalRequest struct {
-	Tool  string `json:"tool"`
-	Call  string `json:"call"`
-	Input string `json:"input"`
-	Cut   bool   `json:"cut"`
+	Tool  string                `json:"tool"`
+	Call  string                `json:"call"`
+	Input []assistant.ToolField `json:"input"`
 }
 
 // handleToolApproval answers whether a turn's tool call may run: at once for a
@@ -84,7 +79,7 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 		return
 	}
 	var req toolApprovalRequest
-	if err := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, maxToolApprovalBody)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, assistant.ToolApprovalBody)).Decode(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The request could not be read."})
 		return
 	}
@@ -96,13 +91,21 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The tool call id is not one a coder writes."})
 		return
 	}
+	if err := assistant.CheckToolFields(req.Input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if slices.Contains(AllowedTools(s.settings), req.Tool) {
 		c.JSON(http.StatusOK, gin.H{"allow": true})
 		return
 	}
 	details := []askpass.Detail{{Label: "Tool", Value: req.Tool, As: askpass.AsMono}}
-	if input := strings.TrimSpace(req.Input); input != "" {
-		details = append(details, askpass.Detail{Label: "Input", Value: input, As: askpass.AsCode, Cut: req.Cut})
+	for _, field := range req.Input {
+		label := field.Key
+		if label == "" {
+			label = "Input"
+		}
+		details = append(details, askpass.Detail{Label: label, Value: field.Value, As: askpass.AsCode, Cut: field.Cut})
 	}
 	tool := req.Tool
 	verdict, err := s.approvals.Await(c.Request.Context(), approval.Request{

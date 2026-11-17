@@ -11,24 +11,31 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // that server, calls its tool and answers what came back. The question is the
 // app-wide approval dialog (@dc/gitprompt's second kind in the look of
 // @dc/prompt-view): the head "Use the tool <name>" with the tool icon, who
-// asks and "waits up to 5 min", the tool as a mono row and its input as a
-// code block, the box "Always allow this tool", plus its news entry
-// (`approval:<id>`). Approve lets the turn's tool run, Deny tells the turn
-// with the cockpit's sentence, no note lands in the thread either way. The
-// assistant cannot answer it over the local socket. Stopping the turn and
-// deleting the assistant take the question along. The box stores the tool for
-// every assistant, its next call runs without a question, and the Approvals
-// tab (/settings/assistant/approvals) lists it under Always allowed tools
-// with a Remove that makes it ask again.
+// asks and "waits up to 5 min", the tool as a mono row and each key of its
+// input as a code block under the key, the box "Always allow this tool", plus
+// its news entry (`approval:<id>`). Approve lets the turn's tool run, Deny
+// tells the turn with the cockpit's sentence, no note lands in the thread
+// either way. The assistant cannot answer it over the local socket. Stopping
+// the turn and deleting the assistant take the question along. The box stores
+// the tool for every assistant, its next call runs without a question, and the
+// Approvals tab (/settings/assistant/approvals) lists it under Always allowed
+// tools with a Remove that makes it ask again. The fake's INPUT:<kind> picks
+// the input: a shell command with && and redirections shows as it will run, a
+// multi line Write with its line breaks, a Write of 98 KB of minified JSON and
+// one of 1 MB with their first 64 KiB and the cut note, markup as text that
+// stays out of the news. RESTART_WAIT restarts the cockpit while the question
+// waits, which denies the call with one sentence.
 //
 // Instance: the assistant shape of the README (tests/e2e/fakes ahead of the
 // real CLIs on PATH, a scratch HOME) and its local API socket mounted, e.g.
-// -v <state-dir>/api:/apisock with APISOCK=/apisock/s.
+// -v <state-dir>/api:/apisock with APISOCK=/apisock/s. The last check restarts
+// it, point this runner at a throwaway only.
 
 const APISOCK = process.env.APISOCK || "/apisock/s";
 const DIALOG = ".swal2-popup:not(.swal2-toast)";
 const TOOL = "mcp__claude_ai_Slack__slack_search_channels";
-const INPUT = '{\n  "query": "general",\n  "limit": 5\n}';
+const DENIED = "denied: The user denied this tool call in the cockpit.";
+const CUT = "Only the first 64 KiB are shown, the run takes the whole value.";
 
 // overSocket posts JSON over the local socket as the assistant, the way a
 // command of its turn would.
@@ -85,13 +92,21 @@ async function dialogRows(page) {
     .map((el) => [el.dataset.approvalDetail, (el.querySelector("[data-approval-value]") || el).textContent.trim()]));
 }
 
-// ask sends the turn that calls the tool and waits for the question.
-async function ask(page, id) {
+// ask sends the turn that calls the tool.
+async function ask(page, id, prompt = `PERMIT:${TOOL}`) {
   await page.goto(`${BASE}/assistants/${id}`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("dc-assistant[ready]", { timeout: 15000 });
   await page.waitForFunction(() => !document.querySelector("dc-assistant")?.hasAttribute("running"), null, { timeout: 60000 });
-  await page.fill("[data-assistant-input]", `PERMIT:${TOOL}`);
+  await page.fill("[data-assistant-input]", prompt);
   await page.click("[data-assistant-send]");
+}
+
+// deny presses Deny and reads what the turn answered.
+async function deny(page, tool) {
+  await page.click(`${DIALOG} .swal2-deny`);
+  await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+  const answer = await lastAnswer(page);
+  assert(answer.text.startsWith(`Tool ${tool}: ${DENIED}`), `the turn answered "${answer.text.slice(0, 300)}"`);
 }
 
 async function waitQuestion(page) {
@@ -99,12 +114,12 @@ async function waitQuestion(page) {
 }
 
 // lastAnswer waits for the turn to end and reads its answer.
-async function lastAnswer(page) {
+async function lastAnswer(page, timeout = 30000) {
   await page.waitForFunction(() => {
     const nodes = document.querySelectorAll('[data-assistant-message][data-role="assistant"]');
     const last = nodes[nodes.length - 1];
     return last && last.getAttribute("data-state") !== "streaming" && !document.querySelector("dc-assistant")?.hasAttribute("running");
-  }, null, { timeout: 30000 });
+  }, null, { timeout });
   return page.evaluate(() => {
     const nodes = document.querySelectorAll('[data-assistant-message][data-role="assistant"]');
     const last = nodes[nodes.length - 1];
@@ -144,10 +159,11 @@ L.runFeature("TOOL APPROVALS", async ({ page, run }) => {
     const meta = (await page.textContent(`${DIALOG} .dc-ask-meta`)).replace(/\s+/g, " ");
     assert(meta.includes("waits up to 5 min"), `the head's line reads "${meta}"`);
     const rows = await dialogRows(page);
-    const want = [["Tool", TOOL], ["Input", INPUT]];
+    const want = [["Tool", TOOL], ["query", "general"], ["limit", "5"]];
     assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
     assert(await page.locator(`${DIALOG} [data-approval-detail="Tool"] .font-monospace`).isVisible(), "the tool is no mono row");
-    assert(await page.locator(`${DIALOG} [data-approval-detail="Input"] pre`).isVisible(), "the input is no code block");
+    assert(await page.locator(`${DIALOG} [data-approval-detail="query"] pre`).isVisible(), "the input is no code block");
+    assert((await page.textContent(`${DIALOG} [data-approval-detail="query"] .dc-ask-code-head`)).trim() === "query", "the box does not name its key");
     assert(await page.locator(`${DIALOG} [data-approval-cut]`).count() === 0, "a whole input says it was cut");
     const remember = (await page.locator(`${DIALOG} .swal2-checkbox`).textContent()).trim();
     assert(remember === "Always allow this tool", `the box reads "${remember}"`);
@@ -178,10 +194,7 @@ L.runFeature("TOOL APPROVALS", async ({ page, run }) => {
   await run("Deny tells the turn the user denied it", async () => {
     await ask(page, assistantID);
     await waitQuestion(page);
-    await page.click(`${DIALOG} .swal2-deny`);
-    await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
-    const answer = await lastAnswer(page);
-    assert(answer.text.startsWith(`Tool ${TOOL}: denied: The user denied this tool call in the cockpit.`), `the turn answered "${answer.text}"`);
+    await deny(page, TOOL);
   });
 
   await run("stopping the turn takes its question along", async () => {
@@ -238,5 +251,82 @@ L.runFeature("TOOL APPROVALS", async ({ page, run }) => {
     await waitFor(async () => (await (await page.request.get(`${BASE}/git/prompt`, { headers: { Accept: "application/json" } })).json()).questions.length === 0, "the question to go");
     await sleep(500);
     assert(await page.locator(DIALOG).count() === 0, "the dialog still stands");
+  });
+
+  let inputs = "";
+
+  await run("a shell command shows as it will run, && and redirections and all", async () => {
+    inputs = await newAssistant(page);
+    await ask(page, inputs, "PERMIT:Bash INPUT:shell");
+    await waitQuestion(page);
+    const rows = await dialogRows(page);
+    const want = [["Tool", "Bash"], ["command", "cd /tmp && ls > out.txt 2>&1 <done>"], ["description", "List <@user> files"]];
+    assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
+    await deny(page, "Bash");
+  });
+
+  await run("a multi line Write shows its content with its line breaks under its key", async () => {
+    await ask(page, inputs, "PERMIT:Write INPUT:write");
+    await waitQuestion(page);
+    const rows = await dialogRows(page);
+    const want = [["Tool", "Write"], ["file_path", "/tmp/notes.md"], ["content", "# Notes\n\nfirst line && more\n<b>second</b> line"]];
+    assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
+    const box = await page.locator(`${DIALOG} [data-approval-detail="content"]`).evaluate((el) => ({
+      head: el.querySelector(".dc-ask-code-head").textContent.trim(),
+      lines: el.querySelector("pre").innerText.split("\n").length,
+      height: el.querySelector("pre").getBoundingClientRect().height,
+      line: parseFloat(getComputedStyle(el.querySelector("pre")).lineHeight),
+    }));
+    assert(box.head === "content" && box.lines >= 4 && box.height >= 3 * box.line, `the content box reads ${JSON.stringify(box)}`);
+    await deny(page, "Write");
+  });
+
+  for (const [kind, what] of [["dense", "98 KB of minified JSON"], ["huge", "1 MB"]]) {
+    await run(`a Write of ${what} asks with its first 64 KiB and the cut note`, async () => {
+      await ask(page, inputs, `PERMIT:Write INPUT:${kind}`);
+      await waitQuestion(page);
+      const box = await page.locator(`${DIALOG} [data-approval-detail="content"]`).evaluate((el) => ({
+        bytes: new TextEncoder().encode(el.querySelector("pre").textContent).length,
+        cut: el.querySelector("[data-approval-cut]")?.textContent.trim() || "",
+      }));
+      assert(box.bytes === 64 << 10 && box.cut === CUT, `the content box shows ${box.bytes} bytes with the note "${box.cut}"`);
+      assert(await shown(page, `${DIALOG} [data-approval-detail="content"] [data-approval-cut]`), "the cut note is not in view");
+      assert(await page.locator(`${DIALOG} [data-approval-detail="file_path"] [data-approval-cut]`).count() === 0, "the whole path says it was cut");
+      await deny(page, "Write");
+    });
+  }
+
+  await run("markup in an input shows as text in the dialog and stays out of the news", async () => {
+    const before = (await notifications(page)).map((n) => n.id);
+    await ask(page, inputs, "PERMIT:Bash INPUT:markup");
+    await waitQuestion(page);
+    const rows = await dialogRows(page);
+    const want = [["Tool", "Bash"], ["command", "<script>window.__dcInjected = 1</script>"], ["description", '<img src=x onerror="window.__dcInjected = 2">']];
+    assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
+    let entry;
+    await waitFor(async () => {
+      entry = (await notifications(page)).find((n) => !before.includes(n.id) && (n.targetId || "").startsWith("approval:"));
+      return entry;
+    }, "the question's news");
+    const said = `${entry.title} ${entry.detail || entry.body || ""}`;
+    assert(entry.title === "Assistant asks approval." && said.includes("Use the tool Bash") && !/[<>]|script|onerror/.test(said), `the news reads "${said}"`);
+    await sleep(500);
+    const injected = await page.evaluate(() => ({ nodes: document.querySelectorAll("[data-approval-details] script, [data-approval-details] img, .toast script, .toast img").length, ran: window.__dcInjected }));
+    assert(injected.nodes === 0 && injected.ran === undefined, `the markup came alive: ${JSON.stringify(injected)}`);
+    await deny(page, "Bash");
+  });
+
+  // The page reads the end over its stream, which WebKit may only open again
+  // once the 45s of silence passed, so this waits as long as assistant.js does.
+  await run("a restart of the cockpit while the question waits denies the call with one sentence", async () => {
+    await ask(page, inputs, "PERMIT:Bash INPUT:shell RESTART_WAIT");
+    await waitQuestion(page);
+    const answer = await lastAnswer(page, 90000);
+    const sentence = "The cockpit restarted or stopped answering before the user decided, so this tool call was denied. Do not call it again in this turn; tell the user it needs their approval.";
+    assert(answer.text === `Tool Bash: denied: ${sentence}`, `the turn answered "${answer.text}"`);
+    await page.waitForSelector(DIALOG, { state: "detached", timeout: 60000 });
+    await waitFor(async () => (await (await page.request.get(`${BASE}/git/prompt`, { headers: { Accept: "application/json" } })).json()).questions.length === 0, "the question to go");
+    const gone = await page.request.post(`${BASE}/assistants/${inputs}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
+    assert(gone.status() === 200, `the delete answered ${gone.status()}`);
   });
 });

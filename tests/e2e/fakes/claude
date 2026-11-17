@@ -182,12 +182,28 @@ emit() { printf '%s\n' "$1"; }
 # permit asks the turn's permission prompt tool about one call of the tool it
 # names, the way claude does for a call that would show a dialog: it starts the
 # MCP server the cockpit configured inline, speaks the handshake and calls the
-# tool, which waits for the user. It prints the verdict, "allowed" or
-# "denied: <message>", or why it could not ask.
+# tool, which waits for the user. The input is the one its second argument
+# names, written the way claude writes JSON, which escapes no markup. It prints
+# the verdict, "allowed" or "denied: <message>", or why it could not ask.
 permit() {
-  MCP_CONFIG="$mcp_config" PROMPT_TOOL="$prompt_tool" python3 - "$1" <<'PY'
+  MCP_CONFIG="$mcp_config" PROMPT_TOOL="$prompt_tool" python3 - "$1" "${2:-}" <<'PY'
 import json, os, subprocess, sys
-tool = sys.argv[1]
+tool, kind = sys.argv[1], sys.argv[2]
+dense = "["
+i = 0
+while len(dense) < 98000:
+    dense += json.dumps({"id": i, "q": "\"<&>\"", "t": ["a", "b"]}, separators=(",", ":")) + ","
+    i += 1
+dense = dense[:-1] + "]"
+huge = "".join("line %d & <x> 2>&1\n" % n for n in range(48000))
+inputs = {
+    "": {"query": "general", "limit": 5},
+    "shell": {"command": "cd /tmp && ls > out.txt 2>&1 <done>", "description": "List <@user> files"},
+    "write": {"file_path": "/tmp/notes.md", "content": "# Notes\n\nfirst line && more\n<b>second</b> line\n"},
+    "dense": {"file_path": "/tmp/data.json", "content": dense},
+    "huge": {"file_path": "/tmp/big.txt", "content": huge},
+    "markup": {"command": "<script>window.__dcInjected = 1</script>", "description": "<img src=x onerror=\"window.__dcInjected = 2\">"},
+}
 config, prompt_tool = os.environ.get("MCP_CONFIG", ""), os.environ.get("PROMPT_TOOL", "")
 if not config or not prompt_tool.startswith("mcp__"):
     print("no permission prompt tool")
@@ -207,7 +223,7 @@ def reply(want):
 send({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}}})
 reply(0)
 send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-send({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {"tool_name": tool, "input": {"query": "general", "limit": 5}, "tool_use_id": "toolu_" + os.urandom(6).hex()}}})
+send({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {"tool_name": tool, "input": inputs[kind], "tool_use_id": "toolu_" + os.urandom(6).hex()}}})
 answer = reply(1)
 proc.stdin.close()
 proc.wait()
@@ -369,11 +385,26 @@ git log --oneline --graph --decorate --all --since=2020-01-01 --author="a name n
   # The model the turn was started with, which is how a pick at the ring is
   # proven to reach the argv; a turn without the flag says so.
   # PERMIT:<tool> calls a tool that would ask, through the permission prompt
-  # tool the cockpit handed the turn, and answers what came of it.
+  # tool the cockpit handed the turn, and answers what came of it. INPUT:<kind>
+  # picks the input, see permit. With RESTART_WAIT the cockpit is restarted
+  # while the question waits.
   *PERMIT:*)
     tool=$(printf '%s' "$prompt" | sed -n 's/.*PERMIT:\([^[:space:]]*\).*/\1/p' | head -1)
+    kind=$(printf '%s' "$prompt" | sed -n 's/.*INPUT:\([^[:space:]]*\).*/\1/p' | head -1)
     emit '{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"tool_use","name":"'"$tool"'"}}}'
-    answer="Tool $tool: $(permit "$tool")"
+    case "$prompt" in
+      *RESTART_WAIT*)
+        verdict=$(mktemp)
+        permit "$tool" "$kind" > "$verdict" &
+        asking=$!
+        sleep 6
+        restart_server
+        wait "$asking"
+        answer="Tool $tool: $(cat "$verdict")"
+        rm -f "$verdict"
+        ;;
+      *) answer="Tool $tool: $(permit "$tool" "$kind")" ;;
+    esac
     ;;
   *MODEL*) answer="model: ${model:-default}" ;;
   *MAGIC*) answer="AIRPORT" ;;
