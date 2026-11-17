@@ -235,6 +235,28 @@ async function gfmPreviewChecks({ browser, page, run, bag, project, tag, tabSel,
     }, [project, DOCS]);
   });
 
+  await run("a mermaid block renders as a diagram, a bad one shows its own error and leaves the rest alone", async () => {
+    await page.focus(".cm-content");
+    await page.keyboard.press("Control+End").catch(() => {});
+    await page.keyboard.type([
+      "",
+      "```mermaid",
+      `graph TD; Ok${tag}-->Go${tag};`,
+      "```",
+      "",
+      "```mermaid",
+      `not a diagram ${tag}`,
+      "```",
+      "",
+    ].join("\n"));
+    await page.waitForFunction(([s, t]) => {
+      const pane = document.querySelector(s);
+      const svg = pane.querySelector(".dc-mermaid svg");
+      const err = pane.querySelector(".dc-mermaid-error");
+      return !!svg?.textContent.includes(`Ok${t}`) && !!err?.textContent && !!pane.querySelector("h1");
+    }, [PANE, tag], { timeout: 8000 });
+  });
+
   await run("the preview's file goes away with the check", async () => {
     await openRowMenu(page, tabSel(file));
     await menuItem(page, "Hide preview").click();
