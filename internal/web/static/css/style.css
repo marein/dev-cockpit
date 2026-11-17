@@ -2139,6 +2139,16 @@ textarea[data-line-thread-reply-text], textarea[data-line-comment-text], [data-a
     border-left: 1px solid var(--tblr-border-color);
   }
 }
+.editor-preview .dc-mermaid {
+  overflow-x: auto;
+}
+.editor-preview .dc-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+.editor-preview .dc-mermaid-error {
+  white-space: pre-wrap;
+}
 .editor-preview.editor-preview-image {
   display: flex;
   align-items: center;
