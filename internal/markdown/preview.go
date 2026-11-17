@@ -38,6 +38,7 @@ var previewPolicy = func() *bluemonday.Policy {
 	p.AllowAttrs("type").Matching(regexp.MustCompile(`^checkbox$`)).OnElements("input")
 	p.AllowAttrs("checked", "disabled").OnElements("input")
 	p.AllowAttrs("class").Matching(regexp.MustCompile(`^(border-[a-z]+|text-[a-z]+ fw-medium mb-2|ti ti-[a-z-]+)$`)).OnElements("blockquote", "p", "i")
+	p.AllowAttrs("class").Matching(regexp.MustCompile(`^language-[\w+.-]+$`)).OnElements("code")
 	p.AllowAttrs("aria-hidden").OnElements("i")
 	p.AddTargetBlankToFullyQualifiedLinks(true)
 	return p
