@@ -19,9 +19,11 @@ const { startFakeForge, addHost } = require("./forge-fake");
 // id, Publish as review posts the local comment as a review comment that
 // comes back as a thread. Every text of the cards, Reviews and Changes with
 // an unfolded diff, the diff's own lines aside, holds 4.5:1 against its
-// background and every icon 3:1 in the light and the dark scheme, and the
-// card's changes and review lines and a file row of Changes keep their icons
-// and their coloured text so hovered, pressed and focused. A phone's sheet
+// background and every icon 3:1 in the light and the dark scheme, a primary
+// button aside: the Add of a project comment and of a line comment wear the
+// white text of the editor's in both schemes. The card's changes and review
+// lines and a file row of Changes keep their icons and their coloured text
+// so hovered, pressed and focused. A phone's sheet
 // holds the card and the view inside its width, a guest of a link to the
 // assistant reads both without a control.
 //
@@ -137,7 +139,8 @@ async function until(p, want, what, timeout = 30000) {
 // backgrounds of its ancestors laid over each other, with the scheme the
 // page paints in. Colours are read through a canvas, which takes every
 // colour syntax the browser computes. The lines of a drawn diff wear the
-// editor's colours and stay out.
+// editor's colours and stay out, so does a primary button, which wears the
+// white text of the editor's in both schemes, see its own check.
 const unreadable = (p, root = PANE) => p.evaluate((root) => {
   const ctx = Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
   const parse = (value) => {
@@ -177,7 +180,7 @@ const unreadable = (p, root = PANE) => p.evaluate((root) => {
   let icons = 0;
   const top = document.querySelector(root);
   for (const el of top ? [top, ...top.querySelectorAll("*")] : []) {
-    if (!el.getClientRects().length || getComputedStyle(el).visibility === "hidden" || el.closest(".collapse:not(.show), .collapsing, [hidden], .cm-editor") || el.closest(":disabled")) continue;
+    if (!el.getClientRects().length || getComputedStyle(el).visibility === "hidden" || el.closest(".collapse:not(.show), .collapsing, [hidden], .cm-editor, .btn-primary") || el.closest(":disabled")) continue;
     const icon = el.matches(".ti");
     if (!icon && ![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
     if (icon) icons += 1;
@@ -373,6 +376,52 @@ L.runFeature("assistant-projects-github", async ({ browser, page, run, mobilePag
           assert(read.scheme === scheme && read.texts > 5 && read.icons > 3 && read.bad.length === 0, `${where} in ${scheme}: ${JSON.stringify(read)}`);
           seen.push(`${where} ${scheme} ${read.texts}+${read.icons}`);
         }
+      }
+      await page.emulateMedia({ colorScheme: "dark" });
+      return seen.join(", ");
+    });
+
+    await run("the Add of a project comment and of a line comment wear the editor's white text in the dark scheme and stay as they were in the light one", async () => {
+      // A primary button outside the tab stands for the shared style the
+      // editor's Add wears.
+      const paint = (sel) => page.evaluate((s) => {
+        const ref = Object.assign(document.createElement("button"), { className: "btn btn-sm btn-primary", textContent: "Add" });
+        document.body.append(ref);
+        const out = { color: getComputedStyle(document.querySelector(s)).color, shared: getComputedStyle(ref).color, scheme: document.documentElement.getAttribute("data-bs-theme") };
+        ref.remove();
+        return out;
+      }, sel);
+      const white = (rgb) => (rgb.match(/\d+/g) || []).slice(0, 3).every((v) => Number(v) >= 240);
+      const file = `${PANE} [data-assistant-changed-files="files"] [data-assistant-changed-file="${FILE}"]`;
+      const seen = [];
+      for (const scheme of ["dark", "light"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await openPage(page, `${BASE}/assistants/${owner}`);
+        await until(page, (w) => !!w.card?.review, "the card did not stand");
+        await openReviews(page);
+        await page.mouse.move(1, 1);
+        const project = await paint(`${PANE} [data-assistant-project-comment] [data-project-comment-add]`);
+        await page.click(`${PANE} [data-assistant-project-switch="changes"]`);
+        await page.click(`${file} [data-assistant-changed-toggle]`);
+        await page.waitForSelector(`${file} .cm-editor`, { state: "visible", timeout: 15000 });
+        await page.waitForFunction(() => !document.querySelector(".collapsing"));
+        // A line without a thread, a press on one with a thread unfolds it.
+        const bare = await page.evaluate((f) => [...document.querySelectorAll(`${f} .cm-lineNumbers .cm-gutterElement`)]
+          .find((el) => /^\d+$/.test(el.textContent.trim()) && el.getClientRects().length && getComputedStyle(el).visibility === "visible"
+            && ![...el.classList].some((c) => c.startsWith("cm-comment")))?.textContent.trim(), file);
+        assert(bare, "the diff shows no line without a thread");
+        const number = page.locator(`${file} .cm-lineNumbers .cm-gutterElement`).filter({ hasText: new RegExp(`^${bare}$`) }).first();
+        await number.scrollIntoViewIfNeeded();
+        await sleep(300);
+        await number.click();
+        await page.waitForSelector(`${file} [data-line-comment-form] [data-line-comment-add]`, { state: "visible", timeout: 10000 });
+        await page.mouse.move(1, 1);
+        const line = await paint(`${file} [data-line-comment-form] [data-line-comment-add]`);
+        await page.click(`${file} [data-line-comment-form] [data-line-comment-cancel]`);
+        for (const [what, read] of [["project comment", project], ["line comment", line]]) {
+          assert(read.scheme === scheme && read.color === read.shared && white(read.color), `the Add of a ${what} in ${scheme} wears ${read.color}, the shared primary button ${read.shared}`);
+        }
+        seen.push(`${scheme} ${project.color} / ${line.color}`);
       }
       await page.emulateMedia({ colorScheme: "dark" });
       return seen.join(", ");

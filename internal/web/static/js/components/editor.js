@@ -27,13 +27,14 @@ import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeav
 import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPreview, isArchive, isAudio, isImage, isMarkdown, isSvg, isVideo, langUrl, modeUrl } from "@dc/editor-filetypes";
 import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
 import { showPreview, wirePreview } from "@dc/editor-preview";
-import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
+import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedShare, savedView } from "@dc/editor-saved";
 import { authorHead, commentRow, placeNodes, deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, mayDelete, noteStart, publishComments, publishQuestion, publishWords, resolved, sortComments, writeLineComment } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
 import { commentGutter } from "@dc/comment-gutter";
 import { lineBlocks } from "@dc/line-blocks";
 import { editorThreads } from "@dc/editor-threads";
 import { changeList } from "@dc/editor-changes";
+import { tieMergeView } from "@dc/editor-merge";
 import { GIT_MARKS, GIT_MARK_CLASSES, gitKind, revdiffKind } from "@dc/editor-marks";
 import { indentPref, loadEditorSettings, saveEditorSettings, setupIndentControl, setupSettingsUI } from "@dc/editor-settings";
 import { createTextarea } from "@dc/editor-textarea";
@@ -754,6 +755,7 @@ async function init(root) {
       onGoToDefinition: goToDefinitionAtCursor,
       onDocChanged: (update) => onDocChanged(g, update),
       onViewMoved: scheduleViewSave,
+      onMergeDivider: (x) => placeCompareBar(g, x),
       readOnly: !can("files"),
     }, editorSettings, g.ac.signal, el.querySelector("[data-editor-merge]"));
     g.editor.setVisible(false);
@@ -2160,12 +2162,14 @@ async function init(root) {
       };
       if (scroll) entry.scroll = scroll;
       if (expanded.length) entry.expanded = expanded;
+      if (t.diffShare) entry.diffShare = t.diffShare;
       return entry;
     }
     if (t.compare) {
       const entry = { type: "compare", left: t.compare.left, right: t.compare.right };
       if (scroll) entry.scroll = scroll;
       if (expanded.length) entry.expanded = expanded;
+      if (t.diffShare) entry.diffShare = t.diffShare;
       return entry;
     }
     const view = tabView(t);
@@ -2175,11 +2179,12 @@ async function init(root) {
       return entry;
     }
     if (t.external) return view ? { type: "external", path: t.path, view } : { type: "external", path: t.path };
-    if (!t.diffRev && !t.blameOn && !t.previewOn && !view) return t.path;
+    if (!t.diffRev && !t.diffShare && !t.blameOn && !t.previewOn && !view) return t.path;
     const entry = { type: "file", path: t.path };
     if (t.diffRev) entry.diff = t.diffRev;
     if (t.diffRev && t.diffFrom) entry.diffFrom = t.diffFrom;
     if (t.diffRev && t.diffSplit) entry.diffSplit = true;
+    if (t.diffShare) entry.diffShare = t.diffShare;
     if (t.blameOn) entry.blame = true;
     if (t.previewOn) entry.preview = true;
     if (view) entry.view = view;
@@ -2259,6 +2264,8 @@ async function init(root) {
         // keeps the diff and drops the preview.
         if (entries[i].type === "file" && entries[i].preview && !tab.kind && !tab.diffRev) tab.previewOn = true;
         if (entries[i].view && tab.handle && !tab.kind) tab.group.editor.restoreView(tab, entries[i].view);
+        const share = savedShare(entries[i].diffShare);
+        if (share) tab.diffShare = share;
         const scroll = savedScroll(entries[i].scroll);
         if (scroll && tab.compare) tab.compare.scroll = scroll;
         if (tab.compare) tab.compare.expanded = savedLines(entries[i].expanded);
@@ -5529,6 +5536,19 @@ async function init(root) {
     return wideMedia.matches ? "side" : "inline";
   }
 
+  // The divider's share belongs to the tab: a side by side build starts from
+  // what the tab holds, a new tab from even, and every move lands back on the
+  // tab and is saved with its entry.
+  function dividerOf(tab) {
+    return {
+      share: tab.diffShare,
+      onShare: (value) => {
+        tab.diffShare = Math.round(value * 1000) / 1000;
+        scheduleViewSave();
+      },
+    };
+  }
+
   // reapplyComparison rebuilds what is open so a setting that was just picked
   // shows at once, without a request: the revision text and both sides of a
   // comparison are already in hand. The view applies to a diff alone, a
@@ -5558,6 +5578,7 @@ async function init(root) {
       valid: () => activeTabOf(g) === tab,
       scroll: g.editor.scrollOf(),
       expanded: g.editor.expandedOf(),
+      ...dividerOf(tab),
     });
   }
 
@@ -5711,6 +5732,7 @@ async function init(root) {
         valid: current,
         scroll,
         expanded,
+        ...dividerOf(tab),
       });
     } catch (err) {
       // A diff that cannot be built must never leave an empty surface: the file
@@ -6516,6 +6538,7 @@ async function init(root) {
         valid: () => activeTabOf(g) === tab,
         scroll: tab.compare.scroll || null,
         expanded: tab.compare.expanded || [],
+        ...dividerOf(tab),
       });
     } catch (err) {
       console.error("compare failed", err);
@@ -6554,6 +6577,13 @@ async function init(root) {
     }
     if (activeTabOf(g) !== tab) return;
     syncCompareBar(g);
+  }
+
+  // The bar names each side over its own pane, so its halves part where the
+  // divider of the side by side view stands, and evenly without one.
+  function placeCompareBar(g, x) {
+    if (x > 0) g.compareBarEl.style.setProperty("--editor-compare-split", `${x}px`);
+    else g.compareBarEl.style.removeProperty("--editor-compare-split");
   }
 
   function syncCompareBar(g = group) {
@@ -12036,43 +12066,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
   // a revision. Both are a MergeView; only this tells them apart.
   let compareOn = false;
 
-  // The listeners that tie the two sides together sideways, see
-  // syncMergeScroll. One controller per merge view, aborted with it.
   let mergeScroll = null;
-
-  // The two sides of a merge view already share the vertical axis: the outer
-  // .cm-mergeView is their scroller and the editors grow to their full height,
-  // see fillsTheBox. The horizontal axis is the one they do not share, every
-  // editor keeps its own .cm-scroller for it, so with wrapping off the left
-  // column stands at one place and the right one at another and the two halves
-  // of a line are no longer next to each other. This ties them together on
-  // that axis alone and leaves the vertical scroller exactly where the package
-  // put it.
-  //
-  // Writing scrollLeft raises a scroll event of its own, and answering that
-  // one would send the value straight back. Comparing the two values instead
-  // of guarding is not enough either: a side whose longest line is shorter
-  // clamps what it is given, keeps answering with its own end and pulls its
-  // neighbour back there, which is a comparison that refuses to scroll past
-  // the shorter file's width. So a write that really moved the other side
-  // marks it, and that one event is spent instead of answered.
-  function syncMergeScroll(view) {
-    const sides = [view.a.scrollDOM, view.b.scrollDOM];
-    const echo = new Set();
-    mergeScroll = new AbortController();
-    view.dom.addEventListener("scroll", () => hooks.onViewMoved?.(), { signal: mergeScroll.signal, passive: true });
-    for (const [index, from] of sides.entries()) {
-      const to = sides[index === 0 ? 1 : 0];
-      from.addEventListener("scroll", () => {
-        hooks.onViewMoved?.();
-        if (echo.delete(from)) return;
-        const was = to.scrollLeft;
-        if (was === from.scrollLeft) return;
-        to.scrollLeft = from.scrollLeft;
-        if (to.scrollLeft !== was) echo.add(to);
-      }, { signal: mergeScroll.signal, passive: true });
-    }
-  }
 
   function expandedLines(v) {
     const doc = v.state.doc;
@@ -12185,7 +12179,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
     mergeHost.hidden = false;
     mergeView = view;
     compareOn = true;
-    syncMergeScroll(view);
+    mergeScroll = tieMergeView(view, { onMoved: () => hooks.onViewMoved?.(), share: spec.share, onShare: spec.onShare, onDivider: hooks.onMergeDivider });
     syncSurface();
     view.b.requestMeasure();
     reportCursor(view.b.state);
@@ -12231,7 +12225,7 @@ async function createCodeMirror(host, hooks, settings, signal, mergeHost) {
       mergeHost.replaceChildren(view.dom);
       mergeHost.hidden = false;
       mergeView = view;
-      syncMergeScroll(view);
+      mergeScroll = tieMergeView(view, { onMoved: () => hooks.onViewMoved?.(), share: spec.share, onShare: spec.onShare, onDivider: hooks.onMergeDivider });
       syncSurface();
       blocks.set(editorView, []);
       blocks.set(view.b, held);

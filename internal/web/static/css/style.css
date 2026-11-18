@@ -1217,10 +1217,11 @@ textarea[data-line-thread-reply-text], textarea[data-line-comment-text], [data-a
 /* The Projects tab holds its text at 4.5:1 and its icons at 3:1 on every
    surface it paints, a hovered, focused and pressed row included. Tabler's
    grey and hues reach that on white alone, the dark red, blue and purple not
-   on the dark surface, and the dark primary carries no white text. So in here
-   each moves toward the far end of its theme until it holds, the hue kept;
-   the tints behind them, the colors of a drawn diff and a session icon, which
-   wears the cockpit's colors wherever it stands, stay as they are. */
+   on the dark surface. So in here each moves toward the far end of its theme
+   until it holds, the hue kept; the tints behind them, the colors of a drawn
+   diff and a session icon, which wears the cockpit's colors wherever it
+   stands, stay as they are, and so does the white text of a primary button,
+   the editor's in both schemes. */
 :root:not([data-bs-theme=dark]) .dc-assistant-projects {
   --tblr-secondary: color-mix(in oklab, rgb(var(--tblr-secondary-rgb)) 90%, var(--tblr-black));
   --tblr-green: color-mix(in oklab, rgb(var(--tblr-green-rgb)) 70%, var(--tblr-black));
@@ -1238,8 +1239,6 @@ textarea[data-line-thread-reply-text], textarea[data-line-comment-text], [data-a
   --tblr-red: color-mix(in oklab, rgb(var(--tblr-red-rgb)) 75%, var(--tblr-white));
   --tblr-blue: color-mix(in oklab, rgb(var(--tblr-blue-rgb)) 75%, var(--tblr-white));
   --tblr-purple: color-mix(in oklab, rgb(var(--tblr-purple-rgb)) 75%, var(--tblr-white));
-  --tblr-primary-fg: var(--tblr-body-bg);
-  --tblr-primary-darken: color-mix(in oklab, var(--tblr-primary) 85%, var(--tblr-white));
 }
 .dc-assistant-projects .dc-term-icon { --tblr-secondary: rgb(var(--tblr-secondary-rgb)); }
 [aria-expanded="true"] > [data-fold-shut], [aria-expanded="false"] > [data-fold-open] { display: none; }
@@ -1909,9 +1908,6 @@ textarea[data-line-thread-reply-text], textarea[data-line-comment-text], [data-a
 }
 .editor-commit-grouprow:not(:first-child) {
   margin-top: 0.35rem;
-}
-.editor-commit-grouprow .editor-commit-line {
-  flex: 1 1 auto;
 }
 .editor-commit-open:disabled {
   color: var(--tblr-body-color);
