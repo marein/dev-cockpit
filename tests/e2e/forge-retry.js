@@ -180,10 +180,8 @@ L.runFeature("FORGE_RETRY", async ({ browser, page, run, mobilePage, bag }) => {
     await refresh();
     await sheetPipeline(p, "failed");
   };
-  const dialogRows = () => page.locator(`${DIALOG} dl[data-approval-details]`).evaluate((list) => {
-    const labels = [...list.querySelectorAll("dt")].map((dt) => dt.textContent.trim());
-    return [...list.querySelectorAll("dd")].map((dd, i) => [labels[i], dd.textContent.trim()]);
-  });
+  const dialogRows = () => page.locator(`${DIALOG} [data-approval-details]`).evaluate((root) => [...root.querySelectorAll("[data-approval-detail]")]
+    .map((el) => [el.dataset.approvalDetail, (el.querySelector("[data-approval-value]") || el).textContent.trim()]));
   // approvalNote reads the assistant's page with a fetch, not a visit: a
   // visit leaves the page's conversation stream connecting, and the next
   // navigation that cuts it is a page error in WebKit.
@@ -345,19 +343,19 @@ L.runFeature("FORGE_RETRY", async ({ browser, page, run, mobilePage, bag }) => {
       const what = `Retry failed jobs of pipeline #12 on feature in ${project}`;
       assert(answer.status === 200 && answer.json.pending === true && answer.json.what === what, `the socket answered ${answer.status} ${answer.raw}`);
       await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
-      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === what, "the dialog's first line is another");
+      assert((await page.textContent(`${DIALOG} [data-approval-what]`)).trim() === "Retry failed jobs of pipeline #12", "the dialog's head is another");
       const rows = await dialogRows();
       const want = [
-        ["Asked by", `Assistant · ${assistant.slice(0, 8)}`],
-        ["Action", "Retry failed jobs"],
+        ["Project", project],
+        ["Branch", "feature"],
         ["Failed jobs", "unit, child, ci/external"],
         ["Left as they are", '"ci/external": GitLab cannot run an external commit status again.'],
-        ["Pipeline", "#12 · https://gitlab.example.com/team/sub/app/-/pipelines/12"],
-        ["Branch", "feature"],
+        ["Pipeline", "#12"],
         ["Forge", `GitLab · ${FAKE_ADDR}:${FAKE_PORT}/gl/team/sub/app`],
-        ["Project", project],
       ];
       assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
+      const pipelineLink = await page.locator(`${DIALOG} [data-approval-detail="Pipeline"] a`).getAttribute("href");
+      assert(pipelineLink === "https://gitlab.example.com/team/sub/app/-/pipelines/12", `the pipeline links ${pipelineLink}`);
       assert(writes().length === 0, "a waiting retry ran something");
       const again = await asAssistant(assistant, `/projects/${project}/forge/retry`, { branch: "feature" });
       assert(again.status === 409 && again.json.error === `${what} already waits for the user's approval.`, `the same retry again answered ${again.status} ${again.raw}`);
@@ -390,7 +388,7 @@ L.runFeature("FORGE_RETRY", async ({ browser, page, run, mobilePage, bag }) => {
       assert(answer.json.pending === true && answer.json.what === `Retry job "unit" of pipeline #12 on feature in ${project}`, `the job's retry answered ${answer.raw}`);
       await page.waitForSelector(`${DIALOG} .swal2-confirm`, { timeout: 15000 });
       const rows = await dialogRows();
-      assert(JSON.stringify(rows.slice(1, 3)) === JSON.stringify([["Action", "Retry job"], ["Job", "unit"]]), `the job's dialog reads ${JSON.stringify(rows)}`);
+      assert(JSON.stringify(rows.slice(2, 3)) === JSON.stringify([["Job", "unit"]]), `the job's dialog reads ${JSON.stringify(rows)}`);
       await git(["commit", "-q", "--allow-empty", "-m", "pushed again"]);
       const next = await git(["rev-parse", "HEAD"]);
       await git(["update-ref", "refs/remotes/origin/feature", next]);

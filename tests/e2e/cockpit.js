@@ -642,7 +642,7 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     await closeSheet(mp);
   });
 
-  await run("the update tile: always pressable like the footer, Up to date runs a forced check and its dialog, Update to <version> confirms", async () => {
+  await run("the update tile: always pressable like the footer, Up to date runs a forced check and its dialog (red when it could not check, green when up to date), Update to <version> confirms", async () => {
     const running = await mp.$eval("dc-update-check", (el) => el.dataset.version);
     const answer = { body: null };
     const forced = [];
@@ -657,12 +657,12 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
       text: el.textContent.replace(/\s+/g, " ").trim(), disabled: el.disabled, acts: el.hasAttribute("data-update-open"),
     }));
     const swalTitle = () => mp.evaluate(() => {
-      const t = document.querySelector(".swal2-container .swal2-title");
-      return t && t.getClientRects().length > 0 ? t.textContent.trim() : "";
+      const t = document.querySelector(".swal2-container .dc-ask-title");
+      return t && t.getClientRects().length > 0 ? { title: t.textContent.trim(), tone: [...t.closest(".swal2-popup").classList].find((c) => /^dc-ask-(error|success)$/.test(c)) || "" } : {};
     });
     const cases = [
-      { name: "a build that cannot update itself", body: { supported: false }, title: "Could not check for updates" },
-      { name: "no newer version", body: { supported: true, available: false, current: running, latest: running, writable: true }, title: "Up to date" },
+      { name: "a build that cannot update itself", body: { supported: false }, title: "Could not check for updates", tone: "dc-ask-error" },
+      { name: "no newer version", body: { supported: true, available: false, current: running, latest: running, writable: true }, title: "Up to date", tone: "dc-ask-success" },
     ];
     for (const c of cases) {
       answer.body = c.body;
@@ -675,11 +675,11 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
       forced.length = 0;
       await mp.tap(`${SHEET} [data-cockpit-update]`);
       await mp.waitForFunction((want) => {
-        const el = document.querySelector(".swal2-container .swal2-title");
+        const el = document.querySelector(".swal2-container .dc-ask-title");
         return el && el.getClientRects().length > 0 && el.textContent.trim() === want;
       }, c.title, { timeout: 8000 }).catch(() => {});
-      const title = await swalTitle();
-      assert(title === c.title, `${c.name}: a tap showed ${JSON.stringify(title)}, not ${JSON.stringify(c.title)}`);
+      const shown = await swalTitle();
+      assert(shown.title === c.title && shown.tone === c.tone, `${c.name}: a tap showed ${JSON.stringify(shown)}, not ${JSON.stringify(c.title)} in ${c.tone}`);
       assert(forced.length >= 1, `${c.name}: the tap ran no forced check`);
       if (process.env.SHOTS_DIR && c.title === "Up to date") {
         const size = mp.viewportSize();
@@ -702,7 +702,7 @@ L.runFeature("COCKPIT", async ({ run, mobilePage }) => {
     const t = await tile();
     assert(t.text === "Update to 9.9.9" && !t.disabled && t.acts, `with an update the tile reads ${JSON.stringify(t)}`);
     await mp.tap(`${SHEET} [data-cockpit-update]`);
-    await mp.waitForFunction(() => /Update to 9\.9\.9\?/.test(document.querySelector(".swal2-title")?.textContent || ""), null, { timeout: 12000 });
+    await mp.waitForFunction(() => /Update to 9\.9\.9\?/.test(document.querySelector(".dc-ask-title")?.textContent || ""), null, { timeout: 12000 });
     await L.dismissUpdate(mp);
     await mp.unroute("**/update/check*");
     await seed("");

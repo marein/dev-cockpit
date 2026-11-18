@@ -254,3 +254,173 @@ repository: semver tags, `dev-cockpit_<version>_<os>_<arch>.tar.gz` containing `
 
 > Plugins are experimental and not part of the stable contract. A distribution adds them through the
 > `ServePlugins` field of `distro.Build`, see the [plugin package](https://github.com/marein/dev-cockpit/tree/master/plugin).
+> A pair marked `Optional` ships switched off, see [Optional compiled plugins](#optional-compiled-plugins).
+> [`examples/distro`](examples/distro) is a distribution with one plugin always on and one optional.
+
+### Plugins
+
+Plugins are experimental and not part of the stable contract. Compiled and external plugins reach the same
+surface: every `Add` of `plugin.Serve`, `AddPage` included, is a manifest entry, and the `Serve` readers
+(`StateDir`, `PluginStateDir`, `ProjectsDir`, `Projects`) answer on the callback socket.
+
+| `plugin.Serve` | External plugin |
+| --- | --- |
+| `AddRoutes` | Its process serves HTTP on its socket for everything below `/plugins/<id>/` |
+| `AddAssets` | `assets`, a directory of the plugin, through the same hashed pipeline |
+| `AddCustomElement` | `elements`, each a name and a module in `assets` |
+| `AddSlotHTML` | `slots`, each a slot and a markup file |
+| `AddPage` | `page`, title, icon, nav label and a markup file for `Page.HTML` |
+| `Routes.Path` | `{{base}}` in the markup, `/plugins/<id>` |
+| `AddSettings`, `AddAssistantMemory` | `settings`, `memory` |
+| `StateDir`, `PluginStateDir`, `ProjectsDir` | Environment, and `GET /v1/plugin` on the callback socket |
+| `Projects().Create`, `Project.Changed` | `POST /v1/projects`, `POST /v1/projects/<name>/changed` |
+| `AddEventHandler` | `events`, streamed from `GET /v1/events` |
+| `Context`, ended at a switch off | `SIGTERM` to its process group, see [Process](#process) |
+
+An external plugin is a directory named after its id in `<state-dir>/external-plugins`. Settings &rarr; Plugins
+installs one from a public GitHub or GitLab repository (see [Releases](#releases)) or copies one from a
+directory on the host, without `.git`. A directory dropped or linked into the folder is picked up too. A
+plugin runs as the cockpit's user and its frontend code runs in the cockpit page, install only plugins you
+trust. The page switches, restarts, removes plugins and shows their log, every open page follows live.
+[`examples/plugins/hello`](examples/plugins/hello) is a complete plugin in Python.
+
+#### Optional compiled plugins
+
+A distribution marks a compiled plugin optional on its pair:
+
+```go
+ServePlugins: []plugin.Named[plugin.ServePlugin]{
+	{ID: "stamp", Plugin: stamp{}},
+	{ID: "pulse", Plugin: &pulse{}, Optional: true},
+},
+```
+
+Settings &rarr; Plugins lists compiled plugins under Built in. An always on plugin has no action. An optional
+one ships switched off and has Enable and Disable, no Remove, it updates with the binary. The switch survives
+restarts and reaches every open page live, like an external plugin's.
+
+* While it is off nothing of it runs or is written: no `ConfigureServe`, no state directory, no settings or
+  memory, no events.
+* Every switch on, and every start while it is on, calls `ConfigureServe` with a fresh `Serve`. Settings and
+  memory are applied with their overwrite rules, its page, rail entry, slot markup, routes, assets and event
+  handlers appear on every open page without a reload.
+* Every switch off ends the `Serve`'s `Context` and removes what it added. Whatever `ConfigureServe` started
+  ends with `Context().Done()`. Its routes answer 404, its open page says it is not running, after a reload
+  too. Written settings and memory files stay, edits included, and so does its state directory. The next
+  switch on writes them only where the overwrite rule says so.
+* An error or panic in `ConfigureServe` refuses the switch on and the plugin stays off. One that fails at a
+  start while switched on shows as broken, the cockpit starts anyway.
+* Ids are unique across compiled and external plugins, an optional plugin's id is taken while it is off.
+
+The switches live in `<state-dir>/external-plugins.json` (`on`), beside those of external plugins (`disabled`).
+
+#### Manifest
+
+`plugin.json`, unknown fields are refused:
+
+```json
+{
+  "protocol": 1,
+  "id": "hello",
+  "name": "Hello",
+  "version": "1.0.0",
+  "description": "One line for the Plugins page.",
+  "run": "hello.py",
+  "assets": "assets",
+  "elements": [{"name": "board", "module": "board.js"}],
+  "slots": [{"slot": "projects-actions", "html": "slot.html"}],
+  "page": {"title": "Hello notes", "icon": "ti-notes", "nav_label": "Hello", "html": "page.html"},
+  "settings": {"values": {"hello-greeting": "Hi"}, "overwrite": false},
+  "memory": {"dir": "memory", "overwrite": false},
+  "events": ["job", "coder", "compose"]
+}
+```
+
+* `id`: lowercase words joined by dashes, at most 40 characters, equal to the directory name and to no
+  compiled plugin's id. Elements are named `<id>-<name>`.
+* `run`: an executable file in the directory, started with the directory as working directory.
+* Paths are relative and stay inside the directory, symlinks included, else the plugin is broken.
+* `slots`: `projects-actions` and `projects-empty-actions`, a slot may appear more than once.
+* `html`: a markup file of at most 64 KiB UTF-8, what a compiled plugin passes to `AddSlotHTML` and
+  `Page.HTML`. Every `{{base}}` becomes `/plugins/<id>`, like `Routes.Path`:
+  `<hello-board data-notes-url="{{base}}/notes">`. It is read when the plugin loads, again on restart, and
+  parsed as HTML, so an unbalanced tag stays inside its place and a `plaintext` element is dropped. It renders
+  unescaped in the HTML response, before any module runs, while the process answers. Otherwise the slot stays
+  empty and the page shows the plugin's state. A `script` in it runs on full page loads only, behavior
+  belongs in an element's module.
+* An element's module default exports its class, the cockpit defines it once the element is on the page. It
+  may import the cockpit's modules, `@dc/http` sends the CSRF token.
+
+#### Process
+
+The cockpit starts `run` in its own process group with the cockpit's environment plus:
+
+| Variable | Meaning |
+| --- | --- |
+| `DEV_COCKPIT_PROTOCOL` | `1` |
+| `DEV_COCKPIT_PLUGIN_ID`, `DEV_COCKPIT_PLUGIN_DIR` | Id and directory |
+| `DEV_COCKPIT_PLUGIN_BASE` | `/plugins/<id>`, the browser's path to it |
+| `DEV_COCKPIT_PLUGIN_SOCKET` | The unix socket the plugin listens on, HTTP/1.1 |
+| `DEV_COCKPIT_SOCKET`, `DEV_COCKPIT_TOKEN` | The callback socket and its bearer token, new on every start |
+| `DEV_COCKPIT_PLUGIN_STATE_DIR` | `<state-dir>/plugins/<id>`, the plugin's own, not in a backup |
+| `DEV_COCKPIT_STATE_DIR`, `DEV_COCKPIT_PROJECTS_DIR` | The instance's directories |
+
+* The plugin runs once it answers HTTP on its socket, within 15 seconds. `GET /.dev-cockpit/probe` every 10
+  seconds, any status, two misses end it. An ended plugin restarts after 1, 2, 4 up to 60 seconds.
+* Stop, disable, remove and shutdown send SIGTERM to the group and SIGKILL to what is left after 3 seconds,
+  they return as soon as the group is gone. A cockpit start ends groups an earlier cockpit left, so a plugin
+  never runs twice.
+* Requests reach the plugin with the path below `/plugins/<id>` and `X-Forwarded-Prefix`. The cockpit checks
+  session and CSRF token and strips `Cookie`, `Authorization`, `X-CSRF-Token` and the `csrf_token` form
+  field. `Set-Cookie` in a response is dropped. A response must start within 30 seconds.
+* Its output is the log on the Plugins page, the last 200 lines.
+
+#### Callback API
+
+HTTP on `DEV_COCKPIT_SOCKET` with `Authorization: Bearer <DEV_COCKPIT_TOKEN>`, JSON in and out, errors as
+`{"error": "..."}`:
+
+* `GET /v1/plugin`: `id`, `base`, `state_dir`, `plugin_state_dir`, `projects_dir`.
+* `POST /v1/projects` with `{"name": "..."}`: creates the project like the projects page, `201` with `name`
+  and `dir`, `409` when a project of that name has content. Every open page shows it.
+* `POST /v1/projects/<name>/changed`: announces that the project's content changed, `204`.
+* `GET /v1/events`: server sent events of the sources in `events`, `job` (a steered job closed), `coder` (a
+  coder ended its turn or asks) and `compose` (a compose run ended). One JSON object per `data:` line with
+  `source`, `kind`, `target`, `time`, `headline`, `body` and `project`, a comment line every 15 seconds.
+  Events are dropped while a stream lags behind.
+
+#### Releases
+
+Settings &rarr; Plugins installs a plugin from a public repository and keeps it current. The dialog asks for
+the forge, GitHub or GitLab, and the address on any https host: github.com, GitHub Enterprise, gitlab.com or
+a GitLab of its own with groups and subgroups. The cockpit guesses nothing from the host. It reads releases
+from `api.github.com` for github.com, `/api/v3` on other GitHub hosts and `/api/v4` on GitLab hosts. Releases
+follow the conventions of the cockpit's own:
+
+* A semver tag, `v1.2.3` or `1.2.3`. Skipped like in the cockpit's own update: drafts and prereleases on
+  GitHub, upcoming releases on GitLab, releases whose files are not uploaded yet.
+* `<id>_<version>_<os>_<arch>.tar.gz` per platform, like `hello_1.2.3_linux_amd64.tar.gz`, or one
+  `<id>_<version>_any.tar.gz` for a plugin without a binary. The platform archive wins.
+* `<id>_<version>_checksums.txt` with a `<sha256>  <archive>` line per archive.
+* The archive is a gzipped tar of the plugin directory, `plugin.json` at its top or in its single top
+  directory. Only directories, files and relative links that stay inside, at most 5000 entries and 256 MiB.
+  The manifest's `version` equals the tag.
+
+The newest fitting release is downloaded, verified against the checksums, unpacked into staging and checked
+like a load, then the page shows name, version, id, description and source and asks. A failing step refuses
+it, nothing changes. Looking up an installed plugin's repository offers a newer release as an update and
+refuses an older or equal one. The plugin is a link `<id> -> .versions/<id>/<release>`, a switch is a rename.
+
+Updates are checked a minute after the start and every six hours, or on request. A row shows the step with the
+notes of every release in between, one tap updates. A plugin on automatic updates updates on its own. The
+previous release is kept: when the new one does not start or exits within 30 seconds, the cockpit rolls back,
+starts the previous one and shows why, and never installs the failed release automatically again. A cockpit
+restart during an install or update finishes or undoes it. Updates come only from the forge, host and path a
+plugin was installed from, a plugin of the same id from another source asks first. The cockpit sends no token,
+private repositories are not supported. Downloads use https only, follow at most five redirects and never reach
+a link local address, hosts in private networks are fine.
+
+`<state-dir>/external-plugins.json` records each plugin's origin. When it is lost, empty or broken, a start
+deletes no release: every plugin keeps running the release its link points to, but shows as a folder plugin
+without updates until it is installed from its repository again. The switches return to their defaults,
+external plugins on and optional compiled ones off. A broken file is kept as `external-plugins.json.broken`.

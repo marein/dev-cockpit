@@ -1,7 +1,8 @@
 {{/* The phone's Cockpit sheet, what /ctx/cockpit answers: the rail's foot for a
      screen without a rail. Top to bottom the server, the latest news, the
-     quick actions (theme, costs, update, logout) and the way into the
-     settings, whose head counts the open backup reviews, and the docs. It is pulled fresh on every open, so the server
+     quick actions (theme, costs, update, logout), the pages the plugins add,
+     the way into the settings, whose head counts the open backup reviews,
+     and the docs. It is pulled fresh on every open, so the server
      rows and the settings count start from the moment it opened. */}}
 {{define "cockpit_ctx.gohtml"}}
 {{template "ctx_start.gohtml" (dict "Title" "Cockpit")}}
@@ -45,6 +46,7 @@
       </div>
     </div>
   </section>
+  {{template "plugin_region_cockpit" (dict "Tab" .SettingsNav.Active)}}
   <section data-cockpit-section="settings">
     <div class="dc-section-head"><span class="flex-fill">Settings</span>{{template "backup_reviews_badge.gohtml" (dict "Count" .Page.BackupReviewCount "Class" "badge bg-primary-lt")}}</div>
     {{template "settings_nav" .SettingsNav}}

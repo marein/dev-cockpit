@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/marein/dev-cockpit/plugin"
@@ -19,6 +20,9 @@ var definedSlots = map[string]bool{
 	plugin.SlotProjectsActions:      true,
 	plugin.SlotProjectsEmptyActions: true,
 }
+
+// SlotDefined answers whether a template renders the named slot.
+func SlotDefined(slot string) bool { return definedSlots[slot] }
 
 // Registration is one added custom element as the cockpit reads it: the
 // final name next to the module path inside the added assets.
@@ -42,8 +46,24 @@ type Serve struct {
 	assets         fs.FS
 	elements       []Registration
 	slots          map[string][]string
+	page           *plugin.Page
 	memory         []assistantMemory
 	settings       []settingValues
+	handlers       []eventHandler
+	// order is a compiled plugin's place in the wiring.
+	order  int
+	ctx    context.Context
+	cancel context.CancelFunc
+	// live is set on an external or optional plugin's Serve, nil on one
+	// fixed at serve start.
+	live *liveServe
+}
+
+// liveServe is what a live Serve carries: its load generation and whether
+// the plugin answers.
+type liveServe struct {
+	generation int64
+	running    func() bool
 }
 
 var _ plugin.Serve = (*Serve)(nil)
@@ -55,6 +75,8 @@ func (s *Serve) StateDir() string { return s.stateDir }
 func (s *Serve) PluginStateDir() string { return s.pluginStateDir }
 
 func (s *Serve) Projects() plugin.Projects { return s.projects }
+
+func (s *Serve) Context() context.Context { return s.ctx }
 
 func (s *Serve) AddRoutes(handler http.Handler) plugin.Routes {
 	s.add()
@@ -91,6 +113,18 @@ func (s *Serve) AddSlotHTML(slot, html string) {
 		s.slots = map[string][]string{}
 	}
 	s.slots[slot] = append(s.slots[slot], html)
+}
+
+// tablerIcon is one Tabler icon class, the icon lands in a class list and must
+// not bring classes of its own.
+var tablerIcon = regexp.MustCompile(`^ti-[a-z0-9-]+$`)
+
+func (s *Serve) AddPage(page plugin.Page) {
+	s.add()
+	if strings.TrimSpace(page.Title) == "" || !tablerIcon.MatchString(page.Icon) {
+		panic(fmt.Sprintf("plugin %s: AddPage needs a Title and a Tabler icon class like ti-box, got %q", s.id, page.Icon))
+	}
+	s.page = &page
 }
 
 func (s *Serve) AddAssistantMemory(files fs.FS, overwrite bool) {
@@ -134,8 +168,37 @@ func (s *Serve) Assets() fs.FS { return s.assets }
 // CustomElements answers the added elements, in call order.
 func (s *Serve) CustomElements() []Registration { return s.elements }
 
+// Page answers the added page, nil for none.
+func (s *Serve) Page() *plugin.Page { return s.page }
+
 // SlotHTML answers the markup added for a slot, "" for none.
 func (s *Serve) SlotHTML(slot string) string { return strings.Join(s.slots[slot], "") }
+
+// Live answers whether the Serve comes and goes while the cockpit runs, an
+// external or optional plugin's. A live Serve stays out of the import map and
+// the asset digest, which a page fixes at load, and renders in live regions.
+func (s *Serve) Live() bool { return s.live != nil }
+
+// Running answers whether the plugin answers: a compiled one always, an
+// external one while its process is up and answering.
+func (s *Serve) Running() bool { return s.live == nil || s.live.running() }
+
+// Key names one load of a plugin, so a live region keeps an element that
+// stayed and replaces one whose plugin was loaded again.
+func (s *Serve) Key() string {
+	if s.live == nil {
+		return s.id
+	}
+	return fmt.Sprintf("%s@%d", s.id, s.live.generation)
+}
+
+// end ends the Serve's context, a compiled plugin's signal that this load
+// is over.
+func (s *Serve) end() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+}
 
 // routesHandle implements plugin.Routes.
 type routesHandle struct {
@@ -182,29 +245,44 @@ func (p project) Name() string { return filepath.Base(p.dir) }
 
 func (p project) Changed(ctx context.Context) error { return p.changed(ctx) }
 
-// ConfigureServe runs every pair's ConfigureServe, each with a fresh Serve
-// bound to the pair's id and to the serving instance, and answers the sealed
-// Serves in pair order. Before a pair's ConfigureServe runs, the plugin's own
-// state directory exists. It is the cockpit's call at serve start, after the
-// configuration is loaded and before the server listens; the ids are
-// validated before, see distro.Main. createProject is the web UI's own
-// project creation path and projectChanged its announcement path, which is
-// what the projects facade delegates to. A failing plugin aborts the start
-// with its id on the error.
+// ConfigureServe runs the ConfigureServe of every pair that is always on,
+// each with a fresh Serve bound to the pair's id and to the serving instance,
+// and answers the sealed Serves in pair order. A pair marked Optional is left
+// to the Host, which configures it at every switch on. Before a pair's
+// ConfigureServe runs, the plugin's own state directory exists. It is the
+// cockpit's call at serve start, after the configuration is loaded and
+// before the server listens; the ids are validated before, see distro.Main.
+// createProject is the web UI's own project creation path and projectChanged
+// its announcement path, which is what the projects facade delegates to. A
+// failing plugin aborts the start with its id on the error.
 func ConfigureServe(plugins []plugin.Named[plugin.ServePlugin], projectsDir, stateDir string, createProject func(ctx context.Context, name string) (string, error), projectChanged func(ctx context.Context) error) ([]*Serve, error) {
 	shared := &projects{create: createProject, changed: projectChanged}
 	serves := make([]*Serve, 0, len(plugins))
-	for _, p := range plugins {
-		pluginStateDir := filepath.Join(stateDir, "plugins", p.ID)
-		if err := os.MkdirAll(pluginStateDir, 0o700); err != nil {
-			return nil, fmt.Errorf("plugin %s has no state directory: %w", p.ID, err)
+	for i, p := range plugins {
+		if p.Optional {
+			continue
 		}
-		s := &Serve{id: p.ID, projectsDir: projectsDir, stateDir: stateDir, pluginStateDir: pluginStateDir, projects: shared}
+		s, err := newCompiledServe(p.ID, i, projectsDir, stateDir, shared)
+		if err != nil {
+			return nil, err
+		}
 		if err := p.Plugin.ConfigureServe(s); err != nil {
+			s.end()
 			return nil, fmt.Errorf("plugin %s failed to configure: %w", p.ID, err)
 		}
 		s.sealed = true
 		serves = append(serves, s)
 	}
 	return serves, nil
+}
+
+// newCompiledServe makes the plugin's state directory and a fresh, unsealed
+// Serve for one ConfigureServe call.
+func newCompiledServe(id string, order int, projectsDir, stateDir string, shared *projects) (*Serve, error) {
+	pluginStateDir := filepath.Join(stateDir, "plugins", id)
+	if err := os.MkdirAll(pluginStateDir, 0o700); err != nil {
+		return nil, fmt.Errorf("plugin %s has no state directory: %w", id, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Serve{id: id, order: order, ctx: ctx, cancel: cancel, projectsDir: projectsDir, stateDir: stateDir, pluginStateDir: pluginStateDir, projects: shared}, nil
 }

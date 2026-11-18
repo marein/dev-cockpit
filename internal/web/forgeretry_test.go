@@ -214,15 +214,14 @@ func TestAnAssistantsRetryWaitsForTheApproval(t *testing.T) {
 	}
 	q := f.waitQuestion(t)
 	want := []askpass.Detail{
-		{Label: "Action", Value: "Retry failed jobs"},
-		{Label: "Failed jobs", Value: "unit, lint, ci/external"},
+		{Label: "Project", Value: "app", As: askpass.AsProject},
+		{Label: "Branch", Value: "feature", As: askpass.AsBranch},
+		{Label: "Failed jobs", Value: "unit, lint, ci/external", As: askpass.AsMono},
 		{Label: "Left as they are", Value: `"ci/external": GitLab cannot run an external commit status again.`},
-		{Label: "Pipeline", Value: "#12 · https://gitlab.example.com/group/sub/app/-/pipelines/12"},
-		{Label: "Branch", Value: "feature"},
-		{Label: "Forge", Value: "GitLab · " + f.address},
-		{Label: "Project", Value: "app"},
+		{Label: "Pipeline", Value: "#12", As: askpass.AsLink, URL: "https://gitlab.example.com/group/sub/app/-/pipelines/12"},
+		{Label: "Forge", Value: "GitLab · " + f.address, As: askpass.AsLink, URL: f.s.forgeByProject(f.s.projects.List())["app"].WebURL()},
 	}
-	if q.Action != what || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.asked()) != 0 {
+	if q.Action != what || q.Title != "Retry failed jobs of pipeline #12" || !reflect.DeepEqual(q.Details, want) || len(f.gitlab.asked()) != 0 {
 		t.Fatalf("the question reads %+v, ran %q", q, f.gitlab.asked())
 	}
 	if code, answer := f.retry(t, true, f.owner, url.Values{"branch": {"feature"}}); code != http.StatusConflict || !strings.Contains(answer["error"].(string), "already waits") {
@@ -242,7 +241,7 @@ func TestAnAssistantsRetryWaitsForTheApproval(t *testing.T) {
 	f.gitlab.set(12, "failed")
 	f.retry(t, true, f.owner, url.Values{"job": {"31"}})
 	q = f.waitQuestion(t)
-	if q.Action != `Retry job "unit" of pipeline #12 on feature in app` || q.Details[0] != (askpass.Detail{Label: "Action", Value: "Retry job"}) || q.Details[1] != (askpass.Detail{Label: "Job", Value: "unit"}) {
+	if q.Action != `Retry job "unit" of pipeline #12 on feature in app` || q.Details[2] != (askpass.Detail{Label: "Job", Value: "unit", As: askpass.AsMono}) {
 		t.Fatalf("the job's question reads %+v", q)
 	}
 	f.decide(t, q, false, false)

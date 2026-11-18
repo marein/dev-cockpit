@@ -19,8 +19,10 @@ import (
 
 // deleteTarget is one thing a delete names, as its kind resolves it: Key is
 // its stable identity, Name what the dialog and the note call it ("coder
-// worker"), Details its rows in the dialog, Project the project it belongs to,
-// and Delete removes it, answering the outcome sentence and the keys of the
+// worker"), Details what the dialog shows of it alone, Item its line where
+// the dialog lists several, Warning what its delete does beyond its kind's
+// warning, Project the project it belongs to, and Delete
+// removes it, answering the outcome sentence and the keys of the
 // targets it took along. Delete resolves the target again, an approval may
 // come half an hour later, and wait asks for the deletion's real end where one
 // goes on off the request.
@@ -28,15 +30,19 @@ type deleteTarget struct {
 	Key     string
 	Name    string
 	Details []askpass.Detail
+	Item    askpass.Detail
+	Warning string
 	Project string
 	Delete  func(wait bool) (text string, along []string, err error)
 }
 
 // deleteKind is a kind of delete: its approval kind, the plural the headline
-// counts in, and how a name becomes a target.
+// counts in, the warning its dialog opens with, which says what a delete of
+// one of them does, and how a name becomes a target.
 type deleteKind struct {
 	ID      string
 	Plural  string
+	Warning string
 	Resolve func(key string) (deleteTarget, error)
 }
 
@@ -108,17 +114,37 @@ func (s *Server) deleteTargets(c *gin.Context, kind deleteKind, keys []string) {
 }
 
 // deletesApproval is the one approval a delete of the targets waits for. Its
-// key is the same for the same targets in any order, the dialog lists every
-// target's rows, and it touches every project one of them belongs to.
+// key is the same for the same targets in any order, the dialog warns what
+// the delete does, each target's own warning under its name where there are
+// several, shows a single target and lists several one item each under the
+// kind's plural, and it touches every project one of them belongs to.
 func deletesApproval(owner string, kind deleteKind, targets []deleteTarget) approval.Request {
 	req := approval.Request{Owner: owner, Kind: kind.ID, What: "Delete " + targets[0].Name}
+	req.Details = []askpass.Detail{{As: askpass.AsWarning, Value: kind.Warning}}
+	for _, t := range targets {
+		if t.Warning == "" {
+			continue
+		}
+		warning := t.Warning
+		if len(targets) > 1 {
+			warning = strings.ToUpper(t.Name[:1]) + t.Name[1:] + ": " + warning
+		}
+		req.Details = append(req.Details, askpass.Detail{As: askpass.AsWarning, Value: warning})
+	}
 	if len(targets) > 1 {
 		req.What = fmt.Sprintf("Delete %d %s", len(targets), kind.Plural)
+	} else {
+		req.Details = append(req.Details, targets[0].Details...)
 	}
+	label := strings.ToUpper(kind.Plural[:1]) + kind.Plural[1:]
 	keys := make([]string, 0, len(targets))
 	for _, t := range targets {
 		keys = append(keys, t.Key)
-		req.Details = append(req.Details, t.Details...)
+		if len(targets) > 1 {
+			item := t.Item
+			item.Label, item.As = label, askpass.AsItem
+			req.Details = append(req.Details, item)
+		}
 		if t.Project != "" && !slices.Contains(req.Projects, t.Project) {
 			req.Projects = append(req.Projects, t.Project)
 		}

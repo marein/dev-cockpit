@@ -118,7 +118,7 @@
   </div>
 </form>
 {{if .ID}}
-<form method="post" action="{{.Action}}" id="forge-delete-{{.ID}}" data-confirm="Delete the host {{.Title}} and its token?" data-confirm-button="Delete" hidden>
+<form method="post" action="{{.Action}}" id="forge-delete-{{.ID}}" data-confirm="Delete the host {{.Title}} and its token?" data-confirm-kind="delete" data-confirm-button="Delete" hidden>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="form" value="delete">
 </form>
@@ -152,7 +152,7 @@
   </div>
 </form>
 {{if .Token}}
-<form method="post" action="{{.Action}}" id="forge-token-remove-{{.ID}}" data-confirm="Remove the token of {{.WebURL}}?" data-confirm-button="Remove" hidden>
+<form method="post" action="{{.Action}}" id="forge-token-remove-{{.ID}}" data-confirm="Remove the token of {{.WebURL}}?" data-confirm-kind="delete" data-confirm-button="Remove" hidden>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
   <input type="hidden" name="token_remove" value="1">
 </form>

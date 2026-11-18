@@ -55,7 +55,7 @@ func (f *fixture) service() *Service {
 			f.off[kind] = true
 			f.mu.Unlock()
 		},
-		Asker: func(owner string) string { return "Ops" },
+		Asker: func(owner string) (string, string) { return "Ops", "0a1b2c3d" },
 		Ended: func(a Approval, o Outcome) {
 			f.mu.Lock()
 			f.endings = append(f.endings, ending{a, o})
@@ -148,7 +148,7 @@ func TestAnApprovedActionRunsAndEndsDone(t *testing.T) {
 		t.Fatalf("the ask answered %v %v after %d runs", waiting, err, ran)
 	}
 	q := f.question(t)
-	if q.Kind != askpass.KindApproval || q.Assistant != "Ops" || q.Action != "Delete project shop" || len(q.Details) != 1 || q.Details[0] != details[0] {
+	if q.Kind != askpass.KindApproval || q.Assistant != "Ops" || q.AssistantID != "0a1b2c3d" || q.Asker() != "Ops · 0a1b2c3d" || q.Action != "Delete project shop" || len(q.Details) != 1 || q.Details[0] != details[0] {
 		t.Fatalf("the question reads %+v", q)
 	}
 	if q.Command != "" || q.Dir != "" {
@@ -180,20 +180,36 @@ func TestTheQuestionCarriesTheCommand(t *testing.T) {
 	}
 }
 
-// A row shows the start of a long value, whatever kind asks, and says how
-// long the value is.
-func TestARowShowsTheStartOfALongValue(t *testing.T) {
+// A row shows its value whole, whatever kind asks and however many lines it
+// holds. Only a value beyond 64 KiB shows its start, cut on a character's
+// start and marked Cut, so the dialog can say the run takes more.
+func TestARowShowsItsValueWholeUpTo64KiB(t *testing.T) {
 	f := newFixture(t)
 	req := deleting("bot", "shop", counting(new(int), nil))
-	req.Details = []askpass.Detail{{Label: "Project", Value: "shop"}, {Label: "Reply", Value: strings.Repeat("ü", 16<<10)}, {Label: "Description", Value: strings.Repeat("line\n", 40)}}
+	script := strings.Repeat(strings.Repeat("x", 63)+"\n", 300)
+	full := strings.Repeat("y", 64<<10)
+	req.Details = []askpass.Detail{
+		{Label: "Project", Value: "shop"},
+		{Label: "Script", Value: script},
+		{Label: "Full", Value: full},
+		{Label: "Over", Value: full + "z"},
+		{Label: "Reply", Value: "a" + strings.Repeat("ü", 40000)},
+		{Label: "Emoji", Value: "x" + strings.Repeat("😀", 20000)},
+	}
 	f.s.Ask(req)
 	want := []askpass.Detail{
 		{Label: "Project", Value: "shop"},
-		{Label: "Reply", Value: strings.Repeat("ü", 1000) + "… (16384 characters in all)"},
-		{Label: "Description", Value: strings.TrimSuffix(strings.Repeat("line\n", 20), "\n") + "… (200 characters in all)"},
+		{Label: "Script", Value: script},
+		{Label: "Full", Value: full},
+		{Label: "Over", Value: full, Cut: true},
+		{Label: "Reply", Value: "a" + strings.Repeat("ü", 32767), Cut: true},
+		{Label: "Emoji", Value: "x" + strings.Repeat("😀", 16383), Cut: true},
 	}
 	if q := f.question(t); !slices.Equal(q.Details, want) {
-		t.Fatalf("the rows read %q", q.Details)
+		for i, d := range q.Details {
+			t.Errorf("row %d %q: %d bytes, cut %v", i, d.Label, len(d.Value), d.Cut)
+		}
+		t.Fatal("the rows read differently")
 	}
 }
 
@@ -229,7 +245,8 @@ func TestADeniedOrUnansweredActionRunsNothing(t *testing.T) {
 	}
 }
 
-// Approve and don't ask again turns the kind's switch off.
+// Approve with "Don't ask again for this kind" ticked turns the kind's switch
+// off.
 func TestDontAskAgainTurnsTheKindOff(t *testing.T) {
 	f := newFixture(t)
 	ran := 0

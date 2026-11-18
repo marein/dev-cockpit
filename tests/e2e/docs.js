@@ -79,4 +79,11 @@ L.runFeature("DOCS", async ({ page, run }) => {
       assert(await page.locator(`#${topic} .list-group-item i.${icon}`).count() >= 1, `${icon} missing in ${topic}`);
     }
   });
+
+  await run("the questions entry promises a red box only where a question carries one", async () => {
+    await page.goto(`${BASE}/docs`, { waitUntil: "domcontentloaded" });
+    const row = await page.evaluate(() => [...document.querySelectorAll(".list-group-item")].find((item) => item.textContent.includes("Questions before an action"))?.textContent || "");
+    assert(row.includes("where more goes along with it, a red box spells it out"), "the questions entry does not make the red box conditional");
+    assert(!row.includes("a red box spells out what happens"), "the questions entry promises a red box on every destructive question");
+  });
 });

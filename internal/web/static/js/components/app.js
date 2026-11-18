@@ -1,4 +1,4 @@
-import { confirm, isVisible as dialogVisible } from "@dc/dialog";
+import { confirmForm, isVisible as dialogVisible } from "@dc/dialog";
 import { notifyError } from "@dc/toast";
 import "@dc/theme";
 import { watchCtx, initCtxLayout } from "@dc/ctx";
@@ -92,11 +92,15 @@ document.addEventListener("click", (event) => {
   const trigger = event.target instanceof Element && event.target.closest("[data-ctx-area]");
   if (!trigger) return;
   event.preventDefault();
-  const sheet = document.querySelector("dc-ctx-sheet");
-  if (!sheet || typeof sheet.open !== "function") return;
   const area = trigger.getAttribute("data-ctx-area");
-  if (!sheet.hidden && sheet.area === area) sheet.close();
-  else void sheet.open(area, trigger);
+  const toggle = () => {
+    const sheet = document.querySelector("dc-ctx-sheet");
+    if (!sheet || typeof sheet.open !== "function") return;
+    if (!sheet.hidden && sheet.area === area) sheet.close();
+    else void sheet.open(area, trigger);
+  };
+  if (customElements.get("dc-ctx-sheet")) toggle();
+  else void customElements.whenDefined("dc-ctx-sheet").then(toggle);
 });
 
 // data-no-pe opts a link or form out of boosting into a native load. A file
@@ -207,12 +211,7 @@ document.addEventListener("submit", async (event) => {
   if (form.dataset.ajaxDelete !== undefined || form.dataset.ajaxRefresh !== undefined) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  const ok = await confirm({
-    title: form.dataset.confirm,
-    text: form.dataset.confirmText,
-    confirmText: form.dataset.confirmButton || "Confirm",
-  });
-  if (!ok) return;
+  if (!(await confirmForm(form))) return;
   if (form.closest("[data-no-pe]")) form.submit();
   else window.pe.submit(form);
 }, true);

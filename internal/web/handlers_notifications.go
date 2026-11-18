@@ -134,6 +134,10 @@ func (s *Server) handleEventStream(c *gin.Context) {
 	if err := writeEnvelope(w, eventbus.Event{Type: "shares"}); err != nil {
 		return
 	}
+	// And the plugins version, so a live region that missed a change pulls.
+	if err := writeEnvelope(w, pluginsEvent(s.plugins)); err != nil {
+		return
+	}
 	// And a bare git signal, no project named. The git event is otherwise only
 	// published when something moves, and a move that fell into a gap is
 	// published never again: the same file changing further does not move the

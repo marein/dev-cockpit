@@ -112,11 +112,20 @@ func TestAssistantsEntryNamesNoneWithNoAssistant(t *testing.T) {
 func assistantPageServer(t *testing.T, ids ...string) (*gin.Engine, *recent.Store) {
 	t.Helper()
 	r, s, opened := assistantEntryServer(t, ids...)
-	stateDir := s.cfg.StateDir
 	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil)
 	if err != nil {
 		t.Fatalf("ConfigureServe() = %v", err)
 	}
+	withShell(t, r, s, serves)
+	r.GET("/assistants/:id", s.handleAssistantPage)
+	return r, opened
+}
+
+// withShell gives the server everything the layout asks for, over the
+// plugins given, so a handler that renders a whole page can run.
+func withShell(t *testing.T, r *gin.Engine, s *Server, serves []*pluginhost.Serve) {
+	t.Helper()
+	stateDir := s.cfg.StateDir
 	assets, err := newStaticAssetManifest(serves)
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
@@ -124,7 +133,7 @@ func assistantPageServer(t *testing.T, ids ...string) (*gin.Engine, *recent.Stor
 	projectsDir := t.TempDir()
 	projects := project.NewRepository(projectsDir, recent.New(filepath.Join(stateDir, "recent-projects.json")))
 	s.assets = assets
-	s.plugins = serves
+	s.plugins = pluginhost.NewSet(serves, nil)
 	s.projects = projects
 	s.shells = shell.NewShells(config.Config{}, tmux.New(), projects, func() bool { return false })
 	s.settings = settings.New(filepath.Join(stateDir, "settings.json"))
@@ -132,9 +141,7 @@ func assistantPageServer(t *testing.T, ids ...string) (*gin.Engine, *recent.Stor
 	s.watcher = assistant.NewWatcher(s.assistants, assistant.NewJobs(assistant.NewStore(stateDir)), nil, nil)
 	s.backups = backup.New(stateDir, projectsDir, "test")
 	s.activity = activity.NewTracker()
-	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
-	r.GET("/assistants/:id", s.handleAssistantPage)
-	return r, opened
+	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", pluginhost.NewSet(serves, nil), nil))
 }
 
 // The page pulls itself again on every assistant event, in background windows

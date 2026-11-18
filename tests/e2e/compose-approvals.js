@@ -1,4 +1,5 @@
 const http = require("http");
+const zlib = require("zlib");
 const L = require("./lib");
 const { assert, BASE, sleep, dismissUpdate } = L;
 
@@ -10,10 +11,16 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // carries `pending` and no run), the question is news of its own
 // (`approval:<id>`, "Assistant asks approval.", leading home, read through the
 // request API because an open page reads the entry by showing the dialog) and
-// stands on any page as the app-wide dialog (@dc/gitprompt's second kind: the
-// action as its first line, Asked by, the action, the stack or project root,
-// the project, the cwd and command line block, Approve and Deny, one "Approve
-// and don't ask again" box; a delete shows its rows and no command). Deny runs nothing and the assistant's thread holds a
+// stands on any page as the app-wide dialog (@dc/gitprompt's second kind: no
+// title above it, the action as its head with who asks, the project and the
+// stack or project root as chips, the working directory and command line in
+// a code panel, Approve and Deny, one "Don't ask again for this kind" box; a
+// delete warns what it removes, shows its rows, a red Approve and no
+// command; a delete of several lists a row per target, its icon drawn on the
+// middle of the name's capitals at 2x and 3x, read from the screenshot's ink
+// at four positions on the pixel grid, because the icon font and the text
+// font round their metrics apart and an engine snaps each glyph its own way).
+// Deny runs nothing and the assistant's thread holds a
 // grey approval note saying so (data-assistant-approval="declined"); Approve
 // starts the run, the approval note names it, the run's own note says done,
 // and the next confirm action still asks, and nothing about an assistant's run
@@ -40,6 +47,7 @@ const NAME = process.env.DOCKER_PROJECT || "dockere2e";
 const APISOCK = process.env.APISOCK || "/apisock/s";
 const LINK_HOST = process.env.DOCKER_LINK_HOST || "dockere2e.test";
 const DIALOG = ".swal2-popup:not(.swal2-toast)";
+const ICON_TOLERANCE = 0.75;
 
 // asAssistant posts one form over the local socket as the assistant, which
 // is exactly what the generated `cockpit` wrapper does for a turn.
@@ -113,12 +121,16 @@ async function visit(page, url) {
   }
 }
 
-// dialogRows reads the approval dialog's rows as label and value pairs.
+// dialogRows reads what the approval dialog shows, each detail as its label
+// and its value: the chips, warnings, rows and sections alike.
 async function dialogRows(page) {
-  return page.locator(`${DIALOG} dl[data-approval-details]`).evaluate((list) => {
-    const labels = [...list.querySelectorAll("dt")].map((dt) => dt.textContent.trim());
-    return [...list.querySelectorAll("dd")].map((dd, i) => [labels[i], dd.textContent.trim()]);
-  });
+  return page.locator(`${DIALOG} [data-approval-details]`).evaluate((root) => [...root.querySelectorAll("[data-approval-detail]")]
+    .map((el) => [el.dataset.approvalDetail, (el.querySelector("[data-approval-value]") || el).textContent.trim()]));
+}
+
+// askerOf reads who asks from the dialog's head: the name and the short id.
+async function askerOf(page) {
+  return (await page.textContent(`${DIALOG} [data-approval-asker]`)).replace(/\s+/g, " ").trim();
 }
 
 // approvalNote waits until the assistant's page shows count approval notes
@@ -131,6 +143,56 @@ async function approvalNote(page, id, verdict, count) {
   return { headline: (await last.locator("[data-assistant-note-headline]").textContent()).trim(), text: await last.locator("xpath=..").textContent() };
 }
 
+function decodePNG(buf) {
+  let pos = 8;
+  let width = 0;
+  let height = 0;
+  let bpp = 0;
+  const parts = [];
+  while (pos < buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const kind = buf.toString("ascii", pos + 4, pos + 8);
+    const body = buf.subarray(pos + 8, pos + 8 + len);
+    if (kind === "IHDR") [width, height, bpp] = [body.readUInt32BE(0), body.readUInt32BE(4), body[9] === 6 ? 4 : 3];
+    if (kind === "IDAT") parts.push(body);
+    pos += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(parts));
+  const stride = width * bpp;
+  const px = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[y * (stride + 1)];
+    for (let x = 0; x < stride; x += 1) {
+      const a = x >= bpp ? px[y * stride + x - bpp] : 0;
+      const b = y > 0 ? px[(y - 1) * stride + x] : 0;
+      const c = x >= bpp && y > 0 ? px[(y - 1) * stride + x - bpp] : 0;
+      const p = a + b - c;
+      const paeth = Math.abs(p - a) <= Math.abs(p - b) && Math.abs(p - a) <= Math.abs(p - c) ? a : Math.abs(p - b) <= Math.abs(p - c) ? b : c;
+      px[y * stride + x] = (raw[y * (stride + 1) + 1 + x] + [0, a, b, (a + b) >> 1, paeth][filter]) & 255;
+    }
+  }
+  return { width, height, at: (x, y) => [0, 1, 2].map((i) => px[(y * width + x) * bpp + i]) };
+}
+
+async function inkMiddle(page, box) {
+  const clip = { x: box.x - 2, y: box.y - 2, width: box.width + 4, height: box.height + 4 };
+  const { width, height, at } = decodePNG(await page.screenshot({ clip, scale: "device" }));
+  const counts = new Map();
+  for (let x = 0; x < width; x += 1) for (const y of [0, height - 1]) counts.set(at(x, y).join(), (counts.get(at(x, y).join()) || 0) + 1);
+  const bg = [...counts].sort((a, b) => b[1] - a[1])[0][0].split(",").map(Number);
+  const inked = [];
+  for (let y = 0; y < height; y += 1) {
+    let ink = 0;
+    for (let x = 0; x < width; x += 1) {
+      const diff = Math.max(...at(x, y).map((v, i) => Math.abs(v - bg[i]))) / 255;
+      if (diff > 0.06) ink += diff;
+    }
+    if (ink > 0.3) inked.push(y);
+  }
+  assert(inked.length, `no ink in ${JSON.stringify(box)}`);
+  return clip.y + (inked[0] + inked.at(-1) + 1) / 2 / (height / clip.height);
+}
+
 async function waitFor(fn, what, tries = 40) {
   for (let i = 0; i < tries; i += 1) {
     if (await fn()) return;
@@ -139,7 +201,7 @@ async function waitFor(fn, what, tries = 40) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
-L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
+L.runFeature("COMPOSE APPROVALS", async ({ engine, browser, page, run }) => {
   let assistantID = "";
 
   await run("an assistant is made for the checks", async () => {
@@ -173,20 +235,21 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     assert((entry.url || "").endsWith("/projects"), `the entry leads to ${entry.url}`);
 
     await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector(`${DIALOG} .swal2-title`, { timeout: 15000 });
-    const title = await page.textContent(`${DIALOG} .swal2-title`);
-    assert(/asks for approval/.test(title), `the dialog's title reads "${title}"`);
+    await page.waitForSelector(`${DIALOG} [data-approval-what]`, { state: "visible", timeout: 15000 });
+    assert(await page.locator(`${DIALOG} .swal2-title`).isHidden(), "the dialog carries a title above its head");
     const what = (await page.textContent(`${DIALOG} [data-approval-what]`)).trim();
-    assert(what === `Compose down with volumes in ${NAME}`, `the dialog's first line reads "${what}"`);
+    assert(what === "Compose down with volumes", `the dialog's head reads "${what}"`);
+    const asker = await askerOf(page);
+    assert(asker === `Assistant ${assistantID.slice(0, 8)}`, `the dialog names who asks as "${asker}"`);
     const rows = await dialogRows(page);
-    const want = [["Asked by", `Assistant · ${assistantID.slice(0, 8)}`], ["Action", "Compose down with volumes"], ["Stack", "project root"], ["Project", NAME]];
+    const want = [["Project", NAME], ["Stack", "project root"]];
     assert(JSON.stringify(rows) === JSON.stringify(want), `the dialog's rows read ${JSON.stringify(rows)}`);
     const command = (await page.textContent(`${DIALOG} [data-gitprompt-command]`)).trim().split("\n");
-    assert(command.length === 2 && command[0].startsWith("cwd: /") && command[0].endsWith(`/${NAME}`) && command[1] === "$ docker compose down -v", `the command block reads ${JSON.stringify(command)}`);
+    assert(command.length === 2 && command[0].startsWith("/") && command[0].endsWith(`/${NAME}`) && command[1] === "$ docker compose down -v", `the command block reads ${JSON.stringify(command)}`);
     assert(await page.locator(`${DIALOG} .swal2-confirm`).textContent() === "Approve", "the confirm button is not Approve");
     assert(await page.locator(`${DIALOG} .swal2-deny`).textContent() === "Deny", "the deny button is not Deny");
     const remember = (await page.locator(`${DIALOG} .swal2-checkbox`).textContent()).trim();
-    assert(remember === "Approve and don't ask again", `the box reads "${remember}"`);
+    assert(remember === "Don't ask again for this kind", `the box reads "${remember}"`);
     assert(!(await page.locator(`${DIALOG} .swal2-checkbox input`).isChecked()), "the dialog does not start on asking again");
     await waitFor(async () => (await notifications(page)).filter((n) => n.targetId === entry.targetId && !n.read).length === 0, "the shown entry to read itself");
     return entry.targetId;
@@ -314,7 +377,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     return "off, socket refused on the approval and the docker settings, back on";
   });
 
-  await run("Approve and don't ask again turns the approval off for every assistant", async () => {
+  await run("Approve with Don't ask again for this kind turns the approval off for every assistant", async () => {
     const created = await page.request.post(`${BASE}/assistants/new`, { form: { csrf_token: await csrfOf(page), form: "new", coder: "claude" }, headers: { Accept: "application/json" } });
     const otherID = (await created.json().catch(() => ({}))).id || "";
     assert(otherID, `no second assistant: ${created.status()}`);
@@ -352,15 +415,95 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     const what = (await page.textContent(`${DIALOG} [data-approval-what]`)).trim();
     const rows = await dialogRows(page);
     const labels = rows.map(([label]) => label);
-    const suffix = ` · ${otherID.slice(0, 8)}`;
-    assert(JSON.stringify(labels) === JSON.stringify(["Asked by", "Assistant"]) && rows[0][1] === `Assistant · ${assistantID.slice(0, 8)}` && rows[1][1].endsWith(suffix), `the dialog's rows read ${JSON.stringify(rows)}`);
-    assert(what === `Delete assistant ${rows[1][1].slice(0, -suffix.length)}`, `the dialog's first line reads "${what}"`);
+    assert(JSON.stringify(labels) === JSON.stringify(["warning", "Assistant", "ID"]) && rows[0][1].endsWith("This cannot be undone.") && rows[2][1] === otherID.slice(0, 8), `the dialog's rows read ${JSON.stringify(rows)}`);
+    assert(await askerOf(page) === `Assistant ${assistantID.slice(0, 8)}`, `the dialog names who asks as "${await askerOf(page)}"`);
+    assert(what === `Delete assistant ${rows[1][1]}`, `the dialog's head reads "${what}"`);
+    assert(await page.locator(`${DIALOG} .swal2-confirm.btn-danger`).count() === 1, "a delete's Approve is not red");
     assert(await page.locator(`${DIALOG} [data-gitprompt-command]`).count() === 0, "a delete shows a command line");
     await page.click(`${DIALOG} .swal2-deny`);
     await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
     const gone = await page.request.post(`${BASE}/assistants/${otherID}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
     assert(gone.status() === 200, `the second assistant's delete answered ${gone.status()}`);
     return what;
+  });
+
+  await run("a project delete warns that its containers go down with their volumes", async () => {
+    const waiting = await asAssistant(assistantID, "/projects/delete", { project: NAME });
+    assert(waiting.status === 200 && waiting.json.pending === true, `the delete did not wait: ${waiting.raw}`);
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
+    const warnings = (await dialogRows(page)).filter(([label]) => label === "warning").map(([, value]) => value);
+    assert(JSON.stringify(warnings) === JSON.stringify([
+      "Its coders and shells stop and the directory is removed with everything in it. This cannot be undone.",
+      "Its directory goes, and its containers are brought down with compose first, volumes included.",
+    ]), `the warnings read ${JSON.stringify(warnings)}`);
+    await page.click(`${DIALOG} .swal2-deny`);
+    await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+    return warnings[1];
+  });
+
+  await run("a delete of several lists one row each, its icon on the middle of the name's capitals", async () => {
+    const ids = [];
+    for (let i = 0; i < 2; i += 1) {
+      const created = await page.request.post(`${BASE}/assistants/new`, { form: { csrf_token: await csrfOf(page), form: "new", coder: "claude" }, headers: { Accept: "application/json" } });
+      const id = (await created.json().catch(() => ({}))).id || "";
+      assert(id, `no extra assistant: ${created.status()}`);
+      ids.push(id);
+    }
+    const offsets = [];
+    try {
+      const waiting = await asAssistant(assistantID, "/assistants/delete", ids.map((id) => ["assistant", id]));
+      assert(waiting.status === 200 && waiting.json.pending === true, `the delete did not wait: ${waiting.raw}`);
+      const views = [
+        ["desktop 2x", { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 }],
+        ["phone 3x", { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, hasTouch: true, isMobile: engine === "chromium" }],
+      ];
+      for (const [where, options] of views) {
+        const ctx = await browser.newContext({ ignoreHTTPSErrors: true, ...options });
+        try {
+          const p = await ctx.newPage();
+          await L.login(p);
+          await dismissUpdate(p);
+          const rows = p.locator(`${DIALOG} .dc-ask-item`);
+          await rows.first().waitFor({ state: "visible", timeout: 15000 });
+          await p.waitForFunction(() => document.querySelector(".swal2-container").getAnimations({ subtree: true }).every((a) => a.playState !== "running"), null, { timeout: 8000 });
+          assert(await rows.count() === 2, `${where}: the dialog lists ${await rows.count()} rows`);
+          const drawn = [];
+          for (let shift = 0; shift < 4; shift += 1) {
+            await p.setViewportSize({ ...options.viewport, height: options.viewport.height + shift });
+            await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            for (let i = 0; i < 2; i += 1) {
+              const { icon, cap } = await rows.nth(i).evaluate((row) => {
+                const h = document.createElement("span");
+                h.textContent = "H";
+                h.dataset.e2eCap = "";
+                row.querySelector(".dc-ask-name").prepend(h);
+                const box = (r) => ({ x: r.x, y: r.y, width: r.width, height: r.height });
+                const r = h.getBoundingClientRect();
+                return { icon: box(row.querySelector(":scope > .ti").getBoundingClientRect()), cap: { x: r.x + 1, y: r.y, width: r.width - 2, height: r.height } };
+              });
+              drawn.push((await inkMiddle(p, icon)) - (await inkMiddle(p, cap)));
+              await rows.nth(i).evaluate((row) => row.querySelector("[data-e2e-cap]").remove());
+            }
+          }
+          const mean = drawn.reduce((sum, v) => sum + v, 0) / drawn.length;
+          offsets.push(`${where} ${mean.toFixed(2)}`);
+          assert(Math.abs(mean) <= ICON_TOLERANCE, `${where}: the row icons stand ${mean.toFixed(2)}px off the middle of their names' capitals on average (${drawn.map((v) => v.toFixed(2)).join(" ")})`);
+        } finally {
+          await ctx.close();
+        }
+      }
+    } finally {
+      await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+      if (await page.locator(`${DIALOG} [data-approval-what]`).waitFor({ state: "visible", timeout: 15000 }).then(() => true, () => false)) {
+        await page.click(`${DIALOG} .swal2-deny`);
+        await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+      }
+      for (const id of ids) {
+        await page.request.post(`${BASE}/assistants/${id}`, { form: { csrf_token: await csrfOf(page), form: "delete" }, headers: { Accept: "application/json" } });
+      }
+    }
+    return offsets.join(", ");
   });
 
   await run("approvals wait behind an open dialog, show one after the other once it closes, and are asked again when another dialog replaced them", async () => {
@@ -377,9 +520,9 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
       window.__dcConfirm = "open";
       return import("@dc/dialog").then((d) => { d.confirm({ title: t }).then((v) => { window.__dcConfirm = v; }); });
     }, title);
-    const askedAbout = async () => (await dialogRows(page))[1][1];
+    const askedAbout = async () => (await dialogRows(page)).find(([label]) => label === "ID")?.[1];
     await openConfirm("E2E confirm");
-    await page.waitForSelector(`${DIALOG} .swal2-title:text-is("E2E confirm")`, { timeout: 8000 });
+    await page.waitForSelector(`${DIALOG} .dc-ask-title:text-is("E2E confirm")`, { timeout: 8000 });
     const listed = page.waitForResponse(async (res) => {
       if (res.request().method() !== "GET" || new URL(res.url()).pathname !== "/git/prompt") return false;
       const body = await res.json().catch(() => ({}));
@@ -391,7 +534,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     }
     await listed;
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    const title = await page.textContent(`${DIALOG} .swal2-title`);
+    const title = await page.textContent(`${DIALOG} .dc-ask-title`);
     assert(title === "E2E confirm", `an approval replaced the open confirm, the dialog reads "${title}"`);
     assert(await page.evaluate(() => window.__dcConfirm) === "open", "the open confirm was settled by an approval");
     assert(await page.locator(`${DIALOG} [data-approval-what]`).count() === 0, "an approval stands beside the confirm");
@@ -400,10 +543,10 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     await page.waitForSelector(`${DIALOG} [data-approval-what]`, { timeout: 15000 });
     assert(await page.evaluate(() => window.__dcConfirm) === false, "the confirm did not end on its own Cancel");
     const first = await askedAbout();
-    assert(first.endsWith(` · ${others[0].slice(0, 8)}`), `the first approval shown is about "${first}", not the oldest`);
+    assert(first === others[0].slice(0, 8), `the first approval shown is about "${first}", not the oldest`);
 
     await openConfirm("E2E replace");
-    await page.waitForSelector(`${DIALOG} .swal2-title:text-is("E2E replace")`, { timeout: 8000 });
+    await page.waitForSelector(`${DIALOG} .dc-ask-title:text-is("E2E replace")`, { timeout: 8000 });
     const still = await page.request.get(`${BASE}/git/prompt`, { headers: { Accept: "application/json" } });
     const standing = ((await still.json()).questions || []).length;
     assert(standing === 2, `the replaced approval was answered, ${standing} questions stand`);
@@ -414,7 +557,7 @@ L.runFeature("COMPOSE APPROVALS", async ({ page, run }) => {
     assert(again === first, `after the replacing dialog the approval is about "${again}", not "${first}" again`);
 
     await page.click(`${DIALOG} .swal2-deny`);
-    await waitFor(async () => (await page.locator(`${DIALOG} [data-approval-details]`).count()) === 1 && (await askedAbout()).endsWith(` · ${others[1].slice(0, 8)}`), "the second approval after the first was answered");
+    await waitFor(async () => (await page.locator(`${DIALOG} [data-approval-details]`).count()) === 1 && (await askedAbout()) === others[1].slice(0, 8), "the second approval after the first was answered");
     await page.click(`${DIALOG} .swal2-deny`);
     await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
     for (const id of others) {

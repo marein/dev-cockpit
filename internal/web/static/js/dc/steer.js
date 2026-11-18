@@ -1,5 +1,6 @@
 import { confirm, fire } from "@dc/dialog";
 import { ensureOk, postForm } from "@dc/http";
+import { formView } from "@dc/prompt-view";
 import { notifyError, notifySuccess } from "@dc/toast";
 
 const JOBS_URL = "/assistants/jobs";
@@ -12,19 +13,40 @@ const EMPTY_HINT =
 // in that thread. With a single assistant there is nothing to ask, so the
 // dialog stays the one field it always was and the server picks the only one
 // there is. With several, the dialog asks, because otherwise the reports land
-// somewhere the user did not choose.
+// somewhere the user did not choose. The list arrives in the order the user
+// sorted it, so the first row is the preselected one. There is no assistant the
+// nav opens any more, the entry opens the list, so the dialog names its choice
+// instead of following a position nothing else in the page shows.
 export async function steerCoder({ terminal, name, prefill = "" }) {
   const assistants = await liveAssistants();
-  const result = assistants.length > 1
-    ? await askWithAssistant(name, prefill, assistants)
-    : await askPlain(name, prefill);
-  if (!result) return false;
+  const several = assistants.length > 1;
+  const result = await fire({
+    ...formView({
+      title: `Steer "${name}"`,
+      icon: "steering-wheel",
+      tone: "steer",
+      details: [
+        ...(several ? [{
+          as: "field", control: "select", id: "dc-steer-assistant", label: "Reports go to",
+          options: assistants.map((one) => ({ value: one.id, text: one.title })),
+        }] : []),
+        { as: "field", control: "textarea", id: "dc-steer-done-when", label: "Done when", value: prefill, focus: !several },
+        { as: "note", value: EMPTY_HINT },
+      ],
+      confirmText: "Steer",
+    }),
+    preConfirm: () => ({
+      assistant: document.getElementById("dc-steer-assistant")?.value || "",
+      doneWhen: (document.getElementById("dc-steer-done-when")?.value || "").trim(),
+    }),
+  });
+  if (!result.isConfirmed) return false;
   try {
     const response = await postForm(JOBS_URL, {
       form: "steer",
       terminal,
-      assistant: result.assistant,
-      done_when: result.doneWhen,
+      assistant: result.value.assistant,
+      done_when: result.value.doneWhen,
     });
     await ensureOk(response, "Could not steer the coder.");
     notifySuccess(`Steering "${name}".`);
@@ -33,54 +55,6 @@ export async function steerCoder({ terminal, name, prefill = "" }) {
     notifyError(error.message);
     return false;
   }
-}
-
-async function askPlain(name, prefill) {
-  const result = await fire({
-    title: `Steer "${name}"`,
-    input: "textarea",
-    inputValue: prefill,
-    inputPlaceholder: EMPTY_HINT,
-    inputAttributes: { "aria-label": "Done when" },
-    showCancelButton: true,
-    confirmButtonText: "Steer",
-    cancelButtonText: "Cancel",
-    reverseButtons: true,
-  });
-  if (!result.isConfirmed) return null;
-  return { assistant: "", doneWhen: (result.value || "").trim() };
-}
-
-// The list arrives in the order the user sorted it, so the first row is the
-// preselected one. There is no assistant the nav opens any more, the entry
-// opens the list, so the dialog names its choice instead of following a
-// position nothing else in the page shows.
-async function askWithAssistant(name, prefill, assistants) {
-  const options = assistants
-    .map((one) => `<option value="${escapeAttr(one.id)}">${escapeText(one.title)}</option>`)
-    .join("");
-  const result = await fire({
-    title: `Steer "${name}"`,
-    html:
-      `<label class="form-label d-block text-start" for="dc-steer-assistant">Reports go to</label>` +
-      `<select id="dc-steer-assistant" class="form-select mb-3">${options}</select>` +
-      `<label class="form-label d-block text-start" for="dc-steer-done-when">Done when</label>` +
-      `<textarea id="dc-steer-done-when" class="form-control" rows="4" placeholder="${escapeAttr(EMPTY_HINT)}"></textarea>`,
-    didOpen: () => {
-      const box = document.getElementById("dc-steer-done-when");
-      if (box) box.value = prefill;
-    },
-    showCancelButton: true,
-    confirmButtonText: "Steer",
-    cancelButtonText: "Cancel",
-    reverseButtons: true,
-    preConfirm: () => ({
-      assistant: document.getElementById("dc-steer-assistant")?.value || "",
-      doneWhen: (document.getElementById("dc-steer-done-when")?.value || "").trim(),
-    }),
-  });
-  if (!result.isConfirmed) return null;
-  return result.value;
 }
 
 // The assistants that exist right now. A failed read answers with none, and the
@@ -95,16 +69,6 @@ async function liveAssistants() {
   } catch {
     return [];
   }
-}
-
-function escapeText(value) {
-  const node = document.createElement("span");
-  node.textContent = value ?? "";
-  return node.innerHTML;
-}
-
-function escapeAttr(value) {
-  return escapeText(value).replaceAll('"', "&quot;");
 }
 
 // The server writes the steering assistant onto a coder's icon, and never

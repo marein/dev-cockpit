@@ -64,6 +64,39 @@
 .editor-split-handle:hover, .editor-split-handle.active {
   background: var(--tblr-primary);
 }
+.editor-compare-left {
+  flex: 0 0 var(--editor-compare-split, 50%);
+}
+.editor-merge-divider {
+  flex: 0 0 7px;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.editor-merge-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: color-mix(in srgb, var(--tblr-border-color) 82%, var(--tblr-body-color));
+}
+.editor-merge-divider:hover::before, .editor-merge-divider.active::before {
+  inset: 0 2px;
+  background: var(--tblr-primary);
+}
+@media (pointer: coarse) {
+  .editor-merge-divider {
+    flex-basis: 15px;
+  }
+  .editor-merge-divider::before, .editor-merge-divider:hover::before {
+    inset: 0 6px;
+  }
+  .editor-merge-divider.active::before {
+    inset: 0 5px;
+  }
+}
 .editor-groups-multi .editor-group:not(.editor-group-focused) .editor-tab.active {
   color: var(--tblr-secondary);
   box-shadow: inset 0 -2px 0 var(--tblr-secondary);

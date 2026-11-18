@@ -223,7 +223,7 @@ export async function actOnSession(action, { shell = false, name = "" } = {}) {
 }
 
 export async function deleteInactiveCoder(id, name, busy = () => {}) {
-  const ok = await confirm({ title: `Delete inactive coder "${name}"?`, confirmText: "Delete" });
+  const ok = await confirm({ title: `Delete inactive coder "${name}"?`, kind: "delete", confirmText: "Delete" });
   if (!ok) return false;
   busy(true);
   const done = await actOnSession(`/coders/${encodeURIComponent(id)}/delete`, { name });

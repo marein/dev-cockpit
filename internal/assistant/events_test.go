@@ -1973,3 +1973,19 @@ func TestAnEditSurvivesARestart(t *testing.T) {
 		t.Fatalf("the window did not survive the change: %+v", back)
 	}
 }
+
+// OnPublish sees every event, matched by a trigger or not, after the reactor
+// bounded it.
+func TestOnPublishSeesEveryEvent(t *testing.T) {
+	f := newEventFixture(t)
+	var seen []CockpitEvent
+	f.reactor.OnPublish(func(ev CockpitEvent) { seen = append(seen, ev) })
+	f.reactor.Coder("term-1", CoderKindAsks)
+	f.reactor.Publish(CockpitEvent{Source: EventCompose, Kind: ComposeKindDone, Headline: "up", Body: strings.Repeat("x", maxEventBodyRunes+10)})
+	if len(seen) != 2 || seen[0].Source != EventCoder || seen[0].Kind != CoderKindAsks || seen[1].Source != EventCompose {
+		t.Fatalf("OnPublish saw %+v", seen)
+	}
+	if seen[0].Time.IsZero() || len([]rune(seen[1].Body)) > maxEventBodyRunes+1 {
+		t.Fatalf("the watcher saw an unbounded event: %v, %d runes", seen[0].Time, len([]rune(seen[1].Body)))
+	}
+}

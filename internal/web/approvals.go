@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,7 @@ func (s *Server) newApprovals(stateDir string) *approval.Service {
 		Path:       filepath.Join(stateDir, "approvals.json"),
 		Asks:       func(kind string) bool { return ApprovalAsks(s.settings, kind) },
 		StopAsking: func(kind string) { setApprovalAsks(s.settings, kind, false) },
-		Asker:      func(owner string) string { return withShortID(s.assistantLabel(owner), owner) },
+		Asker:      func(owner string) (string, string) { return s.assistantLabel(owner), coder.ShortID(owner) },
 		Ended:      s.approvalEnded,
 	})
 }
@@ -49,6 +50,11 @@ func (s *Server) RecoverApprovals() {
 // false, having written nothing, where the kind's switch is off, and the
 // caller then takes the action the way it takes it for the user.
 func (s *Server) askApproval(c *gin.Context, req approval.Request) bool {
+	for _, kind := range approvalKinds {
+		if kind.ID == req.Kind {
+			req.Icon, req.Tone = cmp.Or(req.Icon, kind.Icon), cmp.Or(req.Tone, kind.Tone)
+		}
+	}
 	waiting, err := s.approvals.Ask(req)
 	switch {
 	case err != nil:
@@ -75,9 +81,9 @@ func (s *Server) approvalEnded(a approval.Approval, outcome approval.Outcome) {
 	s.assistants.RecordApproval(report)
 }
 
-// withShortID is how an approval names an assistant or a coder: names repeat,
-// two assistants may share a title and every untitled one reads the same, so
-// the short id stands behind the name and tells them apart.
+// withShortID names an assistant or a coder in one line: names repeat, two
+// assistants may share a title and every untitled one reads the same, so the
+// short id stands behind the name and tells them apart.
 func withShortID(name, id string) string {
 	return name + " · " + coder.ShortID(id)
 }

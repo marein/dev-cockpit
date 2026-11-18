@@ -352,6 +352,12 @@ async function cockpitOverflow(page, url) {
         await page.waitForSelector(".cm-editor", { state: "attached", timeout: 12000 });
         await sleep(500);
         await openPalette(page, "search");
+        // The saved search lands in the box whenever the palette gets it, also
+        // between the select and the insert of a fill, which then appends.
+        const saved = await page.evaluate(async (url) => (await (await fetch(url)).json()).query || "",
+          `${new URL(editorURL).pathname}/search-draft`);
+        if (w === EDITOR_VIEWPORTS[0][0]) assert(saved === "", `find in files opens on ${saved.slice(0, 40)}, the quick open filter`);
+        await page.waitForFunction((want) => document.querySelector("[data-editor-quickopen-input]").value === want, saved, { timeout: 8000 });
         await page.fill("[data-editor-quickopen-input]", NEEDLE);
         await page.waitForSelector(".editor-quickopen-match", { timeout: 12000 });
         await sleep(300);

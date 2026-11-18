@@ -369,6 +369,7 @@ class TerminalTabs extends HTMLElement {
     try {
       const ok = await confirm({
         title: `Close all ${ids.length} terminals in "${tabName}"?`,
+        kind: "danger",
         confirmText: "Close all",
       });
       if (!ok) return;
@@ -627,7 +628,8 @@ class TerminalTabs extends HTMLElement {
       const ok = await confirm({
         title: drop ? `Delete coder "${name}"?`
           : kind === "coder" ? `Stop coder "${name}"?` : `Delete shell "${name}"?`,
-        text: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+        warning: drop ? "It is stopped first, its conversation cannot be resumed afterwards." : undefined,
+        kind: kind === "coder" && !drop ? "danger" : "delete",
         confirmText: kind === "coder" && !drop ? "Stop" : "Delete",
       });
       if (!ok) return;

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -455,7 +456,7 @@ func (s *Server) handleProjectDelete(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
-		if s.askApproval(c, deletesApproval(owner, s.projectDeleteKind(), []deleteTarget{s.projectTarget(p.Name)})) {
+		if s.askApproval(c, deletesApproval(owner, s.projectDeleteKind(), []deleteTarget{s.projectTarget(p)})) {
 			return
 		}
 	}
@@ -548,14 +549,19 @@ func (s *Server) deleteProject(p project.Project, wait bool) (projectDeleteResul
 	return projectDeleteResult{Worktrees: worktrees}, nil
 }
 
+// projectDeleteWarning is what every project delete does, see deleteProject.
+// What depends on the project, its containers and worktrees, is each target's
+// own warning.
+const projectDeleteWarning = "Its coders and shells stop and the directory is removed with everything in it. This cannot be undone."
+
 // projectDeleteKind is the project delete an assistant asks for.
 func (s *Server) projectDeleteKind() deleteKind {
-	return deleteKind{ID: approvalProjectDelete, Plural: "projects", Resolve: func(name string) (deleteTarget, error) {
+	return deleteKind{ID: approvalProjectDelete, Plural: "projects", Warning: projectDeleteWarning, Resolve: func(name string) (deleteTarget, error) {
 		p, err := s.projects.FindByName(name)
 		if err != nil {
 			return deleteTarget{}, err
 		}
-		return s.projectTarget(p.Name), nil
+		return s.projectTarget(p), nil
 	}}
 }
 
@@ -565,11 +571,30 @@ func (s *Server) projectDeleteKind() deleteKind {
 // included. A delete that was already running is not this one's, so its end
 // is not known here and the note says so instead of calling the project gone.
 // Without wait a project that runs containers is answered as being deleted.
-func (s *Server) projectTarget(name string) deleteTarget {
+// The dialog names the worktree projects the delete takes along, and warns
+// with the owner's own delete note, the containers it brings down being the
+// ones the delete brings down.
+func (s *Server) projectTarget(p project.Project) deleteTarget {
+	name := p.Name
+	details := []askpass.Detail{{Label: "Project", Value: name, As: askpass.AsMono}, {Label: "Path", Value: p.Path, As: askpass.AsMono}}
+	if p.GitWorktree {
+		details = append(details, askpass.Detail{Label: "Worktree of", Value: cmp.Or(p.GitWorktreeOf, p.GitWorktreeMain) + " on " + p.GitBranch, As: askpass.AsMono})
+	}
+	var along []string
+	for _, wt := range p.GitWorktrees {
+		if wt.Project != "" && wt.Project != name {
+			along = append(along, wt.Project)
+		}
+	}
+	if len(along) > 0 {
+		details = append(details, askpass.Detail{Label: "Worktree projects", Value: strings.Join(along, ", "), As: askpass.AsMono})
+	}
 	return deleteTarget{
 		Key:     name,
 		Name:    "project " + name,
-		Details: []askpass.Detail{{Label: "Project", Value: name}},
+		Details: details,
+		Item:    askpass.Detail{Icon: "folder", Value: name},
+		Warning: render.ProjectRow{Project: p, DockerContainers: len(s.composeStacksToStop(p.Path)) > 0}.DeleteNote(),
 		Project: name,
 		Delete: func(wait bool) (string, []string, error) {
 			p, err := s.projects.FindByName(name)

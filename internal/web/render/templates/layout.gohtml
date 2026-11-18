@@ -25,6 +25,10 @@
   <link rel="stylesheet" href="{{asset "/css/song-player.css"}}">
   <link rel="stylesheet" href="{{asset "/css/file-mention.css"}}">
   <link rel="stylesheet" href="{{asset "/css/picker.css"}}">
+  <link rel="stylesheet" href="{{asset "/css/prompt.css"}}">
+  <link rel="stylesheet" href="{{asset "/css/plugins.css"}}">
+  <link rel="stylesheet" href="{{asset "/css/dialog.css"}}">
+  <link rel="stylesheet" href="{{asset "/css/assistant-aside.css"}}">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.min.js"></script>
@@ -44,6 +48,8 @@
       "@dc/project-palette": "{{asset "/js/dc/project-palette.js"}}",
       "@dc/project-actions": "{{asset "/js/dc/project-actions.js"}}",
       "@dc/assistant-actions": "{{asset "/js/dc/assistant-actions.js"}}",
+      "@dc/assistant-place": "{{asset "/js/dc/assistant-place.js"}}",
+      "@dc/assistant-project-threads": "{{asset "/js/dc/assistant-project-threads.js"}}",
       "@dc/fold": "{{asset "/js/dc/fold.js"}}",
       "@dc/termlinks": "{{asset "/js/dc/termlinks.js"}}",
       "@dc/linediff": "{{asset "/js/dc/linediff.js"}}",
@@ -53,6 +59,7 @@
       "@dc/contextmenu": "{{asset "/js/dc/contextmenu.js"}}",
       "@dc/http": "{{asset "/js/dc/http.js"}}",
       "@dc/gitprompt": "{{asset "/js/dc/gitprompt.js"}}",
+      "@dc/prompt-view": "{{asset "/js/dc/prompt-view.js"}}",
       "@dc/jingle": "{{asset "/js/dc/jingle.js"}}",
       "@dc/music": "{{asset "/js/dc/music.js"}}",
       "@dc/songs": "{{asset "/js/dc/songs.js"}}",
@@ -66,7 +73,11 @@
       "@dc/editor-groups": "{{asset "/js/dc/editor-groups.js"}}",
       "@dc/editor-change-bars": "{{asset "/js/dc/editor-change-bars.js"}}",
       "@dc/comment-gutter": "{{asset "/js/dc/comment-gutter.js"}}",
+      "@dc/line-blocks": "{{asset "/js/dc/line-blocks.js"}}",
+      "@dc/editor-threads": "{{asset "/js/dc/editor-threads.js"}}",
       "@dc/editor-changes": "{{asset "/js/dc/editor-changes.js"}}",
+      "@dc/editor-change-tree": "{{asset "/js/dc/editor-change-tree.js"}}",
+      "@dc/editor-merge": "{{asset "/js/dc/editor-merge.js"}}",
       "@dc/editor-comments": "{{asset "/js/dc/editor-comments.js"}}",
       "@dc/editor-marks": "{{asset "/js/dc/editor-marks.js"}}",
       "@dc/editor-filetypes": "{{asset "/js/dc/editor-filetypes.js"}}",
@@ -130,6 +141,8 @@
       "dc-time": "{{asset "/js/components/dc-time.js"}}",
       "dc-copy-field": "{{asset "/js/components/copy-field.js"}}",
       "dc-share-links": "{{asset "/js/components/share-links.js"}}",
+      "dc-plugin-region": "{{asset "/js/components/plugin-region.js"}}",
+      "dc-plugin-list": "{{asset "/js/components/plugin-list.js"}}",
       "dc-share-form": "{{asset "/js/components/share-form.js"}}",
       "dc-share-chat": "{{asset "/js/components/share-chat.js"}}",
       "dc-theme-cycle": "{{asset "/js/components/theme-cycle.js"}}",
@@ -331,6 +344,7 @@
   <a class="dc-rail-btn{{if eq $.ActiveTab "terminals"}} active{{end}}" href="/terminals"><span class="dc-news-anchor"><i class="ti ti-terminal-2 icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" true "Hidden" (not $.QuickNav.TerminalNews) "Label" "Something new in a terminal")}}</span><span>Terminals</span></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "editor"}} active{{end}}" href="/editor"><i class="ti ti-code icon" aria-hidden="true"></i><span>Editor</span></a>
   <a class="dc-rail-btn{{if eq .ActiveTab "assistants"}} active{{end}}" href="/assistants" title="Assistants"><span class="dc-term-icon assistant"><i class="ti ti-sparkles icon" aria-hidden="true"></i>{{template "news_dot.gohtml" (dict "Any" "assistant" "Hidden" (not .AssistantNews) "Label" "Something new in an assistant")}}</span><span>Assistants</span></a>
+  {{template "plugin_region_rail" (dict "Tab" .ActiveTab)}}
   <span class="dc-rail-gap"></span>
   <div class="dc-rail-foot">
     <a class="dc-rail-btn{{if eq .ActiveTab "settings"}} active{{end}}" href="/settings/general"><i class="ti ti-settings icon" aria-hidden="true"></i><span>Settings</span>{{template "backup_reviews_badge.gohtml" (dict "Count" .BackupReviewCount "Class" "dc-rail-count")}}</a>
@@ -429,9 +443,9 @@
        open backup review. No number, the counts stand inside the sheet. Its
        name carries both (CockpitLabel, @dc/cockpit live). The server renders
        it all on every page, host-status.js and notifications.js keep it live.
-       It stands active on the settings, the docs and the costs pages, the
-       areas a phone reaches through its sheet alone. */}}
-  <button type="button" class="dc-tabbar-btn{{if or (eq .ActiveTab "settings") (eq .ActiveTab "docs") (eq .ActiveTab "costs")}} active{{end}}" data-ctx-area="cockpit"{{with .CockpitLabel}} aria-label="{{.}}"{{end}}><span class="dc-news-anchor">{{template "host_status_tab.gohtml" .}}<span class="status-dot status-dot-animated status-blue dc-news-dot{{if not .CockpitNews}} d-none{{end}}" data-cockpit-dot data-unread="{{.UnreadNews}}" data-reviews="{{.BackupReviewCount}}" aria-hidden="true"></span></span><span>Cockpit</span></button>
+       It stands active on the settings, the docs and the costs pages and on
+       a plugin's page, the areas a phone reaches through its sheet alone. */}}
+  <button type="button" class="dc-tabbar-btn{{if or (eq .ActiveTab "settings") (eq .ActiveTab "docs") (eq .ActiveTab "costs") (pluginPageTab .ActiveTab)}} active{{end}}" data-ctx-area="cockpit"{{with .CockpitLabel}} aria-label="{{.}}"{{end}}><span class="dc-news-anchor">{{template "host_status_tab.gohtml" .}}<span class="status-dot status-dot-animated status-blue dc-news-dot{{if not .CockpitNews}} d-none{{end}}" data-cockpit-dot data-unread="{{.UnreadNews}}" data-reviews="{{.BackupReviewCount}}" aria-hidden="true"></span></span><span>Cockpit</span></button>
 </nav>
 {{end}}
 

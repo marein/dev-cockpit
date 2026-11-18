@@ -1,9 +1,9 @@
 // The open tabs, their order, the active one, the revision each one is
-// compared against and whether the blame gutter is on. Every entry carries a
-// type; a bare string is an older saved state and reads as type "file", so
-// nothing has to be migrated. A comparison is its two paths: the content
-// comes from the disk on restore, unsaved changes fall away like they do for
-// every other tab.
+// compared against, the left side's share of its side by side view and
+// whether the blame gutter is on. Every entry carries a type; a bare string
+// is an older saved state and reads as type "file", so nothing has to be
+// migrated. A comparison is its two paths: the content comes from the disk
+// on restore, unsaved changes fall away like they do for every other tab.
 export function savedLines(lines) {
   if (!Array.isArray(lines)) return [];
   return [...new Set(lines.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 500);
@@ -21,6 +21,10 @@ export function savedView(v) {
   const expanded = savedLines(v.expanded);
   if (expanded.length) out.expanded = expanded;
   return out;
+}
+
+export function savedShare(v) {
+  return typeof v === "number" && v > 0 && v < 1 ? v : 0;
 }
 
 export function savedScroll(s) {
@@ -61,6 +65,7 @@ export function savedEntries(saved, headRev) {
         diff: typeof e.diff === "string" ? e.diff : "",
         diffFrom: typeof e.diffFrom === "string" ? e.diffFrom : "",
         diffSplit: e.diffSplit === true,
+        diffShare: savedShare(e.diffShare),
         blame: e.blame === true,
         preview: e.preview === true,
         view: savedView(e.view),

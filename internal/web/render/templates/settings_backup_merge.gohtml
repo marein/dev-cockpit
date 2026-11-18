@@ -38,7 +38,7 @@
         <input type="hidden" name="id" value="{{.ID}}">
         <button type="submit" class="btn">Keep imported</button>
       </form>
-      <form method="post" action="/settings/backup/merge" data-confirm="Overwrite the imported file with the previous version?{{if .Restart}} Dev Cockpit restarts afterwards.{{end}}" data-confirm-button="Restore">
+      <form method="post" action="/settings/backup/merge" data-confirm="Overwrite the imported file with the previous version?"{{if .Restart}} data-confirm-warning="Dev Cockpit restarts afterwards."{{end}} data-confirm-kind="danger" data-confirm-button="Restore">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="form" value="restore">
         <input type="hidden" name="id" value="{{.ID}}">

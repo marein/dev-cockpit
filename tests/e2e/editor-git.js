@@ -43,8 +43,8 @@ const { assert, sleep, BASE } = L;
 //     down walks onto the rows (`.editor-commit-row.active`, the focused row),
 //     and the walk reaches every row with a checkbox, folder rows included,
 //     in screen order. Enter shows the focused file's diff and comes back to
-//     it (in the field it takes the first hit; on a folder row it does
-//     nothing at all), Space is the click on the focused row's checkbox, a
+//     it (in the field it takes the first hit; on a folder row it folds
+//     and unfolds it), Space is the click on the focused row's checkbox, a
 //     file's pick or a folder's whole subtree, staying in place either way,
 //     arrow up over the first row and Escape in the list step back out into
 //     the field, and Escape in the field clears the query before the panel's
@@ -267,7 +267,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     const install = () => {
       if (window.__dcUpdateAutoCancel) return;
       window.__dcUpdateAutoCancel = setInterval(() => {
-        const title = document.querySelector(".swal2-container .swal2-title");
+        const title = document.querySelector(".swal2-container .dc-ask-title");
         if (!title || !/^Update to \S+\?$/.test((title.textContent || "").trim())) return;
         const cancel = document.querySelector(".swal2-container .swal2-cancel");
         if (cancel) cancel.click();
@@ -2094,16 +2094,16 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
       await page.keyboard.press("ArrowDown");
       assert(await focusIs() === "g:filt", "down from the field did not return to the marked row");
 
-      // Enter is the file's diff and only the file's: on the folder row it
-      // does nothing at all, no tab, no state, the focus stands.
+      // Enter is the file's diff: on the folder row it folds and unfolds the
+      // folder, no tab, no pick, the focus stands (see editor-git-folds.js).
       const tabsBefore = await page.locator(".editor-tab").count();
       const summaryBefore = (await page.locator("[data-editor-commit-summary]").textContent()).trim();
-      await page.keyboard.press("Enter");
-      await sleep(600);
-      assert(await page.locator(".editor-tab").count() === tabsBefore,
-        "Enter on a folder row opened something");
-      assert((await page.locator("[data-editor-commit-summary]").textContent()).trim() === summaryBefore,
-        "Enter on a folder row changed the picks");
+      for (const want of [0, written - 1]) {
+        await page.keyboard.press("Enter");
+        await page.waitForFunction((n) => document.querySelectorAll('.editor-commit-row[data-path^="filt/file"]').length === n, want, { timeout: 5000 });
+      }
+      assert(await page.locator(".editor-tab").count() === tabsBefore && (await page.locator("[data-editor-commit-summary]").textContent()).trim() === summaryBefore,
+        "Enter on a folder row opened something or changed the picks");
       assert(await focusIs() === "g:filt", `Enter on a folder moved the focus to ${await focusIs()}`);
 
       // Space on the folder row is the click on its checkbox: the whole
@@ -3059,7 +3059,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
         `the dialog does not carry ssh's own line: ${question}`);
       // Above ssh's line the dialog carries this server's own truth, the
       // project and the action, kept apart from whatever the helper reported.
-      assert(question.includes(`${project} · push`),
+      assert(question.includes(`git push in ${project}`),
         `the dialog does not name project and action: ${question}`);
       assert(await page.getAttribute(".swal2-popup input.swal2-input", "type") === "password",
         "the answer field is not masked");
@@ -4158,7 +4158,7 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
     });
 
     await require("./editor-git-compare-worktree").worktreeChecks({ page, run, tag, author, editorBase, project, runInShell, shellText, openEditor, diffReady, openCommitView, setEditorSwitch, toggleDiff, diffPressed, h: compareKit });
-    for (const checks of [compareChecks.resetChecks, compareChecks.remoteChecks]) await checks({ page, run, runInShell, openEditor, diffReady, h: compareKit });
+    for (const checks of [require("./editor-git-folds").foldChecks, compareChecks.resetChecks, compareChecks.remoteChecks]) await checks({ page, run, mobile, editorBase, runInShell, openEditor, openCommitView, diffReady, h: compareKit });
     await require("./editor-git-switch").switchChecks({ page, run, editorBase, runInShell, openEditor, diffReady, openGitSheet, waitBranch, h: compareKit });
 
     await run("compare: the phone reaches the panel, both pickers and the diff inside the drawer at 390", async () => {
@@ -4417,8 +4417,8 @@ L.runFeature("EDITOR GIT", async ({ engine, ctx, page, run, bag, mobilePage }) =
 
     // ---- the two sides scroll together ---------------------------------------
 
-    const { scrollChecks } = require("./editor-git-scroll");
-    await scrollChecks({ page, run, engine, mobile, author, editorBase, openEditor, writeHere, runInShell, diffReady, setDiffView, setEditorSwitch, toggleDiff, diffPressed, pick });
+    await require("./editor-git-scroll").scrollChecks({ page, run, engine, mobile, author, editorBase, openEditor, writeHere, runInShell, diffReady, setDiffView, setEditorSwitch, toggleDiff, diffPressed, pick });
+    await require("./editor-git-divider").dividerChecks({ page, run, engine, mobile, project, runInShell, openEditor, diffReady, setDiffView, setEditorSwitch, toggleDiff, diffPressed, pick, h: compareKit });
 
     // Back to what the checks below expect: the folding is on by default and
     // the view follows the width.

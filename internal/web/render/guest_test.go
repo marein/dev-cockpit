@@ -49,7 +49,8 @@ func TestAGuestsStatusLineIsTheServerTheLinksAndTheVersion(t *testing.T) {
 
 // A guest's list of the link's assistants is the owner's column under the
 // link's address, refreshing alike and wearing the working ring, without the
-// row menu, the grip, the memory and the control that makes one.
+// row menu, the grip, the memory, the control that makes one and the mark of
+// the whole list.
 func TestAGuestsAssistantColumnIsTheOwnersWithoutItsControls(t *testing.T) {
 	data := assistantCtxData(AssistantCard{ID: "c1", Title: "Live one", URL: "/share/tok/assistants/c1", Running: 1760443200123})
 	data.Page = Page{Access: guestOf(share.KindAssistant)}
@@ -61,7 +62,7 @@ func TestAGuestsAssistantColumnIsTheOwnersWithoutItsControls(t *testing.T) {
 			t.Fatalf("the guest's column lacks %s: %s", part, out)
 		}
 	}
-	for _, part := range []string{" history", "data-assistant-menu", "data-assistant-grip", "data-assistant-memory-button", "New assistant", "No installed coder"} {
+	for _, part := range []string{" history", "data-assistant-menu", "data-assistant-grip", "data-assistant-memory-button", "data-assistant-living", "New assistant", "No installed coder"} {
 		if strings.Contains(out, part) {
 			t.Fatalf("the guest's column carries %s: %s", part, out)
 		}

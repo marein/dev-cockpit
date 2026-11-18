@@ -61,6 +61,10 @@ export function fileIcon(name) {
 // the official route and ship as standalone ESM files.
 export const modeUrl = (mode) => `https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.5.1/mode/${mode}.js`;
 
+// Mermaid's own ESM bundle has no bare imports to resolve through the page's
+// import map, so a plain dynamic import of its URL is enough.
+export const mermaidUrl = () => "https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.esm.min.mjs";
+
 export const STREAM_LANGS = {
   sh: ["shell", "shell"],
   bash: ["shell", "shell"],

@@ -1,15 +1,18 @@
-import { fire, promptText } from "@dc/dialog";
-import { escapeHtml } from "@dc/dom";
+import { notice, promptText } from "@dc/dialog";
 import { ensureOk, postForm } from "@dc/http";
 import { notifyError } from "@dc/toast";
 
 // A coder's name lives in its CLI's own session record, so the server types
 // the CLI's rename command into the session as is. Only the user can see
 // whether that fits the coder's state, so the dialog says what happens.
-const CODER_NOTE =
-  `<p class="text-secondary text-start mb-0">This sends <code>/rename &lt;new name&gt;</code> into the running coder as is, ` +
-  `regardless of what stands in its input line or which dialog is open. ` +
-  `If that does not fit right now, cancel and type the command into the coder yourself.</p>`;
+const CODER_NOTE = [
+  { as: "code", label: "command", value: "/rename <new name>" },
+  {
+    as: "note",
+    value: "It goes into the running coder as is, regardless of what stands in its input line or which dialog is open. "
+      + "If that does not fit right now, cancel and type the command into the coder yourself.",
+  },
+];
 
 export const inactiveCoderRenameItem = {
   label: "Inactive coders cannot be renamed",
@@ -33,18 +36,7 @@ export async function renameAssistant(url, current) {
   if (open) return false;
   open = true;
   try {
-    const result = await fire({
-      title: "Rename this assistant",
-      input: "text",
-      inputValue: current,
-      inputAttributes: { "aria-label": "Name" },
-      showCancelButton: true,
-      confirmButtonText: "Rename",
-      cancelButtonText: "Cancel",
-      reverseButtons: true,
-    });
-    if (!result.isConfirmed) return false;
-    const title = (result.value || "").trim();
+    const title = await promptText({ title: "Rename this assistant", value: current, confirmText: "Rename", allowEmpty: true });
     if (!title || title === current) return false;
     const response = await postForm(url, { form: "rename", title });
     await ensureOk(response, "The assistant could not be renamed.");
@@ -66,13 +58,9 @@ async function renameInside(current, label) {
   if (open) return null;
   open = true;
   try {
-    await fire({
+    await notice({
       title: `Rename coder "${current}"`,
-      icon: "info",
-      html:
-        `<p class="text-secondary text-start mb-0">Renaming ${escapeHtml(label || "this coder")} from the cockpit is not possible. ` +
-        `Run <code>/rename</code> directly in the coder.</p>`,
-      confirmButtonText: "OK",
+      text: `Renaming ${label || "this coder"} from the cockpit is not possible. Run /rename directly in the coder.`,
     });
   } finally {
     open = false;
@@ -80,13 +68,13 @@ async function renameInside(current, label) {
   return null;
 }
 
-async function rename(url, current, title, html, failure) {
+async function rename(url, current, title, details, failure) {
   if (open) return null;
   open = true;
   try {
     const name = await promptText({
       title,
-      html,
+      details,
       value: current,
       confirmText: "Rename",
       validatorMessage: "Please enter a name.",

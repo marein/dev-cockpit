@@ -1,7 +1,7 @@
 import * as store from "@dc/store";
 import * as projectSort from "@dc/project-sort";
 import * as projectActions from "@dc/project-actions";
-import { confirm } from "@dc/dialog";
+import { confirm, confirmForm } from "@dc/dialog";
 import { flash, syncAnimations } from "@dc/dom";
 import { missedServerEvent, onServerEvent } from "@dc/events";
 import { matchesTokens } from "@dc/filter";
@@ -252,14 +252,7 @@ class ProjectList extends HTMLElement {
       await projectActions.deleteInactiveCoder(form.dataset.inactiveCoder, form.dataset.inactiveCoderName || "", (on) => this.markChipBusy(chip, button, on));
       return;
     }
-    if (form.dataset.confirm) {
-      const ok = await confirm({
-        title: form.dataset.confirm,
-        text: form.dataset.confirmText,
-        confirmText: form.dataset.confirmButton || "Confirm",
-      });
-      if (!ok) return;
-    }
+    if (form.dataset.confirm && !(await confirmForm(form))) return;
     if (deleteProject) {
       await this.deleteProject(form);
       return;
@@ -377,7 +370,8 @@ class ProjectList extends HTMLElement {
   async deleteCoder(chip) {
     const ok = await confirm({
       title: `Delete coder "${chip.dataset.chipName || ""}"?`,
-      text: "It is stopped first, its conversation cannot be resumed afterwards.",
+      warning: "It is stopped first, its conversation cannot be resumed afterwards.",
+      kind: "delete",
       confirmText: "Delete",
     });
     if (ok) await this.actOnChip(chip, `/coders/${chip.dataset.chipId}/delete`);

@@ -1,0 +1,9 @@
+<hello-board class="d-block dc-narrow" data-notes-url="{{base}}/notes" data-events-url="{{base}}/events">
+  <form class="d-flex gap-2 mb-3" data-hello-form data-no-pe autocomplete="off">
+    <input type="text" class="form-control" name="text" maxlength="500" required placeholder="Write a note" aria-label="Note">
+    <button type="submit" class="btn btn-primary">Add</button>
+  </form>
+  <div class="list-group" data-hello-notes></div>
+  <h3 class="mt-4">Latest events</h3>
+  <div class="list-group" data-hello-events></div>
+</hello-board>

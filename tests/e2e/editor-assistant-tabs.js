@@ -652,8 +652,8 @@ L.runFeature("EDITOR-ASSISTANT-TABS", async ({ engine, browser, page, run, bag }
       const labelsOf = (p) => p.$$eval(".dc-context-menu .dropdown-item", (els) => els.map((el) => (el.querySelector(".dc-menu-label-head") || el).textContent.trim()));
       const item = (p, label) => p.locator(".dc-context-menu .dropdown-item", { hasText: new RegExp(`^${label}$`) }).first();
       const asked = async (p, name) => {
-        await p.waitForSelector(".swal2-title", { state: "visible", timeout: 8000 });
-        const said = [(await p.textContent(".swal2-title")).trim(), (await p.textContent(".swal2-html-container")).trim()];
+        await p.waitForSelector(".dc-ask-title", { state: "visible", timeout: 8000 });
+        const said = [(await p.textContent(".dc-ask-title")).trim(), (await p.textContent(".dc-ask-body")).trim()];
         assert(said[0] === `Delete "${name}"?` && said[1] === "Its thread goes with it. The coders it steers are released and yours again, the shared memory is kept.", `the Delete asks ${JSON.stringify(said)}`);
       };
       await pick(one);

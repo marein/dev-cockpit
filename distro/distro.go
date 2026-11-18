@@ -8,9 +8,9 @@ package distro
 import (
 	"fmt"
 	"os"
-	"regexp"
 
 	"github.com/marein/dev-cockpit/internal/cli"
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/plugin"
 )
 
@@ -26,7 +26,8 @@ type Build struct {
 	// ServePlugins are constructed by the distribution's main and handed in
 	// here as ordered named pairs, there is no registry and a plugin does not
 	// name itself. They configure at serve start, when the configuration they
-	// read is loaded. The surface is experimental, see the plugin package.
+	// read is loaded, and a pair marked Optional at every switch on instead.
+	// The surface is experimental, see the plugin package.
 	ServePlugins []plugin.Named[plugin.ServePlugin]
 }
 
@@ -50,11 +51,6 @@ func Main(b Build) {
 	})
 }
 
-// idPattern is what a wiring id may look like: lowercase, starts with a
-// letter, letters, digits and dashes. The id prefixes the final custom
-// element names, so it stays this narrow.
-var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-
 // validateWiring refuses, per plugin list, what the id prefixes and the
 // error messages could not tell apart later: a nil plugin, an empty or
 // element name incompatible id, two plugins under one id. Positions count
@@ -68,7 +64,7 @@ func validateWiring[T any](plugins []plugin.Named[T]) error {
 		if p.ID == "" {
 			return fmt.Errorf("plugin %d has an empty id", i+1)
 		}
-		if !idPattern.MatchString(p.ID) {
+		if !pluginhost.ValidID(p.ID) {
 			return fmt.Errorf("%q is not a usable plugin id, use lowercase words joined by dashes", p.ID)
 		}
 		if seen[p.ID] {

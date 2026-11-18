@@ -1,24 +1,34 @@
 {{define "visible_line.gohtml"}}{{range visible .}}{{if .Escape}}<code>{{.Text}}</code>{{else}}{{.Text}}{{end}}{{end}}{{end}}
 
-{{/* The notes of one line comment thread, the editor's thread dialog and the
-     assistant's project view alike: who wrote each, when, the buttons that
-     change it and the note as written. Flush puts the buttons' icons on the
-     box's right edge, as far in as the content starts on its left. */}}
+{{/* The notes of one line comment thread, every card of a thread alike:
+     who wrote each, when, the buttons that change it, their icons on the
+     box's right edge as far in as the content starts on its left, and the
+     note as written. A note the reader may edit carries the field its pencil
+     shows in place of its text. */}}
 {{define "line_comment_notes.gohtml"}}
-{{- $flush := .Flush}}
-{{- range .Notes}}
+{{- range .}}
 <div class="border-start border-2 ps-2 mt-2" data-comment-note="{{.ID}}">
   <div class="d-flex align-items-center gap-2 small text-secondary min-w-0">
     <span class="fw-medium text-body text-truncate" data-comment-note-author>{{template "visible_line.gohtml" .Name}}</span>
     {{- with .When}}<dc-time class="text-nowrap" datetime="{{.}}" relative></dc-time>{{end}}
     {{- if or .Edit .Drop}}
-    <span class="ms-auto d-flex gap-1{{if $flush}} me-n2{{end}}">
+    <span class="ms-auto d-flex gap-1 me-n2">
       {{- if .Edit}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon" title="{{.EditLabel}}" aria-label="{{.EditLabel}}" data-comment-note-edit><i class="ti ti-pencil" aria-hidden="true"></i></button>{{end}}
       {{- if .Drop}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon tone-danger" title="Delete reply" aria-label="Delete reply" data-comment-note-drop><i class="ti ti-trash" aria-hidden="true"></i></button>{{end}}
     </span>
     {{- end}}
   </div>
   <div class="dc-prompt-text" data-comment-note-text>{{.Text}}</div>
+  {{- if .Edit}}
+  <form class="mt-1" hidden novalidate data-comment-note-form>
+    <textarea class="form-control form-control-sm" name="text" rows="1" maxlength="16384" aria-label="{{.EditLabel}}" data-comment-note-field></textarea>
+    <div class="invalid-feedback">{{.Required}}</div>
+    <div class="d-flex align-items-center gap-2 mt-2">
+      <button type="button" class="btn btn-sm ms-auto" data-comment-note-cancel>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary" data-comment-note-save>Save</button>
+    </div>
+  </form>
+  {{- end}}
 </div>
 {{- end}}
 {{end}}
@@ -32,4 +42,94 @@
 <div class="d-flex justify-content-end mt-2">
   <button type="button" class="btn btn-sm btn-primary" data-project-comment-add>Add</button>
 </div>
+{{end}}
+
+{{/* One line comment thread, of the forge or local, the assistant's project
+     view, the inline diffs there and the editor alike: where it stands, or
+     that it stands on the project, where it lives, the code line it quotes,
+     its notes as every thread shows them, and what the reader may do with
+     it: a thread of the forge on the forge, a local one through the editor's
+     line comments, which delete it too. The reply form waits under it.
+     Inline is the editor, where the thread stands under its own line, so
+     its head names no place and the editor shows the quote and the outdated
+     mark only while its buffer reads the thread outdated.
+     A thread on a line carries its line and mark, which the inline diff
+     marks its line by. Offer is what the forge takes, nil for none. */}}
+{{define "line_thread.gohtml"}}
+{{- $t := .Thread}}{{$offer := .Offer}}
+{{- $reply := or $t.Answers (and $t.Thread $offer $offer.Reply)}}
+{{- $resolve := and (not $t.Resolved) (or $t.Writes (and $t.Thread $offer $offer.Resolve (not $t.Unresolvable)))}}
+{{- $reopen := and $t.Resolved $t.Writes}}
+<div class="card" data-line-thread="{{$t.ID}}"{{with $t.Thread}} data-thread="{{.}}"{{end}}{{if $t.Local}} data-line-thread-local{{end}}{{if not $t.Project}} data-line-thread-path="{{$t.Path}}" data-line-thread-line="{{$t.Line}}" data-line-thread-mark="{{if $t.Resolved}}resolved{{else if $t.Outdated}}outdated{{else}}open{{end}}"{{end}}>
+  <div class="d-flex align-items-center gap-2 px-3 py-2 small text-secondary bg-surface-secondary border-bottom rounded-top" data-line-thread-head>
+    {{- if $t.Project}}
+    <i class="ti ti-folder flex-shrink-0" aria-hidden="true"></i>
+    <span class="text-truncate min-w-0" data-line-thread-project>Project comment</span>
+    {{- else if .Inline}}
+    <i class="ti ti-message-circle flex-shrink-0" aria-hidden="true"></i>
+    <span class="text-truncate min-w-0" data-line-thread-kind>Line comment</span>
+    {{- else if $t.FileURL}}
+    <i class="ti ti-file flex-shrink-0" aria-hidden="true"></i>
+    <a class="text-reset text-truncate min-w-0 font-monospace" href="{{$t.FileURL}}" title="{{$t.Place}}" data-file-link data-line-thread-file>{{template "visible_line.gohtml" $t.Path}}:{{$t.Line}}</a>
+    {{- else}}
+    <i class="ti ti-file flex-shrink-0" aria-hidden="true"></i>
+    <span class="text-truncate min-w-0 font-monospace" title="{{$t.Place}}" data-line-thread-file>{{template "visible_line.gohtml" $t.Path}}:{{$t.Line}}</span>
+    {{- end}}
+    {{- if or $t.Outdated .Inline}}<span class="badge bg-orange-lt flex-shrink-0" title="The quoted line is no longer in the file exactly once."{{if not $t.Outdated}} hidden{{end}} data-line-thread-outdated>outdated</span>{{end}}
+    {{- if and .Inline $t.Resolved}}<span class="badge bg-green-lt flex-shrink-0" data-line-thread-resolved>Resolved</span>{{end}}
+    {{- if $t.Local}}
+    <span class="badge bg-secondary-lt ms-auto flex-shrink-0" title="{{$t.Origin}}" data-line-thread-origin="local">local</span>
+    {{- else}}
+    <span class="badge bg-secondary-lt ms-auto flex-shrink-0" title="{{$t.Origin}}" data-line-thread-origin="forge"><i class="ti {{$t.ForgeIcon}} me-1" aria-hidden="true"></i>{{$t.ForgeLabel}}</span>
+    {{- end}}
+    {{- with $t.ForgeURL}}<a class="text-reset flex-shrink-0" href="{{.}}" target="_blank" rel="noopener" title="Open the thread on {{$t.ForgeLabel}}" aria-label="Open the thread on {{$t.ForgeLabel}}" data-line-thread-forge><i class="ti ti-external-link" aria-hidden="true"></i></a>{{end}}
+    {{- if $t.Deletes}}<button type="button" class="btn btn-sm btn-ghost-secondary btn-icon tone-danger flex-shrink-0 my-n1 me-n2" title="Delete comment" aria-label="Delete comment" data-line-thread-delete><i class="ti ti-trash" aria-hidden="true"></i></button>{{end}}
+  </div>
+  {{- with $t.Quote}}
+  <div class="px-3 py-1 small font-monospace text-truncate border-bottom"{{if and $.Inline (not $t.Outdated)}} hidden{{end}} data-line-thread-quote>{{template "visible_line.gohtml" .}}</div>
+  {{- end}}
+  <div class="px-3 pb-2" data-line-thread-notes>{{template "line_comment_notes.gohtml" $t.Notes}}</div>
+  {{- if or $reply $resolve $reopen $t.Handoff}}
+  <div class="d-flex flex-wrap align-items-center gap-2 px-3 pb-2" data-line-thread-actions>
+    {{- if $reply}}<button type="button" class="btn btn-sm" aria-expanded="false" data-line-thread-reply-open><i class="ti ti-message-reply me-1" aria-hidden="true"></i>Reply</button>{{end}}
+    {{- with $t.Handoff}}<button type="button" class="btn btn-sm" title="Draft a message naming this thread" data-line-thread-handoff="{{.}}"><i class="ti ti-sparkles me-1" aria-hidden="true"></i>Hand off</button>{{end}}
+    {{- if $resolve}}<button type="button" class="btn btn-sm ms-auto" title="Resolve the thread{{if not $t.Local}} on {{$offer.Forge}}{{end}}" data-line-thread-resolve><i class="ti ti-check me-1" aria-hidden="true"></i>Resolve</button>{{end}}
+    {{- if $reopen}}<button type="button" class="btn btn-sm ms-auto" title="Reopen the thread" data-line-thread-reopen><i class="ti ti-arrow-back-up me-1" aria-hidden="true"></i>Reopen</button>{{end}}
+  </div>
+  {{- end}}
+  {{- if $reply}}
+  <form class="px-3 pb-2" hidden novalidate data-line-thread-reply{{with $t.Thread}} data-thread="{{.}}"{{end}}>
+    <textarea class="form-control form-control-sm" name="body" rows="3" maxlength="16384" placeholder="Your reply" aria-label="Your reply" data-line-thread-reply-text></textarea>
+    <div class="invalid-feedback">A reply is required.</div>
+    {{- if not $t.Local}}
+    <div class="form-hint">{{$offer.Hint}}</div>
+    {{- end}}
+    <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+      {{- if $resolve}}
+      <label class="form-check mb-0 small"><input class="form-check-input" type="checkbox" name="resolve" value="1" data-line-thread-reply-resolve><span class="form-check-label">Resolve the thread</span></label>
+      {{- else if $reopen}}
+      <label class="form-check mb-0 small"><input class="form-check-input" type="checkbox" name="resolve" value="0" data-line-thread-reply-resolve><span class="form-check-label">Reopen the thread</span></label>
+      {{- end}}
+      <button type="button" class="btn btn-sm ms-auto" data-line-thread-reply-cancel>Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary" data-line-thread-reply-send>Reply</button>
+    </div>
+  </form>
+  {{- end}}
+</div>
+{{end}}
+
+{{/* The field of a new comment under a line, the editor's and the inline
+     diff's of the assistant's project view alike, Hint the line under it. */}}
+{{define "line_comment_field.gohtml"}}
+<form class="card card-body p-2" novalidate data-line-comment-form>
+  <textarea class="form-control form-control-sm" name="text" rows="3" maxlength="16384" placeholder="What about this line?" aria-label="Line comment" data-line-comment-text></textarea>
+  <div class="invalid-feedback">A comment is required.</div>
+  {{- with .Hint}}
+  <small class="form-hint mt-1" data-line-comment-hint>{{.}}</small>
+  {{- end}}
+  <div class="d-flex align-items-center gap-2 mt-2">
+    <button type="button" class="btn btn-sm ms-auto" data-line-comment-cancel>Cancel</button>
+    <button type="submit" class="btn btn-sm btn-primary" data-line-comment-add>Add</button>
+  </div>
+</form>
 {{end}}

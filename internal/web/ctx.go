@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/marein/dev-cockpit/internal/coder"
+	"github.com/marein/dev-cockpit/internal/pluginhost"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -59,6 +60,11 @@ func (s *Server) handleCtx(c *gin.Context) {
 		active := settingsSectionOf(cleanPath)
 		if cleanPath == "/docs" {
 			active = "docs"
+		}
+		for _, p := range pluginhost.Pages(s.plugins.Serves()) {
+			if cleanPath == p.URL {
+				active = p.Tab
+			}
 		}
 		var co *coder.Manager
 		section := ""

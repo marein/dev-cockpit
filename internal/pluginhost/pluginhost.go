@@ -8,13 +8,14 @@ package pluginhost
 import (
 	"fmt"
 	"html/template"
+	"slices"
 	"strings"
 )
 
 // ServesHTTP reports whether the plugin's subtree answers anything, which is
 // what decides whether the router registers it at all.
 func ServesHTTP(s *Serve) bool {
-	return s.Handler() != nil || s.Assets() != nil || len(s.CustomElements()) > 0
+	return s.Handler() != nil || s.Assets() != nil || len(s.CustomElements()) > 0 || s.Page() != nil
 }
 
 // AssetPrefix is the manifest path prefix of one plugin's added assets,
@@ -64,13 +65,15 @@ type Element struct {
 	URL  string
 }
 
-// Elements answers every added element across the Serves, in wiring order,
-// each bound to its plugin's starter through resolve, which answers the
-// hashed URL of a raw asset path.
+// Elements answers the elements of the compiled plugins fixed at serve
+// start, in wiring order, each bound to its plugin's starter through
+// resolve, which answers the hashed URL of a raw asset path. A live plugin's
+// elements stay out: the import map is fixed once a page loaded, so its
+// mounts carry their module, see mountHTML.
 func Elements(serves []*Serve, resolve func(string) string) []Element {
 	var elements []Element
 	for _, s := range serves {
-		if len(s.CustomElements()) == 0 {
+		if len(s.CustomElements()) == 0 || s.Live() {
 			continue
 		}
 		starter := resolve(StarterPath(s))
@@ -81,13 +84,55 @@ func Elements(serves []*Serve, resolve func(string) string) []Element {
 	return elements
 }
 
-// SlotHTML concatenates what every plugin added for the named slot. The
-// markup is compiled in plugin code and deliberately not escaped, that is
-// the whole point of a slot.
+// SlotHTML concatenates what the compiled plugins fixed at serve start added
+// for the named slot. The markup is compiled in plugin code and
+// deliberately not escaped, that is the whole point of a slot. A live
+// plugin's markup renders in a live region through SlotMounts.
 func SlotHTML(serves []*Serve, slot string) template.HTML {
 	var b strings.Builder
 	for _, s := range serves {
-		b.WriteString(s.SlotHTML(slot))
+		if !s.Live() {
+			b.WriteString(s.SlotHTML(slot))
+		}
 	}
 	return template.HTML(b.String())
+}
+
+// PageLink is one plugin page as the rail and the Cockpit sheet show it:
+// Label is the resolved name of the entry, NavLabel or else Title, Title is
+// the page's heading and the rail's tooltip, Key the plugin load, see
+// Serve.Key.
+type PageLink struct {
+	Title string
+	Label string
+	Icon  string
+	URL   string
+	Tab   string
+	Key   string
+}
+
+// PageTab is the active tab name of a plugin's page.
+func PageTab(id string) string { return "plugin-" + id }
+
+// PageURL is where a plugin's page answers, the root of its subtree.
+func PageURL(id string) string { return "/plugins/" + id + "/" }
+
+// Pages answers the pages the plugins added, in plugin order.
+func Pages(serves []*Serve) []PageLink {
+	var links []PageLink
+	for _, s := range serves {
+		if p := s.Page(); p != nil {
+			label := p.NavLabel
+			if strings.TrimSpace(label) == "" {
+				label = p.Title
+			}
+			links = append(links, PageLink{Title: p.Title, Label: label, Icon: p.Icon, URL: PageURL(s.ID()), Tab: PageTab(s.ID()), Key: s.Key()})
+		}
+	}
+	return links
+}
+
+// IsPageTab answers whether tab is the active tab name of a plugin's page.
+func IsPageTab(serves []*Serve, tab string) bool {
+	return slices.ContainsFunc(Pages(serves), func(p PageLink) bool { return p.Tab == tab })
 }

@@ -1848,7 +1848,7 @@ L.runFeature("PROJECTS", async ({ engine, page, run, mobilePage }) => {
       // projects that go with it.
       await indexMenu(source, "Delete project");
       await page.waitForSelector(".swal2-container", { state: "visible", timeout: 5000 });
-      const title = (await page.textContent(".swal2-title")).trim();
+      const title = (await page.textContent(".dc-ask-title")).trim();
       assert(title === `Delete project "${source}"?`, `the confirm asks ${title}`);
       const note = (await page.textContent(".swal2-html-container")).replace(/\s+/g, " ").trim();
       assert(note.includes(`"${source}-wt1"`), `the note does not name the worktree: ${note}`);

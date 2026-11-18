@@ -1,0 +1,4 @@
+body {
+  --swal2-background: var(--tblr-bg-surface);
+  --swal2-color: var(--tblr-body-color);
+}

@@ -14,8 +14,9 @@ const { assert, BASE } = L;
 // stays one line with every break shown as its escape in a code chip, the
 // note stays one line inside its entry. The owner's own entry is the sheet's
 // plain row. On a phone, light and dark, every entry stays inside its cell
-// and the sheet never scrolls sideways. The thread keeps file and line, and
-// the quote, on one line the same way, its note under the guest's name. Copy as text, built by the server
+// and the sheet never scrolls sideways. The thread of a file that is gone
+// opens in the dialog, which keeps file and line, and the card the quote, on
+// one line the same way, its note under the guest's name. Copy as text, built by the server
 // (`.../editor/comments/text`), keeps indented code in a note as written,
 // every comment one entry, a guest's led by its name. A guest's project
 // comment broken the same way stands first, in the same bounded row under its
@@ -189,15 +190,19 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
     return `name ${colors.join(" / ")}`;
   });
 
-  await run("the dialog keeps a guest's file, line and quote on one line", async () => {
+  await run("the dialog of a thread whose file is gone keeps a guest's file, line and quote on one line", async () => {
     await page.locator("[data-editor-sheet-body] .row .dropdown-item", { hasText: "owner: fine" }).click();
     await page.waitForSelector(".dc-context-menu", { state: "visible", timeout: 6000 });
     await page.locator(".dc-context-menu .dropdown-item", { hasText: "Open thread" }).click();
     await commentDialogShown(page);
+    await page.locator("[data-editor-comment-modal] [data-line-thread]").waitFor({ timeout: 6000 });
     const shown = await page.$eval("[data-editor-comment-modal]", (modal) => {
-      const lines = (el) => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight);
+      const lines = (el) => {
+        const style = getComputedStyle(el);
+        return (el.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth)) / parseFloat(style.lineHeight);
+      };
       const place = modal.querySelector("[data-editor-comment-place]");
-      const code = modal.querySelector("[data-editor-comment-code]");
+      const code = modal.querySelector("[data-line-thread-quote]");
       const tail = place.querySelector(".dc-menu-label-tail").getBoundingClientRect();
       const box = place.getBoundingClientRect();
       return {
@@ -209,7 +214,7 @@ module.exports.guestChecks = async function guestChecks({ engine, browser, page,
       };
     });
     assert(shown.place < 1.3 && shown.code < 1.3 && shown.tail && shown.placeChips === escapes && shown.codeChips === "\\u2028" && shown.author === guest, `the dialog reads ${JSON.stringify(shown)}`);
-    await page.click("[data-editor-comment-cancel]");
+    await page.click("[data-editor-comment-modal] .btn-close");
     await commentDialogGone(page);
   });
 

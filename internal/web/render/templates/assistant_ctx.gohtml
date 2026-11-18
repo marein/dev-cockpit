@@ -28,7 +28,10 @@
       {{if and (not .Available) (not .Access.Guest)}}
       <div class="p-3 text-secondary small">No installed coder can run an assistant right now.</div>
       {{else if .Assistants}}
-      <nav class="list-group list-group-flush dc-rows" aria-label="Assistants">
+      {{/* The owner's rows are every assistant that lives, the one list a
+           device may drop the remembered aside of a gone one by
+           (@dc/assistant-place). A guest's are only the link's. */}}
+      <nav class="list-group list-group-flush dc-rows" aria-label="Assistants"{{if not .Access.Guest}} data-assistant-living{{end}}>
         {{range .Assistants}}{{template "assistant_ctx_row.gohtml" (dict "Card" . "Active" (eq .ID $.ActiveID) "Guest" $.Access.Guest)}}{{end}}
       </nav>
       {{else}}

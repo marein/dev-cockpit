@@ -73,7 +73,8 @@
         {{if not $.Access.Guest}}
         {{if .Open}}
         <form method="post" action="{{$.JobsURL}}" class="flex-fill d-flex" data-ajax-refresh
-              data-confirm="Release &#34;{{.Name}}&#34;? The coder keeps working, nothing checks on it any more. It is yours again."
+              data-confirm="Release &#34;{{.Name}}&#34;?"
+              data-confirm-text="The coder keeps working, nothing checks on it any more. It is yours again."
               data-confirm-button="Release">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="form" value="release">

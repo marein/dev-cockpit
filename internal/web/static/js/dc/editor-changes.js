@@ -1,5 +1,6 @@
 import { matchesTokens } from "@dc/filter";
 import { baseName, parentDir } from "@dc/editor-format";
+import { buildIndex as buildTree, dirOf, emptyIndex, recountPicks as recountTree, rowSpecs } from "@dc/editor-change-tree";
 import { LAYOUT_SAVE_MS } from "@dc/editor-saved";
 import { GIT_MARKS } from "@dc/editor-marks";
 import * as store from "@dc/store";
@@ -11,13 +12,10 @@ import * as store from "@dc/store";
 // out than anybody spends reading it. The cap is about the rows alone: the
 // counts, the all box and the commit itself always speak for every change.
 const COMMIT_ROWS_STEP = 500;
+const MAX_SAVED_FOLDS = 200;
 
-// What every folder row needs is counted once per list into the index and
-// moved by the clicks from there on: how many changes sit under it, how many
-// of those can be picked and how many are. Answering that by filtering the
-// change list instead costs one pass per folder row and another per click,
-// which is what made a working copy with ten thousand changes a panel nobody
-// could open. The rendered rows are held by key for the same reason. Only
+// What every folder row needs is counted once per list into the index, see
+// @dc/editor-change-tree, and the rendered rows are held by key. Only
 // the first `shown` changes have rows, their folder rows ride along; the
 // rest waits behind a button whose numbers count changes, and the picks,
 // the summary and the commit always speak for the whole list.
@@ -53,27 +51,20 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
   const rowEls = new Map();
   const inputs = new Map();
   const picked = new Set();
+  // The folded folders, by the directory their row is keyed with. A filter
+  // opens every folder that holds a match, so each hit stands in view: while
+  // one stands the folds are its own, empty again with every changed query,
+  // and clearing it brings back the ones made without it.
+  const folded = new Set();
+  let filterFolds = new Set();
+  const folds = () => (query === "" ? folded : filterFolds);
+  let specFiles = 0;
   listEl.tabIndex = 0;
-
-  function emptyNode(dir, parent) {
-    return { dir, parent, dirs: new Map(), files: [], count: 0, selectable: 0, picked: 0 };
-  }
-
-  function emptyIndex() {
-    const root = emptyNode("", null);
-    return { shown: [], byPath: new Map(), nodes: new Map([["", root]]), root, total: 0, pickedAll: 0 };
-  }
 
   // matches is the filter, the shared token match every list in this app
   // narrows with, over the path a row stands for.
   function matches(entry) {
     return query === "" || matchesTokens(entry.path, query) || (!!entry.from && matchesTokens(entry.from, query));
-  }
-
-  // dirOf is the folder a row is grouped under: the parent, with the
-  // trailing slash of a directory entry out of the way first.
-  function dirOf(entry) {
-    return parentDir(entry.path.endsWith("/") ? entry.path.slice(0, -1) : entry.path);
   }
 
   const selectable = (entry) => picks && kindOf(entry) !== "conflict";
@@ -91,64 +82,12 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     return true;
   }
 
-  // buildIndex counts what the rows need. byPath and the two totals are
-  // about every change there is, because a pick outside the filter is still
-  // a pick and must not be pruned or forgotten; the folder tree holds only
-  // what the filter shows, which is what makes every folder row, every count
-  // and every checkbox under it speak about the same set without a second
-  // path through the code.
   function buildIndex() {
-    const root = emptyNode("", null);
-    const nodes = new Map([["", root]]);
-    const byPath = new Map();
-    const hits = [];
-    let pickedAll = 0;
-    for (const entry of sorted) {
-      byPath.set(entry.path, entry);
-      const canPick = selectable(entry);
-      const isPicked = canPick && picked.has(entry.path);
-      if (isPicked) pickedAll += 1;
-      if (!matches(entry)) continue;
-      hits.push(entry);
-      let node = root;
-      const dir = dirOf(entry);
-      if (dir) {
-        let prefix = "";
-        for (const segment of dir.split("/")) {
-          prefix = prefix ? `${prefix}/${segment}` : segment;
-          let child = node.dirs.get(segment);
-          if (!child) {
-            child = emptyNode(prefix, node);
-            node.dirs.set(segment, child);
-            nodes.set(prefix, child);
-          }
-          node = child;
-        }
-      }
-      node.files.push(entry);
-      for (let n = node; n; n = n.parent) {
-        n.count += 1;
-        if (canPick) n.selectable += 1;
-        if (isPicked) n.picked += 1;
-      }
-    }
-    index = { shown: hits, byPath, nodes, root, total: sorted.length, pickedAll };
+    index = buildTree(sorted, { matches, selectable, picked });
   }
 
-  // recountPicks reads the picks back into the folder counts. The clicks
-  // move them one by one; this is for the moments a whole set arrives at
-  // once, the all box, a draft from another device and a spent commit.
   function recountPicks() {
-    for (const node of index.nodes.values()) node.picked = 0;
-    for (const entry of index.shown) {
-      if (!selectable(entry) || !picked.has(entry.path)) continue;
-      for (let n = index.nodes.get(dirOf(entry)); n; n = n.parent) n.picked += 1;
-    }
-    let all = 0;
-    for (const entry of sorted) {
-      if (selectable(entry) && picked.has(entry.path)) all += 1;
-    }
-    index.pickedAll = all;
+    recountTree(index, sorted, { selectable, picked });
   }
 
   function selectedPaths() {
@@ -285,9 +224,11 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
 
   // A group row is one folder's line over its whole subtree: the checkbox
   // picks and drops everything below it, a mixed pick reads as
-  // indeterminate. The folder is only a grouping, what is committed are
+  // indeterminate, and the rest of the row is the button that folds it. The
+  // two are siblings with a gap between them, so a tap meant for one never
+  // lands on the other. The folder is only a grouping, what is committed are
   // always the files.
-  function groupRow(node, label, depth) {
+  function groupRow(node, label, depth, isFolded) {
     const key = `g:${node.dir}`;
     const row = document.createElement("div");
     row.className = "editor-commit-row editor-commit-grouprow";
@@ -332,8 +273,18 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
       inputs.set(key, check);
       row.appendChild(check);
     }
+    const foldBtn = document.createElement("button");
+    foldBtn.type = "button";
+    foldBtn.tabIndex = -1;
+    foldBtn.className = "editor-commit-open";
+    foldBtn.dataset.editorCommitFold = "";
+    foldBtn.setAttribute("aria-expanded", String(!isFolded));
+    foldBtn.addEventListener("click", () => toggleFold(node.dir));
     const line = document.createElement("div");
     line.className = "editor-commit-line";
+    const chevron = document.createElement("i");
+    chevron.className = `ti ${isFolded ? "ti-chevron-right" : "ti-chevron-down"} flex-shrink-0 text-secondary`;
+    chevron.setAttribute("aria-hidden", "true");
     const icon = document.createElement("i");
     icon.className = "ti ti-folder flex-shrink-0 text-secondary";
     icon.setAttribute("aria-hidden", "true");
@@ -343,9 +294,10 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     const count = document.createElement("span");
     count.className = "small text-secondary ms-auto ps-2 flex-shrink-0";
     count.textContent = String(node.count);
-    line.append(icon, nameEl, count);
+    line.append(chevron, icon, nameEl, count);
     row.title = node.dir;
-    row.append(line);
+    foldBtn.append(line);
+    row.append(foldBtn);
     rowEls.set(key, row);
     paintGroupRow(node);
     return row;
@@ -365,12 +317,28 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     input.indeterminate = node.picked > 0 && node.picked < node.selectable;
   }
 
+  // toggleFold folds a folder's subtree away or brings it back. The row
+  // keeps the mark, and the rebuild keeps the scroll and the focus.
+  function toggleFold(dir) {
+    const set = folds();
+    if (!set.delete(dir)) set.add(dir);
+    activeKey = `g:${dir}`;
+    render();
+    if (set === folded) scheduleState();
+  }
+
+  function buildRow(spec) {
+    return spec.entry
+      ? fileRow(spec.entry, spec.nested, spec.depth)
+      : groupRow(spec.node, spec.label, spec.depth, spec.folded);
+  }
+
   // moreRow is the end of a list that is longer than the panel builds at
-  // once. Its number is counted in what the list is showing, changes
+  // once. Its number is counted in the file rows still to come, changes
   // plainly and matches under a filter, never in tree rows: the folder
   // rows are grouping and adding them in made three thousand hits read as
-  // five thousand missing. Built rows plus this rest is the count over the
-  // list, and the waiting ones are picked and committed with the rest
+  // five thousand missing. A folded folder's files are not counted, its row
+  // stands for them. The waiting ones are picked and committed with the rest
   // regardless, because a row nobody can see must not read as a change
   // nobody can commit.
   function moreRow(rest) {
@@ -395,40 +363,6 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     return row;
   }
 
-  // specs is the list the panel would render in full: one entry per row,
-  // folders first and files after them on every level in the grouped view,
-  // the sorted changes in the flat one. Building it is cheap, building its
-  // rows is not, which is what the cap is about.
-  function specs() {
-    const list = [];
-    if (!grouped()) {
-      for (const entry of index.shown) list.push({ entry, nested: false, depth: 0 });
-      return list;
-    }
-    // Grouped by folder, the way an IDE's directory tree reads: folders
-    // first and files after them, on every level. A folder becomes a row of
-    // its own as soon as it holds more than one thing; a chain of folders
-    // that only hands down to a single subfolder and has no files of its
-    // own merges into one row with the joined path as its label. A group's
-    // checkbox covers its whole subtree, see groupRow.
-    const emit = (node, depth) => {
-      for (const segment of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
-        let label = segment;
-        let child = node.dirs.get(segment);
-        while (child.files.length === 0 && child.dirs.size === 1) {
-          const [next] = child.dirs.keys();
-          label = `${label}/${next}`;
-          child = child.dirs.get(next);
-        }
-        list.push({ node: child, label, depth });
-        emit(child, depth + 1);
-      }
-      for (const entry of node.files) list.push({ entry, nested: depth > 0, depth });
-    };
-    emit(index.root, 0);
-    return list;
-  }
-
   function render() {
     const scrollTop = listEl.scrollTop;
     rowEls.clear();
@@ -437,17 +371,20 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
       order = [];
       orderIndex.clear();
       specList = [];
+      specFiles = 0;
       built = 0;
       builtFiles = 0;
       moreEl = null;
       listEl.replaceChildren(empty(query));
       return;
     }
-    const list = specs();
+    const list = rowSpecs(index, grouped(), folds());
     specList = list;
+    specFiles = 0;
     order = [];
     orderIndex.clear();
     for (let i = 0; i < list.length; i += 1) {
+      if (list[i].entry) specFiles += 1;
       const key = list[i].entry ? `f:${list[i].entry.path}` : `g:${list[i].node.dir}`;
       orderIndex.set(key, i);
       order.push(key);
@@ -459,12 +396,10 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     while (built < list.length && builtFiles < quota) {
       const spec = list[built];
       if (spec.entry) builtFiles += 1;
-      rows.push(spec.entry
-        ? fileRow(spec.entry, spec.nested, spec.depth)
-        : groupRow(spec.node, spec.label, spec.depth));
+      rows.push(buildRow(spec));
       built += 1;
     }
-    moreEl = built < list.length ? moreRow(index.shown.length - builtFiles) : null;
+    moreEl = built < list.length ? moreRow(specFiles - builtFiles) : null;
     if (moreEl) rows.push(moreEl);
     const listHadFocus = listEl.contains(document.activeElement);
     listEl.replaceChildren(...rows);
@@ -497,14 +432,12 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     while (built < list.length && (builtFiles < goal || built <= minSpec)) {
       const spec = list[built];
       if (spec.entry) builtFiles += 1;
-      batch.append(spec.entry
-        ? fileRow(spec.entry, spec.nested, spec.depth)
-        : groupRow(spec.node, spec.label, spec.depth));
+      batch.append(buildRow(spec));
       built += 1;
     }
     shown = Math.max(shown, builtFiles);
     if (built < list.length) {
-      moreEl = moreRow(index.shown.length - builtFiles);
+      moreEl = moreRow(specFiles - builtFiles);
       batch.append(moreEl);
     }
     listEl.append(batch);
@@ -600,8 +533,9 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     focusRow();
   }
 
-  // Enter opens the marked file, which only a file has: on a folder row it
-  // does nothing at all, no error, no state, the focus stands.
+  // Enter opens the marked file. On a folder row in the list it folds or
+  // unfolds the folder like a click on the row, from the field it does
+  // nothing there.
   async function openActive() {
     const fromList = listEl.contains(document.activeElement);
     // Enter in the field with nothing marked yet takes the first hit: type,
@@ -612,7 +546,10 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
       activeKey = order[at];
       mark();
     }
-    if (!activeKey.startsWith("f:")) return;
+    if (activeKey.startsWith("g:")) {
+      if (fromList) toggleFold(activeKey.slice(2));
+      return;
+    }
     const entry = index.byPath.get(activeKey.slice(2));
     if (!entry) return;
     if (!canOpen(entry)) {
@@ -623,6 +560,33 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     if (!active()) return;
     if (fromList) focusRow();
     else filterEl.focus();
+  }
+
+  // The arrows sideways are a tree's: right opens a folded folder, left folds
+  // an open one and otherwise steps out to the folder row the marked row
+  // stands under.
+  function foldActive(open) {
+    if (!activeKey) return;
+    let node;
+    if (activeKey.startsWith("g:")) {
+      const dir = activeKey.slice(2);
+      if (folds().has(dir) === open) {
+        toggleFold(dir);
+        return;
+      }
+      node = index.nodes.get(dir)?.parent;
+    } else {
+      const entry = index.byPath.get(activeKey.slice(2));
+      node = entry && index.nodes.get(dirOf(entry));
+    }
+    if (open) return;
+    for (let n = node; n && n.dir; n = n.parent) {
+      if (!orderIndex.has(`g:${n.dir}`)) continue;
+      activeKey = `g:${n.dir}`;
+      mark();
+      focusRow();
+      return;
+    }
   }
 
   // Space is a click on the marked row's checkbox, nothing else: a file row
@@ -637,6 +601,7 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
   function setQuery(next) {
     if (next === query) return;
     query = next;
+    filterFolds = new Set();
     buildIndex();
     // A changed filter is a changed list, so the walk starts at its top
     // again instead of keeping a mark somewhere in a list nobody is looking
@@ -650,7 +615,7 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
 
   function persistState() {
     if (!stateKey) return;
-    store.setJSON(stateKey, { filter: query, scroll: lastScroll });
+    store.setJSON(stateKey, { filter: query, scroll: lastScroll, folded: [...folded].slice(-MAX_SAVED_FOLDS) });
   }
 
   function scheduleState() {
@@ -673,6 +638,9 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
         query = filter;
         buildIndex();
       }
+      if (Array.isArray(saved?.folded)) {
+        for (const dir of saved.folded) if (typeof dir === "string" && dir) folded.add(dir);
+      }
       lastScroll = Math.max(0, Math.round(Number(saved && saved.scroll) || 0));
       if (lastScroll > 0) pendingScroll = lastScroll;
     }
@@ -682,6 +650,7 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
   function forgetState() {
     if (!stateKey) return;
     if (filterEl.value !== "" || query !== "") clear();
+    folded.clear();
     clearTimeout(stateTimer);
     stateTimer = 0;
     lastScroll = 0;
@@ -734,8 +703,9 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     }
   }, { signal });
   // In the list the keys are the row's: the arrows move the focus itself,
-  // so Space is the checkbox convention every browser taught and Enter is
-  // the row's diff, and Escape steps back out into the field. The walk
+  // so Space is the checkbox convention every browser taught, Enter is the
+  // row's diff or the folder's fold, left and right fold the way a tree
+  // does, and Escape steps back out into the field. The walk
   // moves the real focus so every key acts on the element that visibly
   // holds it.
   listEl.addEventListener("keydown", (e) => {
@@ -743,6 +713,9 @@ export function changeList({ listEl, filterEl, countEl, clearBtn, picks, kindOf,
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       move(e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      foldActive(e.key === "ArrowRight");
     } else if (e.key === "Enter") {
       e.preventDefault();
       void openActive();
