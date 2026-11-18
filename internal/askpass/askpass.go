@@ -174,8 +174,9 @@ func shellQuote(value string) string {
 // carries who asks (Assistant with its AssistantID), the one line it is read
 // by in its Action ("Delete project shop"), the shorter Title its dialog may
 // head with, the icon and tone its dialog wears, what the dialog shows (Details, written by the asker, so the dialog
-// knows no kind of action) and, for an action that runs a program, its
-// Command and Dir.
+// knows no kind of action), for an action that runs a program its Command
+// and Dir, the words of the box under it where they are not the dialog's own
+// (Remember) and how many minutes it waits (WaitMinutes).
 type Question struct {
 	ID          string   `json:"id"`
 	Key         string   `json:"key"`
@@ -192,6 +193,8 @@ type Question struct {
 	Icon        string   `json:"icon,omitempty"`
 	Tone        string   `json:"tone,omitempty"`
 	Details     []Detail `json:"details,omitempty"`
+	Remember    string   `json:"remember,omitempty"`
+	WaitMinutes int      `json:"waitMinutes,omitempty"`
 }
 
 // Asker is who asks an approval in one line, the name with the short id that

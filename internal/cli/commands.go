@@ -110,7 +110,7 @@ func newAssistantCommand() *cobra.Command {
 		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentResolveCommand(opts), newLineCommentRemoveCommand(opts),
 		newForgeShowCommand(opts), newForgePipelineRetryCommand(opts), newForgeChangeNewCommand(opts), newForgeCommentPublishCommand(opts),
 		newForgeThreadReplyCommand(opts), newForgeThreadResolveCommand(opts),
-		newOutputCommand(opts),
+		newOutputCommand(opts), newToolApprovalServeCommand(opts),
 		newRunTurnCommand(),
 	)
 	return cmd

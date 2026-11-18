@@ -54,7 +54,7 @@ func newComposeFixture(t *testing.T) *composeFixture {
 		t.Fatal(err)
 	}
 	fakeDockerCLI(t)
-	stateDir := t.TempDir()
+	stateDir := quietTempDir(t)
 	dockerService := docker.NewService(stateDir, func() string { return "" })
 	dockerService.SetStateForTest(docker.State{Available: true, Host: "tcp://fake:1"})
 	assistants, _, err := assistant.New(stateDir, composeCoder{}, assistant.Cockpit{StateDir: stateDir})
@@ -96,7 +96,30 @@ func newComposeFixture(t *testing.T) *composeFixture {
 	r.POST("/settings/docker", s.handleSettingsDockerSave)
 	r.POST("/docker/actions/restore", s.handleDockerActionsRestore)
 	r.POST("/assistants/:id/delete", func(c *gin.Context) { s.assistantDelete(c, c.Param("id")) })
+	r.POST(toolApprovalsPath, s.handleToolApproval)
 	return &composeFixture{s: s, project: "shop", dir: dir, stateDir: stateDir, owner: owner.ID, broker: broker, router: r, notifier: notifier}
+}
+
+// quietTempDir is a temporary directory removed once nothing writes into it
+// any more. An approval puts its question up on a goroutine of its own, so a
+// test that ends right after an ask races the news that question writes into
+// the state directory, which t.TempDir reports as a failed cleanup.
+func quietTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "dc-web-state-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for range 50 {
+			if err = os.RemoveAll(dir); err == nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Errorf("the state directory stayed busy: %v", err)
+	})
+	return dir
 }
 
 // composeCoder is the one coder of the fixture, with a runner that holds no

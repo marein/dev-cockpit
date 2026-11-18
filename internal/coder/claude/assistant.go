@@ -21,10 +21,18 @@ import (
 // conversation support only, its terminal integration is untouched.
 var assistantFlags = []string{"--print", "--output-format", "--include-partial-messages", "--verbose", "--session-id", "--resume", "--permission-mode"}
 
+// toolApprovalFlags are what a turn asks the user its tool approvals with. A
+// claude without them runs its turns as before, where such a call is denied.
+// The prompt tool flag stands in --help only inside another flag's text, which
+// is all a substring check needs.
+var toolApprovalFlags = []string{"--mcp-config", "--permission-prompt-tool", "--disallowedTools"}
+
 type runner struct {
 	sessions coder.SessionRepository
 	launcher *ollama.Client
 	launched *ollamaSessions
+	// asksTools says the CLI has every flag of toolApprovalFlags.
+	asksTools bool
 }
 
 const upgradeRequired = "Upgrade required"
@@ -54,23 +62,28 @@ func (p *Coder) AssistantRunner() assistant.Runner {
 }
 
 func (p *Coder) probeAssistant() bool {
-	if missing := missingAssistantFlags(); len(missing) > 0 {
+	help := clirun.Run("claude", "--help")
+	if help.Err != nil && help.Stdout == "" {
+		log.Printf("claude conversations disabled, the installed CLI has no a usable --help output")
+		return false
+	}
+	text := help.Stdout + help.Stderr
+	if missing := missingFlags(text, assistantFlags); len(missing) > 0 {
 		log.Printf("claude conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
 		return false
 	}
-	p.runner = &runner{sessions: p.sessions, launcher: p.launcher, launched: p.launched}
+	asksTools := len(missingFlags(text, toolApprovalFlags)) == 0
+	if !asksTools {
+		log.Printf("claude tool approvals disabled, the installed CLI has no %s", strings.Join(missingFlags(text, toolApprovalFlags), ", "))
+	}
+	p.runner = &runner{sessions: p.sessions, launcher: p.launcher, launched: p.launched, asksTools: asksTools}
 	return true
 }
 
-func missingAssistantFlags() []string {
-	help := clirun.Run("claude", "--help")
-	if help.Err != nil && help.Stdout == "" {
-		return []string{"a usable --help output"}
-	}
-	text := help.Stdout + help.Stderr
+func missingFlags(help string, flags []string) []string {
 	var missing []string
-	for _, flag := range assistantFlags {
-		if !strings.Contains(text, flag) {
+	for _, flag := range flags {
+		if !strings.Contains(help, flag) {
 			missing = append(missing, flag)
 		}
 	}
@@ -115,6 +128,11 @@ func (r *runner) TrustWorkdir(dir string) error {
 // it, so every rule is passed in the equals form, one flag per rule: that form
 // takes exactly its own value, and repeating the flag adds to the list.
 //
+// A call that would still stop on a permission dialog, a connector tool the
+// organization wants approved first among them, is not denied silently: the
+// turn hands it to the cockpit's tool approval server, which asks the user,
+// see toolApproval.
+//
 // Every flag comes first and the prompt goes last, behind endOfOptions: it is
 // claude's positional argument, so that separator is the one thing that keeps a
 // prompt somebody typed from being read as an option. A model the turn names
@@ -133,6 +151,9 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		"--permission-mode", "auto",
 	)
 	args = append(args, allowedTools(req.Workdir)...)
+	if r.asksTools {
+		args = append(args, toolApproval(req.Workdir)...)
+	}
 	args = append(args,
 		"--output-format", "stream-json",
 		"--include-partial-messages",
@@ -176,6 +197,20 @@ func allowedTools(workdir string) []string {
 		args = append(args, "--allowedTools=Bash("+spelling+":*)")
 	}
 	return args
+}
+
+// toolApproval points the turn's permission prompts at the cockpit's tool
+// approval server, configured inline beside whatever servers claude loads
+// anyway. The model never sees that tool: it is the CLI's to call, and a turn
+// calling it itself would only put questions before the user. Every flag
+// takes its value in the equals form, --mcp-config is variadic.
+func toolApproval(workdir string) []string {
+	argv := assistant.ToolApprovalServer(workdir)
+	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+		assistant.ToolApprovalServerName: map[string]any{"type": "stdio", "command": argv[0], "args": argv[1:]},
+	}})
+	tool := "mcp__" + assistant.ToolApprovalServerName + "__" + assistant.ToolApprovalToolName
+	return []string{"--mcp-config=" + string(config), "--permission-prompt-tool=" + tool, "--disallowedTools=" + tool}
 }
 
 // Parse reads claude's stream-json output. It is called again when a turn is

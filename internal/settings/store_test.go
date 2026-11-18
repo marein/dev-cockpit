@@ -2,6 +2,8 @@ package settings
 
 import (
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -80,5 +82,38 @@ func TestLookupSeesAnotherProcessesWrite(t *testing.T) {
 	first.Set("shared", "value")
 	if value, ok := second.Lookup("shared"); !ok || value != "value" {
 		t.Errorf("second store read (%q, %v), want (value, true)", value, ok)
+	}
+}
+
+// Update changes one key from what it holds, keeps every other key, and takes
+// the key out when the change says so. Changes running at once keep each
+// other: none of them reads a value another one is about to replace.
+func TestUpdateChangesOneKeyUnderOneLock(t *testing.T) {
+	store := New(filepath.Join(t.TempDir(), "settings.json"))
+	store.Set("other", "kept")
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			store.Update("list", func(value string, ok bool) (string, bool) { return value + "x", true })
+		}()
+	}
+	wg.Wait()
+	if value := store.Get("list"); value != strings.Repeat("x", 20) {
+		t.Errorf("list = %q, want 20 marks", value)
+	}
+	store.Update("list", func(string, bool) (string, bool) { return "", false })
+	if _, ok := store.Lookup("list"); ok || store.Get("other") != "kept" {
+		t.Errorf("want list gone and other kept, got %q", store.Get("other"))
+	}
+	store.Update("absent", func(value string, ok bool) (string, bool) {
+		if ok {
+			t.Error("an absent key read as there")
+		}
+		return "", false
+	})
+	if _, ok := store.Lookup("absent"); ok {
+		t.Error("taking out an absent key stored it")
 	}
 }

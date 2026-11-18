@@ -206,9 +206,10 @@ func setApprovalAsks(store *settings.Store, id string, ask bool) {
 
 func (s *Server) handleSettingsAssistantApprovals(c *gin.Context) {
 	data := render.SettingsAssistantApprovalsData{
-		Page:        s.page(c, "Settings", "settings"),
-		SettingsNav: s.settingsNav("assistant"),
-		Section:     "approvals",
+		Page:         s.page(c, "Settings", "settings"),
+		SettingsNav:  s.settingsNav("assistant"),
+		Section:      "approvals",
+		AllowedTools: allowedToolRows(s.settings),
 	}
 	for _, kind := range approvalKinds {
 		data.Approvals = append(data.Approvals, render.ApprovalRow{
@@ -223,10 +224,20 @@ func (s *Server) handleSettingsAssistantApprovals(c *gin.Context) {
 
 // handleSettingsAssistantApprovalsSave moves the switches the form carried.
 // The hidden field in front of every switch is what makes an unticked box a
-// posted value, and a kind the form did not post is left alone.
+// posted value, and a kind the form did not post is left alone. A tool's
+// Remove posts forget-tool alone, and that tool is asked about again.
 func (s *Server) handleSettingsAssistantApprovalsSave(c *gin.Context) {
 	if s.localCall(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": approvalLocalRefusal})
+		return
+	}
+	if tool, ok := c.GetPostForm("forget-tool"); ok {
+		forgetTool(s.settings, tool)
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusOK, gin.H{"message": toolRemoved})
+			return
+		}
+		s.redirectWithFlash(c, assistantApprovalsSettingsPath, toolRemoved, "")
 		return
 	}
 	for _, kind := range approvalKinds {

@@ -1004,7 +1004,7 @@ func TestAssistantShowPassesTheContainsWord(t *testing.T) {
 	for _, want := range []string{
 		`Assistant "Fix the tabs" on coder claude, 5 of 40 messages contain "release notes".`,
 		"Showing the last 2; 3 older matches are not shown",
-		"[cockpit 2026-03-04 09:31] Job done: release-task",
+		"[cockpit " + time.Date(2026, 3, 4, 9, 31, 0, 0, time.UTC).Local().Format("2006-01-02 15:04") + "] Job done: release-task",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("assistant-show output is missing %q:\n%s", want, out.String())

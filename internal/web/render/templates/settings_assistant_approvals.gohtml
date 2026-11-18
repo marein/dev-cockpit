@@ -20,6 +20,41 @@
   </div>
   <button type="submit" class="btn btn-primary">Save</button>
 </form>
+<dc-allowed-tools class="d-block">
+<div class="d-flex align-items-center gap-2 mt-5 mb-2">
+  <h3 class="card-title mb-0">Always allowed Claude tools</h3>
+  <span class="badge bg-secondary-lt" data-allowed-tools-count{{if not .AllowedTools}} hidden{{end}}>{{len .AllowedTools}}</span>
+</div>
+<div class="text-secondary small mb-3" data-allowed-tools-hint>When a Claude assistant wants a tool that needs approval, like a Slack connector, it asks you first. The tools below run without asking. OpenCode and Copilot assistants never ask.</div>
+<div class="card mb-3" data-allowed-tools>
+  <div class="list-group list-group-flush" data-allowed-tools-list{{if not .AllowedTools}} hidden{{end}}>
+    {{range .AllowedTools}}
+    <div class="list-group-item py-2 d-flex align-items-center gap-3" data-allowed-tool="{{.Tool}}">
+      <i class="ti {{if .Server}}ti-plug-connected{{else}}ti-tool{{end}} fs-2 text-secondary flex-none" aria-hidden="true"></i>
+      <div class="flex-fill min-w-0">
+        <div class="fw-medium text-break" data-allowed-tool-name>{{.Name}}</div>
+        {{if .Server}}
+        <div class="small text-secondary text-break">MCP server <span data-allowed-tool-server>{{.Server}}</span></div>
+        <div class="small text-secondary dc-mono text-break" data-allowed-tool-full>{{.Tool}}</div>
+        {{else}}
+        <div class="small text-secondary">Built in tool</div>
+        {{end}}
+      </div>
+      <form method="post" action="/settings/assistant/approvals" class="flex-none">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="forget-tool" value="{{.Tool}}">
+        <button type="submit" class="btn btn-sm btn-icon btn-outline-danger" aria-label="Remove {{.Tool}}" title="Remove"><i class="ti ti-trash" aria-hidden="true"></i></button>
+      </form>
+    </div>
+    {{end}}
+  </div>
+  <div class="empty" data-allowed-tools-empty{{if .AllowedTools}} hidden{{end}}>
+    <div class="empty-icon"><i class="ti ti-tool fs-1" aria-hidden="true"></i></div>
+    <p class="empty-title">No tools yet</p>
+    <p class="empty-subtitle text-secondary">Always allow this tool in an approval adds one.</p>
+  </div>
+</div>
+</dc-allowed-tools>
 {{template "assistant_settings_end.gohtml"}}
 {{template "app_end.gohtml" .}}
 {{end}}

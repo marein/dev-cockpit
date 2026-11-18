@@ -165,6 +165,12 @@ func docsAssistantsTopic() DocsTopic {
 				Desc:     `A compose command marked to ask first, an assistant's delete of a project, a coder or an assistant, its write of the worktree post script and its writes on a forge, a run of failed jobs again, a new change request, a publish of line comments and a reply on or resolve of a review thread, wait for your <em>Approve</em> in a dialog on every page, which names the action, the assistant asking and what it acts on: the stack and the project with the command line and its directory, the project with its path and the worktree projects it takes along, the coder and its project, the assistant, the new script, or the pipeline, change request, comments or thread with branch, forge and project, an assistant or a coder with its short id; every value shows whole, a long text or script in a box that scrolls, one beyond 64 KiB its first 64 KiB with a note that the run takes all of it, a link opens in a new tab. A delete says first what it removes. An assistant deleting several of one kind asks once for all of them, listed one per line, and the note names what went and what failed and why. Nothing runs before it. <em>Approve</em> runs it as things stand then, and anything gone meanwhile fails it; <em>Deny</em>, half an hour without an answer or a restart decline it. Either way a grey note lands in the assistant's thread, and it rings you only when nobody decided or the approved action failed. <em>Approve</em> with <em>Don't ask again for this kind</em> ticked, or its switch under Settings &rsaquo; Assistants &rsaquo; Approvals, turns that question off for every assistant.`,
 			},
 			{
+				Title:    "Tool approvals",
+				Tag:      "Approval",
+				TagClass: "bg-blue-lt",
+				Desc:     `A Claude assistant's call of a tool that needs approval, like a Slack connector, waits for you in the same dialog, which shows the tool and its input as it will run. <em>Approve</em> runs it; <em>Deny</em>, 5 minutes without an answer or a restart deny it, and the turn goes on. <em>Always allow this tool</em> lets that tool run without asking for every Claude assistant, its <em>Remove</em> under Settings &rsaquo; Assistants &rsaquo; Approvals makes it ask again.`,
+			},
+			{
 				Title:    "Steer and release where the coder is",
 				Tag:      "Ownership",
 				TagClass: "bg-blue-lt",

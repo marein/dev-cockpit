@@ -389,8 +389,10 @@ templates plus ES modules.
   conversations, each with its own directory under
   `assistant/instances/<id>/` and a shared memory. A turn runs the coder
   CLI in the assistant's workspace and acts only through the cockpit's
-  own commands over the local API (the `./cockpit` wrapper). Jobs,
-  triggers and approvals belong to one assistant.
+  own commands over the local API (the `./cockpit` wrapper). A tool call
+  its coder would ask about is an approval the turn waits for
+  (`tool-approval-serve`, `approval.Service.Await`), with no note in the
+  thread. Jobs, triggers and approvals belong to one assistant.
 - **Code Navigation and Voice**: `internal/editorintelligence` and
   `internal/voice` run fixed server profiles in Docker containers that
   the cockpit builds and owns, with idle timeouts and caches under the

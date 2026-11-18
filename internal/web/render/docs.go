@@ -542,7 +542,7 @@ func DocsTopics() []DocsTopic {
 				},
 				{
 					Title: "An approval",
-					Desc:  `A compose command an assistant waits to run, or a project, coder or assistant it waits to delete, is news, one entry per question; the dialog shows on every page. It marks itself read once you decided or the question ran out.`,
+					Desc:  `A compose command an assistant waits to run, a project, coder or assistant it waits to delete, or a tool it waits to use, is news, one entry per question; the dialog shows on every page. It marks itself read once you decided or the question ran out.`,
 				},
 			},
 		},
