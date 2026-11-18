@@ -115,7 +115,7 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 		Owner:         owner,
 		Kind:          toolApprovalKind,
 		Key:           owner + "/" + req.Call,
-		What:          "Use the tool " + name,
+		What:          "Use " + name,
 		Icon:          "tool",
 		Details:       details,
 		RememberLabel: toolRememberLabel,
@@ -186,7 +186,7 @@ func allowTool(store *settings.Store, tool string) {
 			return raw, ok
 		}
 		if len(tools) >= maxAllowedTools {
-			log.Printf("assistant: %d tools are allowed for good already, %s is asked about again", len(tools), tool)
+			log.Printf("assistant: %d tools always allowed already, %s still asks", len(tools), tool)
 			return raw, ok
 		}
 		tools = append(tools, tool)

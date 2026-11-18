@@ -10,7 +10,7 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // claude does what the real one does for a prompt with PERMIT:<tool>: it starts
 // that server, calls its tool and answers what came back. The question is the
 // app-wide approval dialog (@dc/gitprompt's second kind in the look of
-// @dc/prompt-view): the head "Use the tool <name>" with the tool icon, who
+// @dc/prompt-view): the head "Use <name>" with the tool icon, who
 // asks and "waits up to 5 min", the tool as a mono row and each key of its
 // input as a code block under the key, the box "Always allow this tool", plus
 // its news entry (`approval:<id>`). Approve lets the turn's tool run, Deny
@@ -213,7 +213,7 @@ L.runFeature("TOOL APPROVALS", async ({ page, run, mobilePage }) => {
     await waitQuestion(page);
     assert(await page.locator(`${DIALOG} .swal2-title`).isHidden(), "the dialog carries a title above its head");
     const what = (await page.textContent(`${DIALOG} [data-approval-what]`)).trim();
-    assert(what === "Use the tool slack_search_channels", `the dialog's head reads "${what}"`);
+    assert(what === "Use slack_search_channels", `the dialog's head reads "${what}"`);
     assert(await page.locator(`${DIALOG} .dc-ask-icon .ti-tool`).isVisible(), "the head does not wear the tool icon");
     // The first prompt names the assistant, so the name is the prompt's start.
     const asker = (await page.textContent(`${DIALOG} [data-approval-asker]`)).replace(/\s+/g, " ").trim();
@@ -233,7 +233,7 @@ L.runFeature("TOOL APPROVALS", async ({ page, run, mobilePage }) => {
     assert(await page.locator(`${DIALOG} [data-gitprompt-command]`).count() === 0, "a tool call shows a command block");
     const entry = (await notifications(page)).find((n) => !before.includes(n.id) && (n.targetId || "").startsWith("approval:"));
     assert(entry, "the question is no news");
-    assert(entry.title === "Assistant asks approval." && (entry.detail || entry.body || "").includes("Use the tool slack_search_channels"), `the entry reads "${entry.title}" "${entry.detail || entry.body}"`);
+    assert(entry.title === "Assistant asks approval." && (entry.detail || entry.body || "").includes("Use slack_search_channels"), `the entry reads "${entry.title}" "${entry.detail || entry.body}"`);
     return entry.targetId;
   });
 
@@ -409,7 +409,7 @@ L.runFeature("TOOL APPROVALS", async ({ page, run, mobilePage }) => {
       return entry;
     }, "the question's news");
     const said = `${entry.title} ${entry.detail || entry.body || ""}`;
-    assert(entry.title === "Assistant asks approval." && said.includes("Use the tool Bash") && !/[<>]|script|onerror/.test(said), `the news reads "${said}"`);
+    assert(entry.title === "Assistant asks approval." && said.includes("Use Bash") && !/[<>]|script|onerror/.test(said), `the news reads "${said}"`);
     await sleep(500);
     const injected = await page.evaluate(() => ({ nodes: document.querySelectorAll("[data-approval-details] script, [data-approval-details] img, .toast script, .toast img").length, ran: window.__dcInjected }));
     assert(injected.nodes === 0 && injected.ran === undefined, `the markup came alive: ${JSON.stringify(injected)}`);

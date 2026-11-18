@@ -70,7 +70,7 @@ func TestAToolCallWaitsForTheUserAndCanBeAllowedForGood(t *testing.T) {
 	done := f.askTool(context.Background(), t, slackCall("toolu_1"))
 	q := f.waitQuestion(t)
 	want := []askpass.Detail{{Label: "Tool", Value: slackTool, As: askpass.AsMono}, {Label: "query", Value: "general", As: askpass.AsCode}}
-	if q.Kind != askpass.KindApproval || q.Action != "Use the tool slack_search_channels" || q.Title != "" || q.Icon != "tool" || q.Tone != "" || !slices.Equal(q.Details, want) ||
+	if q.Kind != askpass.KindApproval || q.Action != "Use slack_search_channels" || q.Title != "" || q.Icon != "tool" || q.Tone != "" || !slices.Equal(q.Details, want) ||
 		q.Remember != "Always allow this tool" || q.WaitMinutes != 5 || q.Assistant != assistant.Name || q.AssistantID != coder.ShortID(f.owner) {
 		t.Fatalf("the question reads %+v", q)
 	}
@@ -193,7 +193,7 @@ func TestAToolInputStandsAsItWillRun(t *testing.T) {
 		{Label: "description", Value: "<script>alert(1)</script>", As: askpass.AsCode},
 		{Label: "content", Value: "<img src=x onerror=alert(2)>\nline two & three\n", As: askpass.AsCode},
 	}
-	if q.Action != "Use the tool Bash" || !slices.Equal(q.Details, want) {
+	if q.Action != "Use Bash" || !slices.Equal(q.Details, want) {
 		t.Fatalf("the question reads %q %+v", q.Action, q.Details)
 	}
 	stored := map[string]approval.Approval{}
@@ -202,7 +202,7 @@ func TestAToolInputStandsAsItWillRun(t *testing.T) {
 		t.Fatalf("%d approvals stand on disk", len(stored))
 	}
 	for _, a := range stored {
-		if a.What != "Use the tool Bash" || !slices.Equal(a.Details, want) {
+		if a.What != "Use Bash" || !slices.Equal(a.Details, want) {
 			t.Fatalf("the approval on disk reads %q %+v", a.What, a.Details)
 		}
 	}

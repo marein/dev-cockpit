@@ -24,7 +24,7 @@ import (
 func newToolApprovalServeCommand(opts *inspectOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:    assistant.ToolApprovalCommand,
-		Short:  "Serve the MCP tool a turn asks the user its tool approvals through",
+		Short:  "Ask the user about a turn's tool calls over MCP",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

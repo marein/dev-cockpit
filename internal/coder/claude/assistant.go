@@ -74,7 +74,7 @@ func (p *Coder) probeAssistant() bool {
 	}
 	asksTools := len(missingFlags(text, toolApprovalFlags)) == 0
 	if !asksTools {
-		log.Printf("claude turns cannot ask for tool approvals, the installed CLI lacks %s", strings.Join(missingFlags(text, toolApprovalFlags), ", "))
+		log.Printf("claude tool approvals disabled, the installed CLI has no %s", strings.Join(missingFlags(text, toolApprovalFlags), ", "))
 	}
 	p.runner = &runner{sessions: p.sessions, launcher: p.launcher, launched: p.launched, asksTools: asksTools}
 	return true
