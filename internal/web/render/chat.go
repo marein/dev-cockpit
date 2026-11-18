@@ -1,6 +1,10 @@
 package render
 
-import "html/template"
+import (
+	"html/template"
+
+	"github.com/marein/dev-cockpit/internal/assistant"
+)
 
 // ChatMessageView is one bubble, rendered by chat_message.gohtml. The
 // assistant's thread and a coder's copy view share it: same markup, same
@@ -58,7 +62,15 @@ type ChatMessageView struct {
 	Parts []ChatPartView
 	// Copy is what the message's copy button puts on the clipboard, the words
 	// as recorded; empty renders no button.
-	Copy string
+	Copy   string
+	Picked *ChatPickedView
+}
+
+type ChatPickedView struct {
+	assistant.Picked
+	Pictures map[string]AssistantAttachmentView
+	Copy     string
+	Via      string
 }
 
 type ChatCompactView struct {

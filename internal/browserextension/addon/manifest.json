@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "dev-cockpit",
+  "description": "Send picked elements, console entries and drawings of a page to an assistant or a coder of your dev-cockpit.",
+  "version": "1.0.0",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "Pick elements",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+C"
+      },
+      "description": "Pick elements in this tab, or stop picking"
+    }
+  },
+  "permissions": ["activeTab", "scripting", "storage", "webRequest"],
+  "optional_host_permissions": ["<all_urls>"],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

@@ -268,7 +268,7 @@ func sendText(t Target, name, text string) error {
 }
 
 func sendPrompt(t Target, name, raw string) error {
-	prompt := promptPayload(raw)
+	prompt := promptText(raw)
 	if prompt == "" {
 		return errors.New("Input text is required.")
 	}
@@ -288,4 +288,20 @@ func sendPaste(t Target, name, raw string) error {
 
 func promptPayload(raw string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(raw, "\r\n", "\n"), "\r", "\n")
+}
+
+// An escape sequence in a prompt must never end the bracketed paste and act
+// as keys.
+func promptText(raw string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r < 0x20:
+			return 0x2400 + r
+		case r == 0x7f:
+			return 0x2421
+		}
+		return r
+	}, promptPayload(raw))
 }

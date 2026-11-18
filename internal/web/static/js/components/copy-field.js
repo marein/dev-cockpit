@@ -16,6 +16,12 @@ class CopyField extends HTMLElement {
   }
 
   async copy() {
+    const source = this.querySelector("template[data-copy-source]");
+    if (source) {
+      if (await copyText(source.content.textContent)) notifySuccess("Copied.");
+      else notifyError("The clipboard is not available.");
+      return;
+    }
     const input = this.querySelector("input");
     if (!input) return;
     if (await copyText(input.value)) {

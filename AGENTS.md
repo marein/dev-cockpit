@@ -29,6 +29,16 @@ cannot show stays at that function, within the comment rule below.
   shape, the asset `dev-cockpit_<version>_<os>_<arch>.tar.gz` holding a
   file named `dev-cockpit`, and `dev-cockpit_<version>_checksums.txt` with
   `<sha256>  <asset>` lines. The `TODO(v2.0.0)` marker never applies here.
+- **The browser extension's version handshake never breaks.**
+  `GET /api/browser-extension/version`, called with the token in
+  `Authorization: Bearer`, answers the extension version the cockpit
+  offers (`extension`, dotted numbers) and the API versions it speaks
+  (`api`). The extension compares them with its own version and the API
+  version it speaks. Path, call, field names and meaning stay forever and
+  only grow, so every extension, however old, shows the right notice
+  against every cockpit, and every cockpit against every extension.
+  `TestTheBrowserExtensionHandshakeKeepsItsShape` pins it. The
+  `TODO(v2.0.0)` marker never applies here.
 - **Backup archives are a compat surface.** `internal/backup` maps
   `data/<section>/<source>` onto host paths. Never rename or reuse a
   section id or source name, only add new ones. A feature that adds
@@ -64,9 +74,10 @@ cannot show stays at that function, within the comment rule below.
 
 ## Security
 
-- The cockpit is single user, the session is the whole authorization. Every
-  POST carries a CSRF token. `@dc/http` sends the `X-CSRF-Token` header
-  from `<meta name="csrf-token">`, server forms carry a hidden `csrf_token`.
+- The cockpit is single user, the session is the whole authorization of
+  its pages. Every POST carries a CSRF token. `@dc/http` sends the
+  `X-CSRF-Token` header from `<meta name="csrf-token">`, server forms carry
+  a hidden `csrf_token`.
 - The server validates every input itself on save: length, count, shape
   and every id against what it names. It never forbids a character a
   value can legitimately hold and stores the value as it came, never
@@ -82,23 +93,54 @@ cannot show stays at that function, within the comment rule below.
   processes. It lives in a directory only the owner can enter, there are
   no tokens. `--as <id>` names the calling assistant, it identifies but
   does not authorize. Routes that change security or host settings
-  (approvals, compose actions, backup restore, sharing) refuse the local
-  socket.
-- A shared link (`internal/share`) is the one way in without a session.
-  Its routes (`/share/<token>/...`) stand outside the browser group, mirror
-  the owner's routes from one table that refuses every path no link may
-  ever reach (`neverForGuest`, of the assistants' tree only the reads of
-  `guestAssistantReads`), and bind each request to one resource of the
-  link: a project with its terminals and what the link grants there, or an
-  assistant with its conversation, the files its messages link, its jobs,
-  its triggers and the running coders of its jobs, read only. A guest's
-  POST carries a CSRF token derived from the link's token. A write stands
-  under the permission that grants it (`guestRoutes.write`), read from the
-  link on every request, refuses the local socket and changes only what was
-  made under the same link. The token is stored as its hash, compared in
-  constant time and never logged, the access log cuts it out. A link that
-  opens nothing, and a project or an assistant that is not on it, answer
-  the plain 404.
+  (approvals, compose actions, backup restore, sharing, browser extension
+  tokens) refuse the local socket.
+- A shared link (`internal/share`) is the one way into the cockpit's pages
+  without a session. Its routes (`/share/<token>/...`) stand outside the
+  browser group, mirror the owner's routes from one table that refuses
+  every path no link may ever reach (`neverForGuest`, of the assistants'
+  tree only the reads of `guestAssistantReads`), and bind each request to
+  one resource of the link: a project with its terminals and what the link
+  grants there, or an assistant with its conversation, the files its
+  messages link, its jobs, its triggers and the running coders of its
+  jobs, read only. A guest's POST carries a CSRF token derived from the
+  link's token. A write stands under the permission that grants it
+  (`guestRoutes.write`), read from the link on every request, refuses the
+  local socket and changes only what was made under the same link. The
+  token is stored as its hash, compared in constant time and never logged,
+  the access log cuts it out. A link that opens nothing, and a project or
+  an assistant that is not on it, answer the plain 404.
+- `/api/` holds the routes a token opens, never a session. No session
+  route lives under it, and a token opens nothing outside it.
+- A browser extension token (`internal/browserextension`) is the one way
+  in beside the session, the local socket and a shared link. It opens the
+  routes under `/api/browser-extension/` (version, targets, new assistant,
+  picture, send), which stand outside the browser group and take nothing
+  else: no session cookie, no CSRF token; a session route answers a token
+  as if none was sent. The token rides the `Authorization: Bearer` header
+  alone, never a URL; the access log writes no header, gin's recovery dump
+  masks this one, no web origin gets a CORS answer. It is random, shown
+  once, stored as its hash through `internal/statefile`, compared in
+  constant time, read on every request so a revoke acts on the next, and
+  kept out of the backup. Only the owner's session makes, lists and
+  revokes tokens. A message it sends carries the token's name, set by the
+  server, so a send from a lost browser shows.
+- The extension (`internal/browserextension/addon`) keeps the token in its
+  own IndexedDB and sends it from its pages alone, to the configured
+  origin alone, without redirects or cookies. Its manifest declares no
+  content script, no web accessible file and no `externally_connectable`.
+  It asks at setup for the cockpit's origin and, if the user lets it,
+  every page, else it reaches a tab through `activeTab` alone. With every
+  page the console catch (`internal/browser/console.js`) runs in each
+  page's own world from its first script on; it holds nothing of the
+  extension and the page can forge what it reports, so that lands in the
+  tab's console list, never in the tray. The picker and the drawing enter
+  a tab only while the user picks or draws there or points at a chip of
+  its tray, run in the extension's world in closed shadow roots, take only
+  trusted input, listen to the extension alone and never hold the token. A
+  picture is taken only on the user's click in the panel. The tray, the
+  console and Send stand in the browser's own panel (Safari: the button's
+  popup), page text as text.
 - Actions an assistant may only take with the user's approval go through
   `internal/approval`. An approved run resolves its target again by name,
   nothing captured at the time of the request is trusted.
@@ -148,11 +190,14 @@ cannot show stays at that function, within the comment rule below.
 This sets how the rules above are applied, so a change does not end in one
 finding per output.
 
-- **Threat model.** Untrusted: a share link guest, and everything that comes
-  from outside as content: answers of forges and other APIs, repository
-  content (branch names, commit messages, file contents, notes), webhook and
-  push targets. Trusted: the owner's session and local processes of the same
-  uid. Coders and assistants act only through the cockpit's commands, and the
+- **Threat model.** Untrusted: a share link guest, a web page in the browser
+  that runs the extension or calls the cockpit from another origin, a token
+  that leaked or was revoked, and everything that comes from outside as
+  content: answers of forges and other APIs, repository content (branch
+  names, commit messages, file contents, notes), webhook and push targets.
+  Trusted: the owner's session, local processes of the same uid, and the
+  browser extension holding a standing token, for what the token opens.
+  Coders and assistants act only through the cockpit's commands, and the
   actions listed in `internal/approval` only with the owner's approval.
 - **Identifiers are gated where they enter.** A value the cockpit uses as a
   name or key (branch, ref, project, host, id) has one validator per kind,
@@ -207,13 +252,16 @@ The layers are listed top down, a layer imports only the layers below it.
    `coder` (one subpackage per coder CLI: `claude`, `copilot`,
    `opencode`), `shell`, `terminal`, `share`, `project`, `docker`, `git`,
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
-   `linecomment` (the editor's line comments, a forge's review notes
-   among them),
-   `update`, `askpass`, `sshagent`, `activity`, `hostinfo`, `terminalstate`, `cost`
-   (one ledger for every coder CLI, one source per CLI under it, `claude`,
-   and the list prices by provider and model in `cost/price`) and `forge`
-   (the forge a project's origin lives on, one subpackage per provider:
-   `github`, `gitlab`).
+   `linecomment` (the editor's line comments, a forge's review notes among
+   them), `browser` (the picker, console catch and drawing the extension
+   runs), `browserextension` (the extension's tokens, and in `addon` the
+   extension itself, zipped per browser with `browser`,
+   `@dc/browser-context` and `@dc/filter`),
+   `update`, `askpass`, `sshagent`, `activity`, `hostinfo`, `terminalstate`,
+   `cost` (one ledger for every coder CLI, one source per CLI under it,
+   `claude`, and the list prices by provider and model in `cost/price`) and
+   `forge` (the forge a project's origin lives on, one subpackage per
+   provider: `github`, `gitlab`).
 4. **Infrastructure**: `statefile`, `settings`, `recent`, `eventbus`,
    `localapi`, `detach`, `tmux`, `proctree`, `clirun`, `filesystem`, `netguard`,
    `gitfacts`, `markdown`, `plaintext`, `keys` and `config`. It imports no service.
@@ -371,6 +419,10 @@ templates plus ES modules.
   themes and never use hardcoded palette values. `[hidden]` always wins
   over a `d-*` utility. `@dc/theme` owns the scheme, listen to `dc:theme`
   and ask `isDark()`, never read `prefers-color-scheme` directly.
+- **Browser Extension**: Its pages (`internal/browserextension/addon`) are
+  not cockpit pages: no CDN, no `@dc/*` module but `browser-context.js`
+  and `filter.js`, which the zip carries, and a small CSS of their own
+  that follows the browser's color scheme.
 - **Live Updates**: There is one SSE stream, `/events` (`internal/eventbus`,
   client `@dc/events`, `onServerEvent`). Events are small signals that
   name what moved (`terminals`, `projects`, `docker`, `git`, etc.), never

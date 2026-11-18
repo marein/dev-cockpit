@@ -19,7 +19,9 @@ const { assert, sleep, BASE } = L;
 // like coder-opencode.js, the opencode session lands in its global database.
 // Gotchas: headless renders xterm on canvas, the input line is read from the
 // .attach-selection mirror; the new name arrives within a watch tick, so the
-// checks poll for it.
+// checks poll for it. opencode's own screens show /rename (a home screen tip,
+// its command lists), so its pane is read in the input box alone, beside the
+// input posts.
 
 L.runFeature("CODER-RENAME", async ({ engine, page, run }) => {
   const tag = `crn-${engine}-${Date.now().toString(36)}`;
@@ -64,9 +66,14 @@ L.runFeature("CODER-RENAME", async ({ engine, page, run }) => {
     throw new Error(`${what} never happened`);
   };
   const renamePosts = [];
+  const inputPosts = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/rename")) renamePosts.push(request.url());
+    if (request.method() !== "POST") return;
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith("/rename")) renamePosts.push(request.url());
+    if (path.endsWith("/input")) inputPosts.push(request.url());
   });
+  const inputBox = async () => (await mirror()).split("\n").filter((line) => line.trimStart().startsWith("┃"));
   const insideOnly = async () => {
     await page.waitForSelector(".swal2-popup", { state: "visible", timeout: 5000 });
     const note = (await page.locator(".swal2-html-container").textContent()) || "";
@@ -137,8 +144,10 @@ L.runFeature("CODER-RENAME", async ({ engine, page, run }) => {
       assert(posted.length === 0, `the OpenCode rename posted: ${posted}`);
       await page.goto(url, { waitUntil: "domcontentloaded" });
       await page.waitForSelector("#terminal .xterm-screen canvas", { timeout: 15000 });
-      await sleep(1000);
-      assert(!(await mirror()).includes("/rename"), "something was typed into the OpenCode pane");
+      await waitFor(async () => (await inputBox()).length >= 2, "the OpenCode input box");
+      const typed = (await inputBox()).slice(0, -1).join("\n");
+      const sent = inputPosts.filter((u) => u.includes(ids.opencode));
+      assert(sent.length === 0 && !typed.includes("/rename"), `something was typed into the OpenCode pane: ${JSON.stringify({ sent, typed: typed.replace(/ {2,}/g, " ") })}`);
       assert((await page.locator("[data-name-label]").textContent()).trim() === before, "the OpenCode name moved");
     });
 

@@ -1,0 +1,47 @@
+{{define "settings_browser.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Browser</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <div id="settings-browser-extension" data-browser-extension-download>
+    <label class="form-label">Browser extension</label>
+    <div class="text-secondary small mb-2">Picks elements, lists the console and draws on any page in your own browser, then sends it with a note to an assistant or a running coder. Version <code data-browser-extension-version>{{.Version}}</code>. <a href="/docs#browser">How to install</a>.</div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn" href="/settings/browser/extension/chrome.zip" download data-no-pe data-browser-extension-zip="chrome"><i class="ti ti-brand-chrome me-1" aria-hidden="true"></i>For Chrome and Edge</a>
+      <a class="btn" href="/settings/browser/extension/firefox.zip" download data-no-pe data-browser-extension-zip="firefox"><i class="ti ti-brand-firefox me-1" aria-hidden="true"></i>For Firefox</a>
+      <a class="btn" href="/settings/browser/extension/safari.zip" download data-no-pe data-browser-extension-zip="safari"><i class="ti ti-brand-safari me-1" aria-hidden="true"></i>For Safari</a>
+    </div>
+  </div>
+  <dc-browser-extension-tokens class="d-block mt-4" id="settings-browser-tokens" name-max="{{.NameMax}}" data-browser-extension-tokens>
+    {{if and (eq $.FlashProject "settings-browser-tokens") $.Flash.Message}}{{template "settings_section_flash" $}}{{end}}
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <label class="form-label mb-0">Extension tokens</label>
+      <button type="button" class="btn btn-sm ms-auto" data-browser-extension-token-new><i class="ti ti-plus me-1" aria-hidden="true"></i>New token</button>
+    </div>
+    <div class="text-secondary small mb-2">With a token the extension lists the assistants and running coders, starts new assistants and sends to them.</div>
+    {{with .TokensError}}<div class="text-danger small mb-2" role="alert" data-browser-extension-tokens-error>{{.}}</div>{{end}}
+    <div class="list-group">
+      {{range .Tokens}}
+      <div class="list-group-item d-flex align-items-center gap-2" data-browser-extension-token="{{.ID}}">
+        <i class="ti ti-puzzle fs-2 text-secondary" aria-hidden="true"></i>
+        <div class="flex-fill min-w-0">
+          <div class="text-break" data-browser-extension-token-name>{{.Name}}</div>
+          <div class="text-secondary small" data-browser-extension-token-dates>Created <dc-time datetime="{{.Created}}" relative></dc-time>, {{if .Used}}used <dc-time datetime="{{.Used}}" relative></dc-time>{{else}}never used{{end}}</div>
+        </div>
+        <form method="post" action="/settings/browser" data-confirm="Revoke the token &quot;{{.Name}}&quot;?" data-confirm-warning="It stops working at once." data-confirm-kind="danger" data-confirm-button="Revoke">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <input type="hidden" name="form" value="revoke-token">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Revoke the token {{.Name}}" data-browser-extension-token-revoke>Revoke</button>
+        </form>
+      </div>
+      {{else}}
+      <div class="list-group-item text-secondary" data-browser-extension-tokens-empty>No token yet.</div>
+      {{end}}
+    </div>
+  </dc-browser-extension-tokens>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}

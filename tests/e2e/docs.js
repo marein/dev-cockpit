@@ -8,7 +8,7 @@ const { assert, BASE } = L;
 // list column and as one section each on the work surface, a list group of
 // title/description rows per section. Built from Tabler components only.
 
-const TOPICS = ["navigation", "terminals", "editor", "docker", "notifications", "push", "settings"];
+const TOPICS = ["navigation", "terminals", "editor", "docker", "browser", "notifications", "push", "settings"];
 
 const docsText = (page) => page.locator(".dc-work-body").evaluate((el) => el.textContent);
 
@@ -85,5 +85,19 @@ L.runFeature("DOCS", async ({ page, run }) => {
     const row = await page.evaluate(() => [...document.querySelectorAll(".list-group-item")].find((item) => item.textContent.includes("Questions before an action"))?.textContent || "");
     assert(row.includes("where more goes along with it, a red box spells it out"), "the questions entry does not make the red box conditional");
     assert(!row.includes("a red box spells out what happens"), "the questions entry promises a red box on every destructive question");
+  });
+
+  await run("the browser extension's install part stands as one block per browser, headed by its name, and says once in bold that it is not signed", async () => {
+    await page.goto(`${BASE}/docs#browser`, { waitUntil: "domcontentloaded" });
+    const seen = await page.evaluate(() => {
+      const topic = document.querySelector("section#browser");
+      return {
+        heads: [...topic.querySelectorAll(".list-group-item .dc-docs-item-head")].slice(0, 4).map((head) => head.textContent.trim()),
+        bold: [...topic.querySelectorAll("b")].map((b) => b.textContent.trim()),
+      };
+    });
+    assert(JSON.stringify(seen.heads) === JSON.stringify(["Chrome and Edge", "Firefox", "Safari", "Setup"]), `the blocks are ${JSON.stringify(seen.heads)}`);
+    assert(JSON.stringify(seen.bold) === JSON.stringify(["The extension is not signed, signing can be added if it is wanted."]), `the bold text is ${JSON.stringify(seen.bold)}`);
+    assert(!/Xcode|developer account|addons\.mozilla\.org/.test(await docsText(page)), "the docs still explain signing");
   });
 });

@@ -1,0 +1,41 @@
+{{/* Page text renders as text: no link, no picture but the message's own
+     files, no style from it. */}}
+{{define "chat_picked"}}{{$id := .ID}}{{with .Card}}{{$card := .}}
+<div class="border rounded mt-2 bg-surface-secondary" data-picked>
+  <button type="button" class="bg-transparent border-0 w-100 d-flex align-items-start gap-2 px-2 py-2 text-start text-body" data-bs-toggle="collapse" data-bs-target="#picked-{{$id}}" aria-expanded="false" aria-controls="picked-{{$id}}" data-picked-fold>
+    <i class="ti ti-chevron-down flex-shrink-0 text-secondary mt-1" aria-hidden="true"></i>
+    <span class="d-block flex-fill min-w-0">
+      <span class="d-flex align-items-baseline gap-1 min-w-0"><span class="fw-medium flex-shrink-0"><i class="ti ti-puzzle me-1" aria-hidden="true"></i>From the extension</span><span class="text-secondary small text-truncate" title="Sent with the token {{.Via}}" data-picked-via>via {{.Via}}</span></span>
+      <span class="d-block text-secondary small text-truncate"{{if le .Pages 1}} title="{{.Address}}"{{end}} data-picked-page>{{if gt .Pages 1}}{{.Pages}} pages{{else}}{{with .Title}}{{.}} · {{end}}<span data-picked-address>{{.Address}}</span>{{with .Viewport}} · {{.}}{{end}}{{end}}</span>
+      <span class="d-flex flex-wrap gap-1 mt-1" data-picked-chips>
+        {{range .Chips}}<span class="d-inline-flex align-items-center gap-1 border rounded-pill px-2 small min-w-0" data-picked-chip="{{.Kind}}"><i class="ti {{if eq .Kind "error"}}ti-bug text-red{{else if eq .Kind "warn"}}ti-alert-triangle text-yellow{{else if eq .Kind "image"}}ti-brush{{else}}ti-pointer{{end}} flex-shrink-0" aria-hidden="true"></i><span class="text-truncate">{{.Text}}</span></span>{{end}}
+      </span>
+    </span>
+  </button>
+  <div class="collapse" id="picked-{{$id}}" data-picked-body>
+    <div class="border-top px-2 pt-2 pb-2">
+      {{range .Sections}}
+      <div class="mb-3" data-picked-section="{{.Kind}}">
+        <div class="fw-medium text-break mb-1">{{.Title}}</div>
+        {{if .Rows}}<dl class="row g-0 small mb-1">{{range .Rows}}
+          <dt class="col-3 col-sm-2 fw-normal text-secondary pe-2">{{.Term}}</dt>
+          <dd class="col-9 col-sm-10 text-break mb-1">{{if .Code}}<code>{{.Value}}</code>{{else}}{{.Value}}{{end}}</dd>{{end}}
+        </dl>{{end}}
+        {{range .Lines}}
+        <div class="d-flex gap-2 small py-1" data-picked-line="{{.Kind}}"><i class="ti {{if eq .Kind "error"}}ti-circle-x text-red{{else if eq .Kind "warn"}}ti-alert-triangle text-yellow{{else if eq .Kind "nav"}}ti-arrow-right text-secondary{{else}}ti-brush text-secondary{{end}} flex-shrink-0 mt-1" aria-hidden="true"></i><span class="min-w-0 text-break"><code class="dc-picked-text">{{.Text}}</code>{{with .Meta}} <span class="text-secondary">{{.}}</span>{{end}}</span></div>
+        {{end}}
+        {{range .Blocks}}
+        <div class="text-secondary small fw-medium mt-2">{{.Label}}</div>
+        <pre class="dc-picked-text small mt-1 mb-2"><code>{{.Text}}</code></pre>
+        {{end}}
+        {{with .Picture}}{{with index $card.Pictures .}}{{if .URL}}<img src="{{.URL}}" alt="{{.Name}}" class="dc-assistant-media d-block border rounded mt-2" loading="lazy"{{if .Width}} width="{{.Width}}" height="{{.Height}}" style="--dc-media-ratio:{{.Width}}/{{.Height}}"{{end}} data-picked-picture>{{end}}{{end}}{{end}}
+      </div>
+      {{end}}
+      <dc-copy-field class="d-block">
+        <button type="button" class="btn btn-sm" data-copy><i class="ti ti-copy me-1" aria-hidden="true"></i>Copy as Markdown</button>
+        <template data-copy-source>{{.Copy}}</template>
+      </dc-copy-field>
+    </div>
+  </div>
+</div>
+{{end}}{{end}}

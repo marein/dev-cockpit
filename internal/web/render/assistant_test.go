@@ -3,6 +3,8 @@ package render
 import (
 	"strings"
 	"testing"
+
+	"github.com/marein/dev-cockpit/internal/assistant"
 )
 
 // renderAssistantCtx executes the real assistant list column.
@@ -410,5 +412,59 @@ func TestAJobsIconIsItsCodersOwn(t *testing.T) {
 		if got := iconAfter(t, card, `data-assistant-project-job="t1"`); got != icon {
 			t.Errorf("%s: the card's icon %s is not the Coders tab's %s", c.name, got, icon)
 		}
+	}
+}
+
+func TestAPickedMessageCardRendersItsTextsAsText(t *testing.T) {
+	hostile := `<img src=//evil.test/x onerror=alert(1)><a href="https://evil.test">x</a>`
+	out := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m1", User: true, Author: "You", HTML: "Look here",
+		Picked: &ChatPickedView{
+			Picked: assistant.Picked{
+				Title:    hostile,
+				Address:  "evil.test/" + hostile,
+				Viewport: "390×844",
+				Chips:    []assistant.PickedChip{{Kind: "element", Text: hostile}, {Kind: "error", Text: "2 errors"}},
+				Sections: []assistant.PickedSection{
+					{Kind: "element", Title: "1. " + hostile, Rows: []assistant.PickedRow{{Term: "Selector", Value: hostile, Code: true}}, Blocks: []assistant.PickedBlock{{Label: "HTML", Text: hostile}}},
+					{Kind: "log", Title: "2. Console error", Lines: []assistant.PickedLine{{Kind: "error", Text: hostile, Meta: "21:39:58"}}},
+					{Kind: "image", Title: "3. Drawing", Picture: "drawing.png"},
+					{Kind: "image", Title: "4. Drawing", Picture: "//evil.test/y.png"},
+				},
+			},
+			Pictures: map[string]AssistantAttachmentView{"drawing.png": {Name: "drawing.png", URL: "/assistants/a/media/user-upload/drawing.png", Media: "image", Width: 640, Height: 400}},
+			Copy:     "Look here\n\n## Picked in the Browser " + hostile,
+		},
+	})
+	if strings.Contains(out, "<img src=//evil.test") || strings.Contains(out, `href="https://evil.test"`) || strings.Contains(out, `src="//evil.test`) {
+		t.Fatalf("the card renders the page's markup: %s", out)
+	}
+	if n := strings.Count(out, "<img "); n != 1 || !strings.Contains(out, `<img src="/assistants/a/media/user-upload/drawing.png"`) {
+		t.Fatalf("the card shows %d pictures: %s", n, out)
+	}
+	if strings.Contains(out, "<a ") {
+		t.Fatalf("the card links somewhere: %s", out)
+	}
+	for _, want := range []string{
+		`data-picked-fold`, `aria-expanded="false"`, `class="collapse" id="picked-m1"`,
+		`&lt;img src=//evil.test/x onerror=alert(1)&gt;`, `390×844`, `data-picked-chip="error"`,
+		`<template data-copy-source>Look here`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("want %s in %s", want, out)
+		}
+	}
+}
+
+func TestABrowserExtensionCardNamesItsToken(t *testing.T) {
+	out := renderAssistantMessage(t, AssistantMessageView{
+		ID: "m1", User: true, Author: "You", HTML: "Look here",
+		Picked: &ChatPickedView{
+			Picked: assistant.Picked{Title: "Shop", Address: "localhost:8095/cart", Chips: []assistant.PickedChip{{Kind: "element", Text: "button"}}, Sections: []assistant.PickedSection{{Kind: "element", Title: "1. button"}}},
+			Via:    `Laptop <img src=//evil.test/x>`,
+		},
+	})
+	if !strings.Contains(out, "From the extension") || !strings.Contains(out, `data-picked-via>via Laptop &lt;img src=//evil.test/x&gt;</span>`) || !strings.Contains(out, "ti-puzzle") {
+		t.Fatalf("the extension's card reads %s", out)
 	}
 }

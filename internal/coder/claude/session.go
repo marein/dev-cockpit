@@ -106,7 +106,7 @@ func (r *sessionRepository) ListFiles(sessionID string) ([]filesystem.File, erro
 func (r *sessionRepository) SaveFile(sessionID, rawName string, src io.Reader) (filesystem.File, error) {
 	dir, err := r.filesDir(sessionID)
 	if err != nil {
-		return filesystem.File{}, fmt.Errorf("Session files will be available after the first message.")
+		return filesystem.File{}, coder.ErrNoSessionFiles
 	}
 	file, err := filesystem.SaveFile(dir, rawName, src)
 	if err != nil {

@@ -122,3 +122,9 @@ function takeRenderMark(root) {
   rest.data = rest.data.slice(RENDER_MARK.length);
   return rest;
 }
+
+export function keepUnfolded(old, fresh) {
+  if (!old?.querySelector('[data-picked-fold][aria-expanded="true"]')) return;
+  fresh.querySelector("[data-picked-body]")?.classList.add("show");
+  fresh.querySelector("[data-picked-fold]")?.setAttribute("aria-expanded", "true");
+}

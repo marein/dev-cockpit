@@ -493,6 +493,7 @@ func DocsTopics() []DocsTopic {
 				},
 			},
 		},
+		docsBrowserTopic(),
 		{
 			Key:   "notifications",
 			Title: "Notifications",

@@ -1,0 +1,34 @@
+.setup {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.setup h1 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.setup h2 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.field {
+  margin: 0 0 1rem;
+}
+
+.field .small {
+  margin-top: 0.25rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.check input {
+  width: auto;
+  margin: 0;
+}

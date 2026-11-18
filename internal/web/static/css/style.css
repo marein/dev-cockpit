@@ -1118,6 +1118,12 @@ coder-file-upload {
   max-width: 100%;
   overflow-x: auto;
 }
+/* A long selector or snippet never widens the thread. */
+.dc-picked-text { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.dc-picked-text { max-height: 20rem; overflow: auto; }
+/* Unfold at once, a growth spread over frames hands its first frame back to
+   the end. */
+[data-picked-body].collapsing { transition: none; }
 [data-assistant-text] table {
   display: block;
   max-width: 100%;
@@ -1248,8 +1254,8 @@ textarea[data-line-thread-reply-text], textarea[data-line-comment-text], [data-a
 .dc-folded { display: none !important; }
 [data-assistant-job-fold] .ti, [data-assistant-trigger-fold] .ti { transition: transform 0.15s ease; }
 [data-assistant-job-fold][aria-expanded="true"] .ti, [data-assistant-trigger-fold][aria-expanded="true"] .ti { transform: rotate(180deg); }
-[data-assistant-note-fold] > .ti, [data-assistant-held-more] > .ti, [data-assistant-held-note] > .ti, [data-entry-toggle] > .ti { transition: transform 0.15s ease; }
-[data-assistant-note-fold][aria-expanded="true"] > .ti, [data-assistant-held-more][aria-expanded="true"] > .ti, [data-assistant-held-note][aria-expanded="true"] > .ti, [data-entry-toggle][aria-expanded="true"] > .ti { transform: rotate(180deg); }
+[data-assistant-note-fold] > .ti, [data-assistant-held-more] > .ti, [data-assistant-held-note] > .ti, [data-entry-toggle] > .ti, [data-picked-fold] > .ti { transition: transform 0.15s ease; }
+[data-assistant-note-fold][aria-expanded="true"] > .ti, [data-assistant-held-more][aria-expanded="true"] > .ti, [data-assistant-held-note][aria-expanded="true"] > .ti, [data-entry-toggle][aria-expanded="true"] > .ti, [data-picked-fold][aria-expanded="true"] > .ti { transform: rotate(180deg); }
 [data-assistant-held-note], [data-assistant-held-more] {
   --tblr-btn-hover-color: var(--tblr-btn-color);
   --tblr-btn-hover-bg: var(--tblr-btn-bg);

@@ -1,11 +1,14 @@
 package claude
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/marein/dev-cockpit/internal/coder"
 )
 
 func writeTranscript(t *testing.T, root, project, id string, lines ...string) string {
@@ -184,5 +187,13 @@ func TestListDropsVanishedCWD(t *testing.T) {
 	}
 	if names := sessionNames(t, r); len(names) != 0 {
 		t.Fatalf("names = %v, want none", names)
+	}
+}
+
+func TestSaveFileBeforeTheFirstMessageSaysWhy(t *testing.T) {
+	r := &sessionRepository{stateRoot: t.TempDir()}
+	_, err := r.SaveFile("11111111-2222-3333-4444-555555555555", "drawing.png", strings.NewReader("png"))
+	if !errors.Is(err, coder.ErrNoSessionFiles) {
+		t.Fatalf("a session without a transcript answered %v", err)
 	}
 }

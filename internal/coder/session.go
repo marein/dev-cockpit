@@ -1,6 +1,7 @@
 package coder
 
 import (
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,10 @@ type Session struct {
 	CWD       string
 	UpdatedAt time.Time
 }
+
+// ErrNoSessionFiles marks a session that keeps files only once it has a
+// transcript, which its first message writes.
+var ErrNoSessionFiles = errors.New("Session files will be available after the first message.")
 
 // SessionRepository manages coder-specific persisted sessions and files.
 type SessionRepository interface {

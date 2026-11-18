@@ -98,7 +98,11 @@ func (s *Server) messageView(instanceID string, m assistant.Message, retryable, 
 	if view.Note != nil || view.Compact != nil {
 		view.Author = "Cockpit"
 	}
-	if view.User {
+	if view.User && m.Picked != nil {
+		view.Author = "You"
+		view.HTML = plainTextHTML(m.Picked.Note)
+		view.Picked = pickedView(m, &view)
+	} else if view.User {
 		view.Author = "You"
 		view.HTML = plainTextHTML(m.Content)
 	} else if choices, ok := m.Choices(); ok {
@@ -114,6 +118,22 @@ func (s *Server) messageView(instanceID string, m assistant.Message, retryable, 
 		view.AudioURL = "/assistants/" + instanceID + "/messages/" + m.ID + "/audio"
 	}
 	return view
+}
+
+// The drawings' pictures show in the card, not again under the message.
+func pickedView(m assistant.Message, view *render.AssistantMessageView) *render.ChatPickedView {
+	card := &render.ChatPickedView{Picked: *m.Picked, Pictures: map[string]render.AssistantAttachmentView{}, Copy: m.Content, Via: m.Via}
+	pictures := m.Picked.Pictures()
+	kept := view.Attachments[:0]
+	for _, a := range view.Attachments {
+		if a.Media == "image" && a.URL != "" && slices.Contains(pictures, a.Name) {
+			card.Pictures[a.Name] = a
+			continue
+		}
+		kept = append(kept, a)
+	}
+	view.Attachments = kept
+	return card
 }
 
 // attachmentPath is where a message's file sits: in the upload folder of the

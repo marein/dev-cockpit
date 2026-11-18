@@ -1,4 +1,4 @@
-import { ChatStream, appendLive, showTool, writeLive } from "@dc/chat-stream";
+import { ChatStream, appendLive, keepUnfolded, showTool, writeLive } from "@dc/chat-stream";
 import { ChatFollow } from "@dc/chat-follow";
 import { resolveHostlessLinks } from "@dc/docker";
 import { markWorking } from "@dc/dom";
@@ -44,7 +44,7 @@ class ShareChat extends HTMLElement {
   onFrame(frame) {
     switch (frame.kind) {
       case "start":
-        this.live = { id: frame.messageId, html: frame.html || "", text: frame.text || "" };
+        this.live = { id: frame.messageId, html: frame.html || "", text: frame.text || "", tool: null };
         if (this.headIcon) markWorking(this.headIcon, Number(frame.since || this.headIcon.dataset.workingSince) || 0);
         this.paint(true);
         break;
@@ -63,7 +63,9 @@ class ShareChat extends HTMLElement {
         break;
       }
       case "tool":
-        showTool(this.thread.querySelector(`[data-message-id="${CSS.escape(frame.messageId)}"]`), frame.text);
+        if (this.live?.id !== frame.messageId) break;
+        this.live.tool = frame.text || "";
+        if (!showTool(this.liveBubble(), this.live.tool)) void this.pull();
         break;
       case "end":
         this.live = null;
@@ -77,16 +79,23 @@ class ShareChat extends HTMLElement {
     }
   }
 
-  liveBody() {
-    return this.thread.querySelector(`[data-message-id="${CSS.escape(this.live.id)}"] [data-assistant-text]`);
+  liveBubble() {
+    return this.thread.querySelector(`[data-message-id="${CSS.escape(this.live.id)}"]`);
   }
 
+  liveBody() {
+    return this.liveBubble()?.querySelector("[data-assistant-text]");
+  }
+
+  // The tool frame comes once, often before the pull that brings its bubble,
+  // so the live answer holds the tool's name like its text until it lands.
   paint(pullMissing) {
     if (!this.live) return;
     const body = this.liveBody();
     if (body) {
       writeLive(body, this.live.html, this.live.text);
       resolveHostlessLinks(body);
+      if (this.live.tool !== null) showTool(this.liveBubble(), this.live.tool);
     } else if (pullMissing) {
       void this.pull();
     }
@@ -127,10 +136,13 @@ class ShareChat extends HTMLElement {
     const standing = new Map([...log.children].map((node) => [node.dataset.messageId, node]));
     const nodes = [...fresh.children].map((node) => {
       const old = standing.get(node.dataset.messageId);
-      return old && settled(old) === settled(node) ? old : document.adoptNode(node);
+      if (old && settled(old) === settled(node)) return old;
+      keepUnfolded(old, node);
+      return document.adoptNode(node);
     });
     log.replaceChildren(...nodes);
     resolveHostlessLinks(log);
+    window.app?.loadElements?.(log);
     this.thread.querySelector("[data-share-empty]")?.toggleAttribute("hidden", nodes.length > 0);
     const head = doc.querySelector("[data-share-head-icon]");
     if (this.headIcon && head) markWorking(this.headIcon, head.classList.contains("working") ? Number(head.dataset.workingSince) || 0 : 0);

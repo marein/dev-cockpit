@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dev-cockpit setup</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="options.css">
+  <script type="module" src="options.js"></script>
+</head>
+<body>
+  <main class="setup">
+    <header class="row">
+      <img src="icons/48.png" width="32" height="32" alt="">
+      <h1 class="grow">dev-cockpit extension</h1>
+      <span class="muted" data-version></span>
+    </header>
+    <p class="muted">Sends what you pick, the console and drawings of a page to an assistant or a running coder. It needs the cockpit's address and a token from Settings › Browser in the cockpit.</p>
+    <form method="dialog" novalidate data-setup-form>
+      <div class="field">
+        <label for="address">Cockpit address</label>
+        <input id="address" name="address" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://cockpit.example.com:3000" required data-address>
+      </div>
+      <div class="field">
+        <label for="token">Token</label>
+        <input id="token" name="token" type="text" class="mono" autocomplete="off" autocapitalize="off" spellcheck="false" data-token>
+        <div class="muted small" data-token-hint>Paste the token the cockpit showed you once.</div>
+      </div>
+      <div class="field">
+        <label class="check"><input type="checkbox" checked data-every-page> Access to every page</label>
+        <div class="muted small">Picking and drawing work in every tab without a click on the extension's button, and picking goes on through reloads and other pages. A small script in every page catches its console from its first script on. The picker and the drawing enter a page only while you use them. The browser's settings of the extension withdraw the access.</div>
+        <div class="muted small" data-every-safari hidden>Safari also asks per website, through the extension's button: allow it on every website for picking and the console everywhere. Safari › Settings › Websites changes it later.</div>
+      </div>
+      <div class="row">
+        <button type="submit" class="primary" data-save>Save and check</button>
+        <button type="button" data-forget hidden>Forget</button>
+      </div>
+      <p class="status" role="status" data-result></p>
+    </form>
+    <section class="about">
+      <h2>Use</h2>
+      <p data-use="panel">Click the extension's button in the toolbar<span data-key-text></span> to pick elements in the tab. The panel beside the page holds the tray, the drawing and the console.</p>
+      <p data-use="popup" hidden>Click the extension's button in the toolbar<span data-key-text></span> to open the panel over the page with the tab's tray, drawing and console. Pick there picks elements. A click into the page closes the panel, the tray stays.</p>
+      <p>The browser asks once for access to the cockpit's address and, when ticked, every page. The extension calls no other address.</p>
+    </section>
+  </main>
+</body>
+</html>

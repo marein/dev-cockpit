@@ -20,6 +20,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/backup"
+	"github.com/marein/dev-cockpit/internal/browserextension"
 	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/cost"
@@ -182,6 +183,8 @@ type Server struct {
 	approvals *approval.Service
 	// shares are the links a guest opens one project through.
 	shares *share.Store
+	// browserExtensionTokens open the routes under /api/, never a session.
+	browserExtensionTokens *browserextension.Store
 	// forge answers which forge a project's origin lives on, and
 	// forgeHeads where the branches its poller keeps were last pushed.
 	forge      *forge.Service
@@ -262,6 +265,7 @@ func NewServer(cfg config.Config, coders []*coder.Manager, shells *shell.Shells,
 			newLoginLimiter(cfg.LoginRateMaxAttempts, cfg.LoginRateWindow, cfg.LoginRateBlock, time.Now),
 			cfg.LoginRateBlock, cfg.LoginRateMaxAttempts,
 		),
+		browserExtensionTokens: browserextension.NewStore(cfg.StateDir),
 	}
 	handler, err := s.newHandler()
 	if err != nil {

@@ -119,6 +119,7 @@
   <div class="text-break{{if not .User}} markdown{{end}}" data-assistant-text>{{.HTML}}</div>
   {{end}}
   {{end}}{{end}}
+  {{with .Picked}}{{template "chat_picked" (dict "ID" $.Message.ID "Card" .)}}{{end}}
   {{if .Attachments}}
   <div class="d-flex flex-column gap-2 mt-2" data-assistant-files>
     {{range .Attachments}}

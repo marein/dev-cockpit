@@ -87,7 +87,7 @@ func (s *Service) send(id string, composer bool, compose func(Instance) (Message
 	c.Messages = append(c.Messages, user)
 	named := c.awaitsName()
 	if named {
-		c.Title = deriveTitle(user.Content, user.Attachments)
+		c.Title = deriveTitle(user)
 	}
 	ended := Ends(c.Messages, len(c.Messages)-1)
 	r, err := s.startLocked(&c, co, withNotes(since, withAttachments(user.Content, user.Attachments)), append(ended, user.ID)...)
@@ -336,7 +336,7 @@ func (s *Service) flushReady(instanceID string) {
 	// one does: the turn it goes out in is the first anybody sees.
 	named := c.awaitsName()
 	if named {
-		c.Title = deriveTitle(queued[0].Content, queued[0].Attachments)
+		c.Title = deriveTitle(queued[0])
 	}
 	// The waiting entries go out with the new turn; every open page pulls them
 	// fresh so their bubbles stop saying so. The one line about what the
@@ -543,9 +543,21 @@ func (c Instance) awaitsName() bool {
 }
 
 // deriveTitle names an assistant after its first prompt, or after the file it
-// carried when the prompt was only an attachment.
-func deriveTitle(prompt string, attachments []Attachment) string {
-	title := truncateRunes(oneLine(prompt), MaxTitleRunes)
+// carried when the prompt was only an attachment. A picked message's prompt
+// is mostly the page's context, so its note's first line names it, else the
+// page's title, else its address.
+func deriveTitle(m Message) string {
+	text, attachments := m.Content, m.Attachments
+	if m.Picked != nil {
+		text, _, _ = strings.Cut(m.Picked.Note, "\n")
+		for _, next := range []string{m.Picked.Title, m.Picked.Address} {
+			if strings.TrimSpace(text) == "" {
+				text = next
+			}
+		}
+		attachments = nil
+	}
+	title := truncateRunes(oneLine(text), MaxTitleRunes)
 	if title == "" && len(attachments) > 0 {
 		title = truncateRunes(oneLine(attachments[0].Name), MaxTitleRunes)
 	}

@@ -53,6 +53,11 @@ export class ChatFollow {
     window.addEventListener("pointercancel", () => this.onPointerUp(), options);
     document.addEventListener("keydown", (event) => this.onKeydown(event), options);
     scroller.addEventListener("scroll", () => this.onScroll(), options);
+    // An unfolding card keeps its head under the tap, following the end
+    // would push it away.
+    scroller.addEventListener("show.bs.collapse", (event) => {
+      if (event.target instanceof Element && event.target.matches("[data-picked-body]")) this.release(true);
+    }, options);
     button?.addEventListener("click", (event) => {
       event.preventDefault();
       this.pin();

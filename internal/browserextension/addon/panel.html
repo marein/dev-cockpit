@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dev-cockpit</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="panel.css">
+  <script type="module" src="panel.js"></script>
+</head>
+<body>
+  <header class="row panel-head">
+    <img src="icons/32.png" width="20" height="20" alt="">
+    <strong class="grow">dev-cockpit</strong>
+    <span class="muted small" data-version></span>
+    <button type="button" data-setup title="The cockpit's address and the token">Setup</button>
+  </header>
+  <main class="panel-body">
+    <div class="alert" role="alert" data-alert hidden></div>
+    <p class="muted small hint" data-notice hidden></p>
+    <div class="row">
+      <button type="button" aria-pressed="false" data-pick title="Pick elements in this tab, Escape or the extension's button stops">Pick</button>
+      <button type="button" data-parent disabled title="Pick the element around this one">Parent</button>
+      <button type="button" data-child disabled title="Pick the element inside this one">Child</button>
+      <button type="button" aria-pressed="false" data-draw title="Draw on the page, Escape stops">Draw</button>
+    </div>
+    <p class="muted small hint" data-hint></p>
+    <p class="muted small hint" data-access hidden>Without access to every page the extension picks and draws only after a click on its button in the tab, and lists no console. Setup gives the access.</p>
+    <section class="draw" aria-label="Drawing" data-draw-bar hidden>
+      <div class="row" role="group" aria-label="Tool">
+        <button type="button" aria-pressed="false" data-tool="pen">Pen</button>
+        <button type="button" aria-pressed="false" data-tool="arrow">Arrow</button>
+        <button type="button" aria-pressed="false" data-tool="rect">Box</button>
+        <button type="button" aria-pressed="false" data-tool="text">Text</button>
+      </div>
+      <div class="row swatches" role="group" aria-label="Color">
+        <button type="button" class="swatch" aria-pressed="false" aria-label="Red" title="Red" data-color="red"><span></span></button>
+        <button type="button" class="swatch" aria-pressed="false" aria-label="Orange" title="Orange" data-color="orange"><span></span></button>
+        <button type="button" class="swatch" aria-pressed="false" aria-label="Green" title="Green" data-color="green"><span></span></button>
+        <button type="button" class="swatch" aria-pressed="false" aria-label="Blue" title="Blue" data-color="blue"><span></span></button>
+        <button type="button" class="swatch" aria-pressed="false" aria-label="Purple" title="Purple" data-color="purple"><span></span></button>
+      </div>
+      <div class="row">
+        <button type="button" disabled title="Undo, Ctrl+Z in the page" data-undo>Undo</button>
+        <button type="button" disabled title="Redo, Ctrl+Shift+Z in the page" data-redo>Redo</button>
+        <button type="button" disabled title="Remove the drawing" data-draw-clear>Clear</button>
+      </div>
+      <div class="row">
+        <button type="button" title="The visible part of the page with the drawing as a PNG" data-picture-save>Download PNG</button>
+        <button type="button" title="The visible part of the page with the drawing into the tray" data-picture-add>Add to the tray</button>
+      </div>
+    </section>
+    <div class="chips" role="list" data-chips hidden></div>
+    <figure class="preview" data-preview hidden>
+      <figcaption class="row">
+        <span class="muted small grow" data-preview-text></span>
+        <button type="button" data-preview-save>Download</button>
+        <button type="button" data-preview-close>Close</button>
+      </figcaption>
+    </figure>
+    <label for="note">Note</label>
+    <textarea id="note" rows="4" maxlength="4000" placeholder="What should change? Ctrl+Enter sends." data-note></textarea>
+    <div class="row actions">
+      <button type="button" class="primary" aria-haspopup="menu" aria-expanded="false" data-send>Send</button>
+      <button type="button" data-copy title="Copy the note and the tray as Markdown">Copy</button>
+      <button type="button" data-clear title="Empty the tray of this tab">Clear</button>
+    </div>
+    <div class="menu" data-menu hidden>
+      <div class="menu-filter">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M21 21l-6-6"/></svg>
+        <input type="text" placeholder="Filter" aria-label="Filter the menu" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-menu-filter>
+        <button type="button" class="menu-filter-clear" aria-label="Clear the filter" title="Clear the filter" data-menu-filter-clear><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg></button>
+      </div>
+      <div class="menu-rows" role="menu" aria-label="Send to" data-menu-rows></div>
+    </div>
+    <p class="status" role="status" data-status></p>
+    <section class="console" aria-labelledby="console-head" data-console>
+      <div class="row">
+        <strong id="console-head">Console</strong>
+        <span class="muted small grow" data-console-summary></span>
+        <button type="button" disabled title="The newest 60 entries into the tray" data-console-all>Add all</button>
+      </div>
+      <p class="muted small hint" data-console-empty></p>
+      <div class="log-list" data-console-list></div>
+    </section>
+  </main>
+</body>
+</html>

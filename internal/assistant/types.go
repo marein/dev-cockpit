@@ -200,10 +200,14 @@ type Message struct {
 	// shows the picks again after a reload. Content is the text the assistant
 	// reads.
 	Answers *Answers `json:"answers,omitempty"`
+	Picked  *Picked  `json:"picked,omitempty"`
 	// Compact is set on the line a compaction of the coder's session writes,
 	// the cockpit's role and no note: what came before it stays for the next
 	// chat prompt, see notesSince.
 	Compact *Compaction `json:"compact,omitempty"`
+	// Via is set by the server, so a send from a lost browser shows its
+	// token's name.
+	Via string `json:"via,omitempty"`
 	// Wake is the shape a check's report was stored in before notes existed.
 	// It is read once, on load, and turned into a Note (see Store.load);
 	// nothing writes it any more. TODO(v2.0.0): drop the key and the type.

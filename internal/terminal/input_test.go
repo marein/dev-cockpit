@@ -7,14 +7,15 @@ import (
 )
 
 type recordingTarget struct {
-	raw []byte
-	key string
+	raw   []byte
+	key   string
+	paste string
 }
 
 func (r *recordingTarget) SendRaw(name string, data []byte) error { r.raw = data; return nil }
 func (r *recordingTarget) SendKey(name, key string) error         { r.key = key; return nil }
 func (r *recordingTarget) SendLiteral(name, text string) error    { return nil }
-func (r *recordingTarget) PasteLiteral(name, text string) error   { return nil }
+func (r *recordingTarget) PasteLiteral(name, text string) error   { r.paste = text; return nil }
 
 type foregroundTarget struct {
 	recordingTarget
@@ -143,5 +144,19 @@ func TestInputWritesAndSubmits(t *testing.T) {
 	}
 	if !InputSubmits([]Input{{Text: "fix"}, {Raw: "\r"}}) || InputSubmits([]Input{{Raw: "3"}}) {
 		t.Error("only Enter submits")
+	}
+}
+
+// Line breaks and tabs stay, and a paste of the clipboard keeps its bytes.
+func TestAPromptCarriesControlCharactersAsText(t *testing.T) {
+	target := &recordingTarget{}
+	if err := SendInput(target, DefaultControlMapper(), "s", Input{Prompt: "a\x1b[201~b\x03\r\nc\td\x7f"}); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	if want := "a\u241b[201~b\u2403\nc\td\u2421"; target.paste != want || target.key != "Enter" {
+		t.Fatalf("pasted %q then %q, want %q then Enter", target.paste, target.key, want)
+	}
+	if err := SendInput(target, DefaultControlMapper(), "s", Input{Paste: "a\x1bb"}); err != nil || target.paste != "a\x1bb" {
+		t.Fatalf("a paste of the clipboard changed to %q, %v", target.paste, err)
 	}
 }

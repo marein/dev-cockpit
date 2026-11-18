@@ -22,6 +22,10 @@ var coderPagePaths = []string{
 	"/models", "/models/add", "/models/delete",
 }
 
+// apiPathPrefix holds the routes a token opens and no session does, and a
+// token opens nothing outside it.
+const apiPathPrefix = "/api"
+
 // registerRoutes attaches all HTTP routes to the Gin router.
 func (s *Server) registerRoutes(r *gin.Engine) {
 	r.NoRoute(s.handleNotFound)
@@ -43,6 +47,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	r.Any("/resumable/*rest", legacyRedirect)
 
 	s.registerShareRoutes(r)
+	s.registerBrowserExtensionRoutes(r)
 
 	browser := r.Group("/", s.csrfMiddleware())
 	browser.GET("/login", s.handleLoginGet)
@@ -282,6 +287,9 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	auth.POST("/settings/assistant/models", s.handleSettingsAssistantModelsSave)
 	auth.GET("/settings/general", s.handleSettingsGeneral)
 	auth.POST("/settings/general", s.handleSettingsGeneralSave)
+	auth.GET(settingsBrowserPath, s.handleSettingsBrowser)
+	auth.POST(settingsBrowserPath, s.handleSettingsBrowserSave)
+	auth.GET(settingsBrowserExtensionDownloadPath, s.handleBrowserExtensionDownload)
 	auth.GET("/settings/costs", s.handleSettingsCosts)
 	auth.POST("/settings/costs", s.handleSettingsCostsSave)
 	auth.GET(sshAgentPath, s.handleSettingsSSHAgent)

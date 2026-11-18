@@ -6,7 +6,7 @@ import { DoubleTap } from "@dc/doubletap";
 import { watchFileDrop } from "@dc/filedrop";
 import { resolveHostlessLinks } from "@dc/docker";
 import { SwipeNav, isCurrentPage, swipeBlockedAt, watchSwipe } from "@dc/swipe";
-import { ChatStream, appendLive, showTool as showToolLine, writeLive } from "@dc/chat-stream";
+import { ChatStream, appendLive, keepUnfolded, showTool as showToolLine, writeLive } from "@dc/chat-stream";
 import { ChatFollow } from "@dc/chat-follow";
 import { compactConversation, compactReady, setContext, syncCompact } from "@dc/assistant-ring";
 
@@ -1074,6 +1074,7 @@ class Assistant extends HTMLElement {
       }
       const node = this.bubble(messageId);
       if (node) {
+        keepUnfolded(node, fresh);
         node.replaceWith(fresh);
         // A swap that shrinks the thread above the end moves the page up, by
         // the clamp or the scroll anchoring, in the task that lays it out.
@@ -1309,6 +1310,7 @@ class Assistant extends HTMLElement {
       resolveHostlessLinks(fresh);
       if (this.pendingMessageId !== messageId) return;
       const node = this.bubble(messageId);
+      keepUnfolded(node, fresh);
       if (node) node.replaceWith(fresh);
       else this.log.append(fresh);
       window.app?.loadElements?.(fresh);

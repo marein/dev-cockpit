@@ -282,9 +282,10 @@ func (s *Server) guestGranted(p share.Permission) gin.HandlerFunc {
 // neverTrees are the owner's addresses no link reaches, each with everything
 // below it, whatever the link grants: the settings, the assistants, a
 // project's deletion, tags, forge and new worktrees, the tab order and
-// groups, the terminal theme, the notifications and the questions git asks.
+// groups, the terminal theme, the notifications, the questions git asks and
+// the token routes under /api.
 var neverTrees = []string{
-	"/settings", "/assistants", "/assistant", "/mention", "/projects/new", "/projects/delete",
+	"/settings", "/assistants", "/assistant", "/mention", "/projects/new", "/projects/delete", apiPathPrefix,
 	"/splits", "/terminal-theme", "/notifications", "/git", "/push", "/update", "/plugins", "/plugin-regions",
 	"/docker/actions", "/docker/link-rules", "/coders/new", "/coders/delete",
 	"/terminal-tabs/order", "/terminal-tabs/group", "/terminal-tabs/ungroup",
