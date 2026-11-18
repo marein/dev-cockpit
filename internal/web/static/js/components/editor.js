@@ -26,7 +26,7 @@ import { filterStructure, structureRow, structureRows } from "@dc/editor-structu
 import { GroupLayout, cornerLeaf, dropZone, encodeLayout, leaf, leafIds, mapLeaves, readGroups, removeAt, screenOrder, splitAt } from "@dc/editor-groups";
 import { COLOR_FUNCTIONS, LANGS, STREAM_LANGS, STREAM_NAMES, fileIcon, hasPreview, isArchive, isAudio, isImage, isMarkdown, isSvg, isVideo, langUrl, modeUrl } from "@dc/editor-filetypes";
 import { baseName, byteLength, commitDate, countLines, externalHint, formatSize, isoDate, parentDir, shortName } from "@dc/editor-format";
-import { showPreview, wirePreviewLinks } from "@dc/editor-preview";
+import { showPreview, wirePreview } from "@dc/editor-preview";
 import { LAYOUT_SAVE_MS, savedEntries, savedLines, savedScroll, savedView } from "@dc/editor-saved";
 import { authorHead, commentRow, placeNodes, deleteCommentQuestion, deleteLineComments, deleteReplyQuestion, findUniqueQuoteLine, mayDelete, noteStart, publishComments, publishQuestion, publishWords, resolved, sortComments, writeLineComment } from "@dc/editor-comments";
 import { changeBars } from "@dc/editor-change-bars";
@@ -784,7 +784,7 @@ async function init(root) {
       g.compareSaveBtns[side].addEventListener("click", () => void saveCompareSide(side, g), opts);
     }
     g.el.querySelector("[data-editor-browse]").addEventListener("click", openDrawer, opts);
-    wirePreviewLinks(g.previewPaneEl, () => activeTabOf(g)?.path || "", followPreviewLink, opts);
+    wirePreview(g.previewPaneEl, () => activeTabOf(g)?.path || "", followPreviewLink, opts);
     wireTabDrag(g);
     wireSurfaceSwipe(g);
   }

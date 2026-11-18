@@ -1,0 +1,40 @@
+{{/* The live regions. A dc-plugin-region pulls itself again from
+     /plugin-regions/<region> when the plugins event names a new version.
+     Each child carries data-region-key, the plugin load it belongs to, so a
+     pull keeps what stayed. A compiled plugin always on is keyed by its id
+     and never moves. */}}
+{{define "plugin_region_slot"}}<dc-plugin-region data-region="slot-{{.Slot}}" data-version="{{pluginVersion}}">{{range pluginMounts .Slot}}{{.HTML}}{{end}}</dc-plugin-region>{{end}}
+
+{{define "plugin_region_rail"}}<dc-plugin-region data-region="rail" data-tab="{{.Tab}}" data-version="{{pluginVersion}}">
+  {{- range pluginPages}}
+  <a class="dc-rail-btn{{if eq $.Tab .Tab}} active{{end}}" href="{{.URL}}" title="{{.Title}}" aria-label="{{.Title}}" data-region-key="{{.Key}}"><i class="ti {{.Icon}} icon" aria-hidden="true"></i><span class="dc-trunc mw-100">{{.Label}}</span></a>
+  {{- end}}
+</dc-plugin-region>{{end}}
+
+{{define "plugin_region_cockpit"}}<dc-plugin-region data-region="cockpit" data-tab="{{.Tab}}" data-version="{{pluginVersion}}">
+  {{- with pluginPages}}
+  <section data-cockpit-section="pages" data-region-key="{{range .}}{{.Key}} {{end}}">
+    <nav class="list-group list-group-flush dc-rows" aria-label="Plugin pages">
+      {{- range .}}
+      <a href="{{.URL}}" class="list-group-item list-group-item-action{{if eq $.Tab .Tab}} active{{end}}" data-dc-focus="work">
+        <i class="ti {{.Icon}}" aria-hidden="true"></i><span class="flex-fill dc-trunc">{{.Label}}</span>
+      </a>
+      {{- end}}
+    </nav>
+  </section>
+  {{- end}}
+</dc-plugin-region>{{end}}
+
+{{/* A live plugin's page body, or a notice while it does not answer. */}}
+{{define "plugin_region_page"}}<dc-plugin-region data-region="page-{{.Plugin}}" data-version="{{pluginVersion}}">
+  {{- with pluginPageMount .Plugin}}{{.HTML}}{{else}}
+  {{- $state := "gone"}}{{with .Status}}{{$state = .State}}{{end}}
+  <div class="dc-narrow" data-region-key="notice-{{$state}}" data-plugin-notice>
+    {{- with .Status}}
+    {{- if eq .State "starting"}}{{template "notice.gohtml" (dict "Level" "info" "Message" (print .Name " is starting."))}}
+    {{- else if eq .State "crashed"}}{{template "notice.gohtml" (dict "Level" "danger" "Message" (print .Name " is not running. " .Reason))}}
+    {{- else}}{{template "notice.gohtml" (dict "Level" "warning" "Message" (print .Name " is not running."))}}{{end}}
+    {{- else}}{{template "notice.gohtml" (dict "Level" "warning" "Message" "The plugin is not installed anymore.")}}{{end}}
+  </div>
+  {{- end}}
+</dc-plugin-region>{{end}}

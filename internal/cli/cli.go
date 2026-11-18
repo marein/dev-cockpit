@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 	"syscall"
 	"time"
 
@@ -31,7 +29,6 @@ import (
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/cost"
 	"github.com/marein/dev-cockpit/internal/cost/price"
-	"github.com/marein/dev-cockpit/internal/detach"
 	"github.com/marein/dev-cockpit/internal/docker"
 	"github.com/marein/dev-cockpit/internal/editorintelligence"
 	"github.com/marein/dev-cockpit/internal/eventbus"
@@ -53,11 +50,9 @@ import (
 	"github.com/marein/dev-cockpit/internal/update"
 	"github.com/marein/dev-cockpit/internal/voice"
 	"github.com/marein/dev-cockpit/internal/web"
-	"github.com/marein/dev-cockpit/internal/web/render"
 	"github.com/marein/dev-cockpit/plugin"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/term"
 )
 
 // uploadGrace is how long an upload may wait for the message that carries it
@@ -201,159 +196,6 @@ func versionTemplate(repo, format, feed string) string {
 		repo, format, feed)
 }
 
-// newAskpassCommand is what SSH_ASKPASS and GIT_ASKPASS of a user-triggered
-// git action point at, through the tiny stub the server writes next to its
-// socket (ssh executes the askpass program without arguments of ours). It is
-// nobody's interface: it reads the one-time token and the socket from its
-// environment, reports the prompt line to the serve process, blocks until
-// the person in the browser answered, and prints that answer. Without the
-// bridge environment it fails like /bin/false, which is the fate of every
-// call that is not allowed to ask.
-func newAskpassCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:                "askpass [prompt]",
-		Short:              "Answer one ssh or git prompt through the running cockpit",
-		Hidden:             true,
-		DisableFlagParsing: true,
-		SilenceErrors:      true,
-		SilenceUsage:       true,
-		// A denial exits silently: whatever this command wrote would end up
-		// in git's error message as if git had said it, and the server
-		// already words the refusal.
-		Run: func(cmd *cobra.Command, args []string) {
-			socket := os.Getenv("DC_ASKPASS_SOCKET")
-			token := os.Getenv("DC_ASKPASS_TOKEN")
-			if socket == "" || token == "" {
-				os.Exit(1)
-			}
-			prompt := ""
-			if len(args) > 0 {
-				prompt = strings.TrimSpace(strings.Join(args, " "))
-			}
-			answer, err := askpass.Ask(socket, token, prompt)
-			if err != nil {
-				os.Exit(1)
-			}
-			fmt.Println(answer)
-		},
-	}
-}
-
-// newAssistantCommand groups everything the cockpit's own assistants run. They
-// share the two directory flags, because every one of them has to reach the same
-// cockpit: a machine can run several, and a command that read the default state
-// directory would answer about the wrong one. The whole group is hidden from
-// the top level help, it is not a user interface, typed explicitly it works.
-func newAssistantCommand() *cobra.Command {
-	opts := &inspectOptions{stateDir: config.DefaultStateDir, projectsDir: config.DefaultProjectsDir}
-	cmd := &cobra.Command{
-		Use:    "assistant",
-		Short:  "Commands the cockpit's AI assistant acts with",
-		Hidden: true,
-		Long: "The AI assistant built into dev-cockpit runs these commands to look at and steer " +
-			"the running instance. They are not a user interface: names, flags and output are " +
-			"tuned for the assistant and may change with any release. Use the web UI instead.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return errors.New("command required")
-		},
-	}
-	cmd.PersistentFlags().StringVar(&opts.stateDir, "state-dir", opts.stateDir, "directory for dev-cockpit state files")
-	cmd.PersistentFlags().StringVar(&opts.projectsDir, "projects-dir", opts.projectsDir, "projects root directory")
-	cmd.PersistentFlags().StringVar(&opts.assistantID, "as", "", "the assistant running this command, its id")
-	// --as names which assistant is calling, and it sits on the group next to
-	// the two directories because it is the same kind of thing: which cockpit,
-	// and who inside it. Every assistant has instructions of its own now, and
-	// they spell the flag into every command they list, the way they spell the
-	// directories; a flag written into the instructions is not one a model has
-	// to remember, it is copied with the command. Several assistants share this
-	// group, so the id has to travel with the call and not with the process:
-	// what a turn inherits is inherited by every shell below it, while the flag
-	// stands on exactly the call it belongs to, readable in every log line. It
-	// is --as and not --assistant, because job-list already carries --assistant
-	// with another meaning, whose jobs to list. What needs it refuses without
-	// it, see assistantCaller in the web package.
-	// The names put the object first and the verb last, so the flat help list
-	// groups by object on its own: every coder- command stands together, then
-	// the assistants, the jobs, the projects.
-	cmd.AddCommand(
-		newStatusCommand(opts),
-		newCoderCommand(opts), newActivityCommand(opts),
-		newSendCommand(opts), newKeysCommand(opts),
-		newSteerCommand(opts), newReleaseCommand(opts),
-		newResumeCoderCommand(opts), newStopCoderCommand(opts), newDeleteCoderCommand(opts),
-		newAssistantsCommand(opts), newAssistantCommandShow(opts), newNewAssistantCommand(opts), newSendPromptAssistantCommand(opts), newDeleteAssistantCommand(opts),
-		newJobsCommand(opts), newJobCommand(opts),
-		newNotificationsCommand(opts),
-		newTriggerNewCommand(opts), newTriggerListCommand(opts), newTriggerEditCommand(opts), newTriggerDeleteCommand(opts),
-		newTimezoneGetCommand(opts), newTimezoneSetCommand(opts),
-		newCostShowCommand(opts),
-		newModelListCommand(opts), newAssistantModelsGetCommand(opts), newAssistantModelsSetCommand(opts),
-		newProjectCommand(opts), newDeleteProjectCommand(opts), newProjectWorktreeNewCommand(opts), newProjectWorktreeListCommand(opts),
-		newProjectWorktreeScriptShowCommand(opts), newProjectWorktreeScriptSetCommand(opts),
-		newComposeListCommand(opts), newComposeStartCommand(opts), newComposeShowCommand(opts), newComposeStopCommand(opts),
-		newLineCommentListCommand(opts), newLineCommentAddCommand(opts), newLineCommentResolveCommand(opts), newLineCommentRemoveCommand(opts),
-		newForgeShowCommand(opts), newForgePipelineRetryCommand(opts), newForgeChangeNewCommand(opts), newForgeCommentPublishCommand(opts),
-		newForgeThreadReplyCommand(opts), newForgeThreadResolveCommand(opts),
-		newOutputCommand(opts), newToolApprovalServeCommand(opts),
-		newRunTurnCommand(),
-	)
-	return cmd
-}
-
-// newRunTurnCommand is where a turn's hold process used to live, and it has to
-// stay reachable although this group may rename what it likes. That exemption
-// rests on the caller being the freshly generated instruction text, always in
-// step with the binary it names. This one command has a different caller: a
-// server of the previous version that is still in memory while this binary is
-// already on disk, and every turn it starts execs this binary with the argv it
-// knows. That happens in the window between a self update swapping the binary
-// and re-execing, after a re-exec that did not come off, and on any host where
-// the binary is replaced before the service is restarted. Without this line the
-// turn dies with an unknown command, and what the user reads is the coder's
-// stderr, which points at the coder and not at us.
-//
-// It is the same process as `run-detached` behind an older name: the argv of an
-// old caller carries no separator, and internal/detach reads that shape as the
-// program alone. TODO(v2.0.0): drop it once no binary that starts turns this
-// way can still be in memory.
-func newRunTurnCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:                "run-turn <provider> [args...]",
-		Short:              "Run one turn's provider and hold its lock (older name of run-detached)",
-		Hidden:             true,
-		DisableFlagParsing: true,
-		Run: func(cmd *cobra.Command, args []string) {
-			os.Exit(detach.Hold(args))
-		},
-	}
-}
-
-// newRunDetachedCommand is the process a detached run runs under, not a
-// command for anyone to type: the server starts
-// `dev-cockpit run-detached [--result <file>] [--timeout <d>] -- <program> ...`
-// for every run that has to outlive it, an assistant turn and a compose run
-// alike, and that process holds the run's lock while the program runs. It is
-// nobody's interface, so it is hidden, and it stays callable because every such
-// run hangs on it.
-//
-// Flag parsing is off: everything after the separator is the program's argv,
-// including whatever a prompt carries, and none of it is ours to interpret.
-// internal/detach reads the few arguments that are ours itself, which is also
-// what lets the test binary stand in for this command.
-func newRunDetachedCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:                detach.HoldArgs[0] + " [--result <file>] [--timeout <duration>] -- <program> [args...]",
-		Short:              "Run one detached program and hold its lock",
-		Hidden:             true,
-		DisableFlagParsing: true,
-		Run: func(cmd *cobra.Command, args []string) {
-			os.Exit(detach.Hold(args))
-		},
-	}
-}
-
 // defaultOptions are the serve defaults. The inspection commands start from
 // the same set and override only the two directories they read, so a config
 // value never differs between the server and its own status output.
@@ -403,20 +245,6 @@ func newServeCommand() *cobra.Command {
 	return cmd
 }
 
-func newHashPasswordCommand() *cobra.Command {
-	cost := bcrypt.DefaultCost
-	cmd := &cobra.Command{
-		Use:   "hash-password",
-		Short: "Hash a password with bcrypt",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHashPassword(os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr(), cost)
-		},
-	}
-	cmd.Flags().IntVar(&cost, "cost", cost, "bcrypt cost")
-	return cmd
-}
-
 func runServe(opts serveOptions) error {
 	cfg, err := config.Load(opts.Options)
 	if err != nil {
@@ -434,15 +262,34 @@ func runServe(opts serveOptions) error {
 	// which announces on it; the server below is built on the same bus. A
 	// plugin that cannot configure aborts the start with its id on the error.
 	bus := eventbus.New()
-	serves, err := pluginhost.ConfigureServe(servePlugins, cfg.ProjectsRoot, cfg.StateDir, web.NewProjectCreator(projectRepo, bus), web.NewProjectChanged(bus))
+	createProject, projectChanged := web.NewProjectCreator(projectRepo, bus), web.NewProjectChanged(bus)
+	serves, err := pluginhost.ConfigureServe(servePlugins, cfg.ProjectsRoot, cfg.StateDir, createProject, projectChanged)
 	if err != nil {
 		return err
 	}
+	// Sweep ends what a previous process left running, no plugin runs twice.
+	// Scan builds every enabled external plugin's Serve without starting it
+	// and configures the switched on optional ones. From here on every
+	// surface reads the plugins through the set.
+	pluginHost := pluginhost.NewHost(pluginhost.HostConfig{
+		StateDir:       cfg.StateDir,
+		ProjectsDir:    cfg.ProjectsRoot,
+		Compiled:       serves,
+		Wiring:         servePlugins,
+		CreateProject:  createProject,
+		ProjectChanged: projectChanged,
+		CSRFField:      web.CSRFField,
+		PluginAPI:      devPluginAPI(),
+		CheckEvery:     devPluginCheckEvery(),
+	})
+	pluginHost.Sweep()
+	pluginHost.Scan()
+	plugins := pluginhost.NewSet(serves, pluginHost)
 	// The settings store stands before the coders: every coder's model
 	// repository keeps its added names in it, and the model defaults the
 	// managers and the assistant read on every start come out of it.
 	settingsStore := settings.New(filepath.Join(cfg.StateDir, "settings.json"))
-	pluginhost.ApplySettings(serves, settingsStore)
+	pluginhost.ApplySettings(plugins.Serves(), settingsStore)
 	catalog := ollamaCatalogURL
 	if version == "dev" {
 		if override := os.Getenv(ollamaCatalogURLEnv); override != "" {
@@ -486,7 +333,7 @@ func runServe(opts serveOptions) error {
 		ProjectsDir: cfg.ProjectsRoot,
 		Version:     resolveVersion(),
 		RepoURL:     repoURL,
-	}, serves)
+	}, plugins.Serves())
 	if err != nil {
 		return fmt.Errorf("failed to initialize the assistant: %w", err)
 	}
@@ -642,6 +489,7 @@ func runServe(opts serveOptions) error {
 			os.Exit(1)
 		}()
 		removeManagedSkills(selected, instance)
+		pluginHost.Close()
 		intel.Close()
 		voiceService.Close()
 		os.Exit(0)
@@ -650,10 +498,18 @@ func runServe(opts serveOptions) error {
 	// version stays the raw build var here on purpose: only a build without an
 	// injected release version is a dev build, and only a dev build may have
 	// its release feed moved by the environment.
-	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, tracker, settingsStore, launcher, pushService, restorer, backups, dockerService, intel, voiceService, serves, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
+	srv, err := web.NewServer(cfg, coders, shells, conversations, assistantService, watcher, projectRepo, notifier, tracker, settingsStore, launcher, pushService, restorer, backups, dockerService, intel, voiceService, plugins, bus, resolveVersion(), updateFeedURL, updateFeedFormat, version == "dev")
 	if err != nil {
 		return fmt.Errorf("failed to initialize web server: %w", err)
 	}
+	// A plugin that loads while the cockpit runs gets its settings and memory
+	// at load, as the start applied them above.
+	pluginHooks := srv.PluginHooks()
+	pluginHooks.Loaded = func(p *pluginhost.Serve) {
+		pluginhost.ApplySettings([]*pluginhost.Serve{p}, settingsStore)
+		applyPluginMemory(cfg.StateDir, assistantService, []*pluginhost.Serve{p})
+	}
+	pluginHost.Start(pluginHooks)
 	// A finished answer is normal cockpit news, and a change refreshes the open
 	// lists. Neither hook may run while the service holds its lock, both are
 	// called after it is released.
@@ -676,6 +532,10 @@ func runServe(opts serveOptions) error {
 	// question or wants a permission, every other name is a turn that ended. The
 	// headline names the coder the way a notification does.
 	events := conversations.Events()
+	// The same events reach the plugins that subscribed to their source.
+	events.OnPublish(func(ev assistant.CockpitEvent) {
+		plugins.Publish(plugin.Event{Source: ev.Source, Kind: ev.Kind, Target: ev.Target, Time: ev.Time, Headline: ev.Headline, Body: ev.Body, Project: ev.Project})
+	})
 	events.SetCoderNamer(func(terminal string) (string, string) {
 		info := resolveTarget(terminal)
 		return info.Name, info.Project
@@ -832,206 +692,4 @@ func runServe(opts serveOptions) error {
 	}
 
 	return serveHTTP(&http.Server{Handler: srv.Handler()}, listener, cfg.TLSCertFile, cfg.TLSKeyFile)
-}
-
-// removeManagedSkills takes the cockpit's own skills off the disk on the way
-// out, the counterpart of the start's EnsureManagedSkills. The skill points a
-// coder at the local API socket of a running instance, so one left behind
-// after the stop would send every coder down a path that cannot answer. It
-// runs before the language servers are closed, because it is a few file
-// removals while that close is bounded but not instant, and a second signal
-// may end the process during it.
-//
-// It is deliberately not the only thing keeping the disk clean: a SIGKILL and
-// the self-update's exec both walk past this, and both are covered by the
-// start rewriting the skill anyway.
-//
-// The state directory says which skill is this instance's. A coder home is
-// shared by every cockpit on the machine, and a throwaway stopping next to the
-// real instance may not take the running instance's skill with it.
-func removeManagedSkills(coders []coder.Coder, instance coder.CockpitInstance) {
-	for _, c := range coders {
-		if err := coder.RemoveManagedSkills(c.SkillRepository(), instance); err != nil {
-			log.Printf("coder %s: the cockpit git skill could not be removed: %v", c.ID(), err)
-		}
-	}
-}
-
-// cockpitServesFrom answers whether some cockpit is still listening on the
-// local API socket of a state directory. It is what keeps a second instance
-// from taking the managed skill away from the one that is running, and it is a
-// single connect with no retry on purpose: the answer is wanted at start, and
-// localapi.Dial waits out a budget for a cockpit that may still be coming up,
-// which is the opposite question.
-func cockpitServesFrom(stateDir string) bool {
-	conn, err := net.DialTimeout("unix", localapi.SocketPath(stateDir), time.Second)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
-}
-
-// selectProviders resolves which coders this instance serves: every registered
-// coder whose CLI is installed.
-func selectProviders(registry *coder.Registry) ([]coder.Coder, error) {
-	if missing := clirun.MissingTools(tmux.RequiredTools); len(missing) > 0 {
-		return nil, fmt.Errorf("missing CLI tools: %v", missing)
-	}
-	var selected []coder.Coder
-	for _, p := range registry.All() {
-		if missing := clirun.MissingTools(p.RequiredTools()); len(missing) > 0 {
-			log.Printf("coder %s disabled, missing CLI tools: %v", p.ID(), missing)
-			continue
-		}
-		selected = append(selected, p)
-	}
-	if len(selected) == 0 {
-		return nil, fmt.Errorf("no coder CLI found (looked for: %s)", strings.Join(registry.IDs(), ", "))
-	}
-	return selected, nil
-}
-
-// assistantCoders adapts the installed coders to what the assistant needs,
-// keeping internal/assistant free of any dependency on internal/coder.
-// assistantCoders hands the assistant the coders that can answer a turn, each
-// with the reading of its stored model defaults, the purpose fallback behind
-// an assistant's own pick, read fresh on every turn out of the settings store.
-type assistantCoders struct {
-	coders []coder.Coder
-	store  *settings.Store
-}
-
-func (c assistantCoders) Available() []assistant.CoderInfo {
-	out := make([]assistant.CoderInfo, 0, len(c.coders))
-	for _, co := range c.coders {
-		runner := coder.AssistantRunnerFor(co)
-		if runner == nil {
-			continue
-		}
-		id := co.ID()
-		out = append(out, assistant.CoderInfo{ID: id, Label: render.CoderLabel(id), Runner: runner, Defaults: func() assistant.ModelDefaults {
-			return assistant.ModelDefaultsFor(c.store, id)
-		}})
-	}
-	return out
-}
-
-// isStrayCheckSession decides what the startup sweep deletes. The name alone is
-// user text, somebody may call a coder "cockpit check: whatever", and deleting
-// it would take that coder's transcript with it. A check always runs in the
-// workspace of the assistant whose job it is, so both have to hold.
-func isStrayCheckSession(session coder.Session, ownWorkdir func(string) bool) bool {
-	return assistant.IsCheckSession(session.Name) && ownWorkdir(session.CWD)
-}
-
-// coderSessions lets a check ask the coder of a job what that session last did.
-// Which coder answers comes from the job, and how it answers is the coder's
-// business: one that keeps a transcript reads it, one that keeps none falls
-// back to the terminal picture. A job whose coder id is not among the installed
-// ones (an old job, a coder that was removed) is offered to each of them, and
-// the one that owns the session answers.
-type coderSessions struct{ coders []*coder.Manager }
-
-// toAssistantActivity maps the coder reading onto the assistant's own twin
-// type, field by field on purpose: the two packages stay uncoupled, and the
-// coder side may grow fields (the tool call phase) the job checks never read.
-func toAssistantActivity(a coder.Activity) assistant.Activity {
-	return assistant.Activity{Text: a.Text, Finished: a.Finished, Screen: a.Screen}
-}
-
-func (c coderSessions) Activity(coderID, terminal string) (assistant.Activity, error) {
-	if coderID != "" {
-		for _, m := range c.coders {
-			if m.ID() == coderID {
-				activity, err := m.Activity(terminal, 0, coder.ActivityBudget)
-				return toAssistantActivity(activity), err
-			}
-		}
-	}
-	// No coder of that name is installed here, or the job never carried one:
-	// ask them all, the one that owns the session answers. A job outlives the
-	// set of installed coders, and answering "nobody answers" would give the
-	// check a verdict about an error message instead of about the session.
-	var lastErr error
-	for _, m := range c.coders {
-		activity, err := m.Activity(terminal, 0, coder.ActivityBudget)
-		if err == nil {
-			return toAssistantActivity(activity), nil
-		}
-		lastErr = err
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("No coder answers for %q.", terminal)
-	}
-	return assistant.Activity{}, lastErr
-}
-
-// Running reports whether the job's terminal is still a live session. A job
-// asks before it spends anything, because a terminal that is gone is not a
-// question for a coder, it is a fact the cockpit already holds.
-func (c coderSessions) Running(coderID, terminal string) bool {
-	for _, m := range c.coders {
-		if coderID != "" && m.ID() != coderID {
-			continue
-		}
-		if _, err := m.ResolveRunning(terminal); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func runHashPassword(stdin *os.File, stdout, stderr io.Writer, cost int) error {
-	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
-		return fmt.Errorf("bcrypt cost must be between %d and %d", bcrypt.MinCost, bcrypt.MaxCost)
-	}
-	fd := int(stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return errors.New("hash-password requires an interactive terminal")
-	}
-
-	fmt.Fprint(stderr, "Password: ")
-	password, err := term.ReadPassword(fd)
-	fmt.Fprintln(stderr)
-	if err != nil {
-		return fmt.Errorf("read password: %w", err)
-	}
-
-	if len(password) == 0 {
-		return errors.New("password must not be empty")
-	}
-
-	hash, err := bcrypt.GenerateFromPassword(password, cost)
-	if err != nil {
-		return fmt.Errorf("hash password: %w", err)
-	}
-	fmt.Fprintln(stdout, string(hash))
-	return nil
-}
-
-// sweepCheckSessions drops the provider sessions of checks that a killed
-// process left behind. A check reserves its session for as long as it runs, and
-// the reservation lives in that process, so a session it never got to drop
-// becomes a resumable ghost coder at the next start. Nothing running answers to
-// these names, a live check is always reserved and never listed. ownWorkdir
-// says whether a directory is an assistant's workspace, the place every check
-// runs in.
-func sweepCheckSessions(coders []*coder.Manager, ownWorkdir func(string) bool) {
-	for _, m := range coders {
-		// A check that outlived the restart reserved its session again a moment
-		// ago, and a cached snapshot from before that would offer it up here.
-		m.Invalidate()
-		for _, session := range m.Snapshot().Resumable {
-			if !isStrayCheckSession(session, ownWorkdir) {
-				continue
-			}
-			if _, err := m.DeleteResumable(session.SessionID); err != nil {
-				log.Printf("assistant: a check session of %s stayed behind: %v", m.ID(), err)
-				continue
-			}
-			log.Printf("assistant: dropped the check session %s a restart left behind", session.SessionID)
-		}
-		m.Invalidate()
-	}
 }

@@ -63,6 +63,9 @@ type Reactor struct {
 	// in, for the headline of a coder's event. Wired in main, where the coder
 	// managers are; nil names the terminal by its id.
 	coderName func(terminal string) (name, project string)
+	// published sees every event before any trigger does. Wired in main
+	// before the first event, nil for none.
+	published func(CockpitEvent)
 
 	// mu serializes a fire with the tick: both read a trigger, decide and
 	// write it back, and two of them at once could spend two reactions for one
@@ -389,6 +392,10 @@ func (r *Reactor) Coder(terminal, kind string) {
 	})
 }
 
+// OnPublish installs fn to see every published event, matched by a trigger
+// or not. fn must not block.
+func (r *Reactor) OnPublish(fn func(CockpitEvent)) { r.published = fn }
+
 // Publish matches one event against the triggers it may fire and takes it into
 // each of them: at once when the trigger has no batch window, into the open
 // window otherwise, where the tick fires it when the window closes. A job
@@ -398,6 +405,9 @@ func (r *Reactor) Publish(ev CockpitEvent) {
 		ev.Time = r.now().UTC()
 	}
 	ev.Body = truncateRunes(strings.TrimSpace(ev.Body), maxEventBodyRunes)
+	if r.published != nil {
+		r.published(ev)
+	}
 	owners := r.triggers.Owners()
 	if ev.Owner != "" {
 		owners = []string{ev.Owner}

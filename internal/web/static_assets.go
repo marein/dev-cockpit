@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/marein/dev-cockpit/internal/pluginhost"
 )
@@ -17,6 +19,15 @@ type staticAssetManifest struct {
 	byURL    map[string]staticAsset
 	assetURL map[string]string
 	digest   string
+	// live holds the asset sets of the loaded live plugins, keyed by id. They
+	// stay out of byURL, assetURL and the digest: enabling a plugin is no
+	// deploy and must not reload open tabs.
+	live *liveAssets
+}
+
+type liveAssets struct {
+	mu   sync.RWMutex
+	sets map[string]staticAssetManifest
 }
 
 type staticAsset struct {
@@ -52,6 +63,7 @@ func newStaticAssetManifest(plugins []*pluginhost.Serve) (staticAssetManifest, e
 	manifest := staticAssetManifest{
 		byURL:    make(map[string]staticAsset),
 		assetURL: make(map[string]string),
+		live:     &liveAssets{sets: map[string]staticAssetManifest{}},
 	}
 	// manifest.json and sw.js reference other assets by their raw paths, so
 	// they get those references rewritten to the hashed URLs after every
@@ -150,7 +162,60 @@ func (m staticAssetManifest) assetPath(assetPath string) string {
 	if url, ok := m.assetURL[assetPath]; ok {
 		return url
 	}
+	if set, ok := m.liveSet(assetPath); ok {
+		if url, ok := set.assetURL[assetPath]; ok {
+			return url
+		}
+	}
 	return assetPath
+}
+
+// lookup answers the asset of a URL, from the start manifest or the live
+// plugin whose subtree holds it.
+func (m staticAssetManifest) lookup(url string) (staticAsset, bool) {
+	if asset, ok := m.byURL[url]; ok {
+		return asset, true
+	}
+	if set, ok := m.liveSet(url); ok {
+		asset, ok := set.byURL[url]
+		return asset, ok
+	}
+	return staticAsset{}, false
+}
+
+func (m staticAssetManifest) liveSet(url string) (staticAssetManifest, bool) {
+	rest, ok := strings.CutPrefix(url, "/plugins/")
+	if !ok || m.live == nil {
+		return staticAssetManifest{}, false
+	}
+	id, _, _ := strings.Cut(rest, "/")
+	m.live.mu.RLock()
+	defer m.live.mu.RUnlock()
+	set, ok := m.live.sets[id]
+	return set, ok
+}
+
+// prepareLive runs one live plugin's assets through the start pipeline. The
+// set starts with the cockpit's asset URLs, so the plugin's references to
+// them are rewritten like a compiled plugin's, and keeps only its own subtree
+// afterwards.
+func (m staticAssetManifest) prepareLive(p *pluginhost.Serve) error {
+	set := staticAssetManifest{byURL: map[string]staticAsset{}, assetURL: maps.Clone(m.assetURL)}
+	if err := set.addPluginAssets(p); err != nil {
+		return err
+	}
+	prefix := "/plugins/" + p.ID() + "/"
+	maps.DeleteFunc(set.assetURL, func(raw, _ string) bool { return !strings.HasPrefix(raw, prefix) })
+	m.live.mu.Lock()
+	m.live.sets[p.ID()] = set
+	m.live.mu.Unlock()
+	return nil
+}
+
+func (m staticAssetManifest) releaseLive(id string) {
+	m.live.mu.Lock()
+	delete(m.live.sets, id)
+	m.live.mu.Unlock()
 }
 
 func hashedAssetURL(name string, content []byte) string {

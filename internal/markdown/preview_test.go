@@ -143,3 +143,12 @@ Press <kbd>Ctrl</kbd>, H<sub>2</sub>O, ~~old~~, [web](https://example.test) and 
 		t.Fatalf("want a file past the editor's limit refused, got %v", err)
 	}
 }
+
+// The client picks a mermaid block out by this class and its text; both must
+// survive the sanitizer untouched for it to render the diagram.
+func TestMermaidBlockSurvivesSanitizing(t *testing.T) {
+	out := render(t, "```mermaid\ngraph TD; A-->B;\n```\n")
+	if want := `<pre><code class="language-mermaid">graph TD; A--&gt;B;\n</code></pre>`; !strings.Contains(out, strings.ReplaceAll(want, `\n`, "\n")) {
+		t.Fatalf("want %s in %q", want, out)
+	}
+}

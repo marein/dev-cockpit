@@ -61,7 +61,7 @@ func (s *Server) handleCtx(c *gin.Context) {
 		if cleanPath == "/docs" {
 			active = "docs"
 		}
-		for _, p := range pluginhost.Pages(s.plugins) {
+		for _, p := range pluginhost.Pages(s.plugins.Serves()) {
 			if cleanPath == p.URL {
 				active = p.Tab
 			}

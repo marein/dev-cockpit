@@ -58,7 +58,7 @@ func modelSettingsServer(t *testing.T) (*gin.Engine, *Server) {
 		workspace:       workspace,
 		assistantRecent: recent.NewCapped(filepath.Join(stateDir, "recent-assistants.json"), recentEntries),
 		assets:          assets,
-		plugins:         serves,
+		plugins:         pluginhost.NewSet(serves, nil),
 		projects:        projects,
 		settings:        store,
 		coders:          []*coder.Manager{coder.NewManager(config.Config{}, tmux.New(), coderclaude.New(t.TempDir(), "", store, ollama.New(store, "http://127.0.0.1:1/catalog", "")), projects)},
@@ -70,7 +70,7 @@ func modelSettingsServer(t *testing.T) (*gin.Engine, *Server) {
 	s.activity = activity.NewTracker()
 	r := gin.New()
 	r.Use(ginsessions.Sessions("session", cookie.NewStore([]byte("test-key"))))
-	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
+	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", pluginhost.NewSet(serves, nil), nil))
 	r.GET("/settings/assistant/models", s.handleSettingsAssistantModels)
 	r.POST("/settings/assistant/models", s.handleSettingsAssistantModelsSave)
 	co := s.coders[0]

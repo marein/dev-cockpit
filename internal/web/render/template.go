@@ -18,21 +18,35 @@ import (
 var templatesFS embed.FS
 
 // HTMLTemplate returns the parsed template set used by Gin's HTML renderer.
-// plugins feeds the two plugin funcs: pluginElements binds every final
-// element name to its plugin's starter module in the import map, which is
-// how the lazy element loader finds plugin code; pluginSlot is the markup
-// the plugins added for a named slot. rename answers how a coder's sessions
-// are renamed (coder.RenameMode), nil for no way at all.
-func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plugins []*pluginhost.Serve, rename func(coder string) string) *template.Template {
+// The plugin funcs read plugins at every render, since live plugins come and
+// go. pluginElements binds the elements of the compiled plugins always on to
+// their starter in the import map, which is how the lazy element loader
+// finds them. pluginSlot is their slot markup, pluginMounts and
+// pluginPageMount the markup of the live ones, pluginVersion what the live
+// regions compare. rename answers how a coder's sessions are renamed
+// (coder.RenameMode), nil for no way at all.
+func HTMLTemplate(assetPath func(string) string, version, assetBuild string, plugins *pluginhost.Set, rename func(coder string) string) *template.Template {
 	funcMap := template.FuncMap{
 		"asset":          assetPath,
 		"assetBuild":     func() string { return assetBuild },
 		"appVersion":     func() string { return version },
-		"pluginElements": func() []pluginhost.Element { return pluginhost.Elements(plugins, assetPath) },
-		"pluginSlot":     func(slot string) template.HTML { return pluginhost.SlotHTML(plugins, slot) },
-		"pluginPages":    func() []pluginhost.PageLink { return pluginhost.Pages(plugins) },
-		"pluginPageTab":  func(tab string) bool { return pluginhost.IsPageTab(plugins, tab) },
-		"coderLabel":     CoderLabel,
+		"pluginElements": func() []pluginhost.Element { return pluginhost.Elements(plugins.Serves(), assetPath) },
+		"pluginSlot":     func(slot string) template.HTML { return pluginhost.SlotHTML(plugins.Serves(), slot) },
+		"pluginMounts": func(slot string) []pluginhost.MountView {
+			return pluginhost.SlotMounts(plugins.Serves(), slot, assetPath)
+		},
+		"pluginPageMount": func(id string) *pluginhost.MountView {
+			if p := plugins.Lookup(id); p != nil {
+				if view, ok := pluginhost.PageMountView(p, assetPath); ok {
+					return &view
+				}
+			}
+			return nil
+		},
+		"pluginVersion": plugins.Version,
+		"pluginPages":   func() []pluginhost.PageLink { return pluginhost.Pages(plugins.Serves()) },
+		"pluginPageTab": func(tab string) bool { return pluginhost.IsPageTab(plugins.Serves(), tab) },
+		"coderLabel":    CoderLabel,
 		"coderRename": func(coder string) string {
 			if rename == nil {
 				return ""

@@ -51,10 +51,10 @@ func pluginRouter(t *testing.T) (*gin.Engine, staticAssetManifest) {
 	s := &Server{
 		cfg:     config.Config{AuthUsername: "admin"},
 		assets:  assets,
-		plugins: serves,
+		plugins: pluginhost.NewSet(serves, nil),
 	}
 	r := gin.New()
-	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil))
+	r.SetHTMLTemplate(render.HTMLTemplate(assets.assetPath, "test", "test", pluginhost.NewSet(serves, nil), nil))
 	r.Use(ginsessions.Sessions("session", cookie.NewStore([]byte("test-key"))))
 	r.GET("/test/sign-in", func(c *gin.Context) {
 		sess := ginsessions.Default(c)
@@ -162,7 +162,7 @@ func TestPluginPageRendersInTheLayout(t *testing.T) {
 	}
 	withShell(t, shell, s, serves)
 	signedIn := func(c *gin.Context) { ginsessions.Default(c).Set(sessionUserKey, "admin") }
-	shell.Any("/plugins/fake/*path", signedIn, s.servePlugin(serves[0]))
+	shell.Any("/plugins/:id/*path", signedIn, s.servePlugins)
 	rec = httptest.NewRecorder()
 	shell.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/fake/", nil))
 	body := rec.Body.String()

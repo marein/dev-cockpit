@@ -285,7 +285,7 @@ func (s *Server) guestGranted(p share.Permission) gin.HandlerFunc {
 // groups, the terminal theme, the notifications and the questions git asks.
 var neverTrees = []string{
 	"/settings", "/assistants", "/assistant", "/mention", "/projects/new", "/projects/delete",
-	"/splits", "/terminal-theme", "/notifications", "/git", "/push", "/update", "/plugins",
+	"/splits", "/terminal-theme", "/notifications", "/git", "/push", "/update", "/plugins", "/plugin-regions",
 	"/docker/actions", "/docker/link-rules", "/coders/new", "/coders/delete",
 	"/terminal-tabs/order", "/terminal-tabs/group", "/terminal-tabs/ungroup",
 	"/projects/:name/tags", "/projects/:name/forge", "/projects/:name/branches", "/projects/:name/fetch",

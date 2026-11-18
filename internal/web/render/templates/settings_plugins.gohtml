@@ -1,0 +1,290 @@
+{{/* Settings › Plugins: the install controls over one row per plugin. The
+     list follows every plugin change live (dc-plugin-list). */}}
+{{define "settings_plugins.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title">Plugins</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <p class="text-secondary" data-plugin-warning>A plugin runs as your user on this host, and its frontend code runs in the cockpit page, signed in as you. Install only plugins you trust.</p>
+  <div class="mb-4">
+    <a class="btn btn-primary" href="/settings/plugins/new" data-plugin-repository-open><i class="ti ti-download me-1" aria-hidden="true"></i>Install from a repository</a>
+    <div class="form-hint mt-2">A public GitHub or GitLab repository with plugin releases, see <a href="/docs#plugins">the docs</a>.</div>
+  </div>
+  <form method="post" action="/settings/plugins" class="mb-4" data-plugin-install>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="form" value="install">
+    <label class="form-label" for="plugin-path">Install from a directory on the host</label>
+    <div class="input-group{{if .PathError}} has-validation{{end}}">
+      <input type="text" id="plugin-path" name="path" class="form-control dc-mono{{if .PathError}} is-invalid{{end}}" value="{{.Path}}" placeholder="/path/to/plugin" maxlength="4096" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="url"{{if .PathError}} aria-invalid="true" aria-describedby="plugin-path-error"{{end}}>
+      <button type="submit" class="btn btn-primary" data-plugin-install-button>Install</button>
+      {{with .PathError}}<div class="invalid-feedback" id="plugin-path-error" data-plugin-path-error>{{.}}</div>{{end}}
+    </div>
+    <div class="form-hint mt-2">Or drop a plugin's directory into <code class="text-break" data-plugin-folder>{{.Folder}}</code>, it shows up here. Installing from the same path again updates it.</div>
+  </form>
+  {{with .Replace}}
+  <form method="post" action="/settings/plugins" class="alert alert-warning mb-4" role="alert" data-plugin-replace-ask>
+    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+    <input type="hidden" name="form" value="install">
+    <input type="hidden" name="path" value="{{$.Path}}">
+    <input type="hidden" name="replace" value="1">
+    <div>{{.}} Installing replaces it, its state directory stays.</div>
+    <div class="d-flex flex-wrap gap-2 mt-2">
+      <button type="submit" class="btn btn-warning" data-plugin-replace>Replace</button>
+      <a class="btn" href="/settings/plugins">Cancel</a>
+    </div>
+  </form>
+  {{end}}
+  <dc-plugin-list class="d-block">
+    {{template "plugin_list.gohtml" .}}
+  </dc-plugin-list>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* A row stacks on every width and its actions wrap. A built in plugin's
+     row carries only the switch, and only when it is optional. */}}
+{{define "plugin_list.gohtml"}}
+<div data-plugin-list>
+  {{$csrf := .CSRFToken}}
+  {{$refused := .Refused}}{{$refusedID := .RefusedID}}
+  {{with .BuiltIn}}
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <h3 class="card-title mb-0">Built in</h3>
+    <span class="badge bg-secondary-lt" data-plugin-builtin-count>{{len .}}</span>
+  </div>
+  <div class="card mb-4" data-plugin-builtin>
+    <div class="list-group list-group-flush">
+      {{range .}}
+      <div class="list-group-item py-3" id="plugin-{{.ID}}" data-plugin-row="{{.ID}}" data-plugin-state="{{.State}}" data-plugin-kind="built-in">
+        <div class="d-flex align-items-start gap-2">
+          <div class="min-w-0 flex-fill">
+            <div class="fw-medium text-break dc-mono" data-plugin-name>{{.Name}}</div>
+            <div class="small text-secondary text-break" data-plugin-source>{{if .Optional}}Built in, optional{{else}}Built in, always on{{end}}</div>
+          </div>
+          <span class="badge bg-{{.Tone}}-lt flex-none" data-plugin-badge>{{.Label}}</span>
+        </div>
+        {{with .Reason}}<div class="small mt-2 text-danger text-break" data-plugin-reason>{{.}}</div>{{end}}
+        {{if and (eq $refusedID .ID) $refused}}<div class="small mt-2 text-danger text-break" data-plugin-refusal>{{$refused}}</div>{{end}}
+        {{if .Optional}}
+        <div class="d-flex flex-wrap gap-2 mt-3" data-plugin-actions>
+          <form method="post" action="/settings/plugins">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            {{if .Enabled}}
+            <input type="hidden" name="form" value="disable">
+            <button type="submit" class="btn" data-plugin-action="disable"><i class="ti ti-player-pause me-1" aria-hidden="true"></i>Disable</button>
+            {{else}}
+            <input type="hidden" name="form" value="enable">
+            <button type="submit" class="btn" data-plugin-action="enable"><i class="ti ti-player-play me-1" aria-hidden="true"></i>Enable</button>
+            {{end}}
+          </form>
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <h3 class="card-title mb-0">Installed</h3>
+    {{with .Installed}}<span class="badge bg-secondary-lt" data-plugin-count>{{len .}}</span>{{end}}
+    {{if .Updatable}}
+    <form method="post" action="/settings/plugins" class="ms-auto">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="form" value="check">
+      <button type="submit" class="btn btn-sm" data-plugin-check><i class="ti ti-refresh me-1" aria-hidden="true"></i>Check for updates</button>
+    </form>
+    {{end}}
+  </div>
+  {{if .Installed}}
+  <div class="card" data-plugin-installed>
+    <div class="list-group list-group-flush">
+      {{range $row := .Installed}}
+      <div class="list-group-item py-3" id="plugin-{{.ID}}" data-plugin-row="{{.ID}}" data-plugin-state="{{.State}}" data-plugin-kind="external">
+        <div class="d-flex align-items-start gap-2">
+          <div class="min-w-0 flex-fill">
+            <div class="fw-medium text-break"><span data-plugin-name>{{.Name}}</span>{{with .Version}} <span class="text-secondary fw-normal small" data-plugin-version>{{.}}</span>{{end}}</div>
+            <div class="small text-secondary dc-mono text-break" data-plugin-id>{{.ID}}</div>
+            <div class="small text-secondary text-break" data-plugin-source>{{if .Origin.Repository}}From <a href="{{.Origin.Repository}}" target="_blank" rel="noopener noreferrer" data-plugin-repository>{{.Origin.Source}}</a> on <span data-plugin-forge>{{.Origin.ForgeName}}</span>{{else if .Origin.Path}}Copied from <span class="dc-mono">{{.Origin.Path}}</span>, no updates{{else}}Dropped into the folder, no updates{{end}}</div>
+          </div>
+          <span class="badge bg-{{.Tone}}-lt flex-none" data-plugin-badge>{{.Label}}</span>
+        </div>
+        {{with .Description}}<div class="small mt-2 text-break" data-plugin-description>{{.}}</div>{{end}}
+        {{with .Reason}}<div class="small mt-2 text-danger text-break" data-plugin-reason>{{.}}</div>{{end}}
+        {{if eq .State "crashed"}}<div class="small text-secondary">It restarts automatically.</div>{{end}}
+        {{with .Tail}}<pre class="small mt-2 mb-0 overflow-auto dc-run-output" data-plugin-tail>{{join . "\n"}}</pre>{{end}}
+        {{with .Origin.Busy}}<div class="small mt-2 d-flex align-items-center gap-2" data-plugin-busy><span class="spinner-border spinner-border-sm text-secondary" aria-hidden="true"></span><span>{{.}}</span></div>{{end}}
+        {{with .Origin.Trial}}<div class="small mt-2 text-secondary" data-plugin-trial>Trying {{.}}, the previous version returns if it fails.</div>{{end}}
+        {{with .Origin.Failed}}
+        <div class="small mt-2 text-danger text-break" data-plugin-failed>The update to {{.Version}} failed, rolled back to {{.Back}}. {{.Reason}}</div>
+        {{with .Tail}}<pre class="small mt-2 mb-0 overflow-auto dc-run-output" data-plugin-failed-tail>{{join . "\n"}}</pre>{{end}}
+        {{end}}
+        {{with .Origin.Problem}}<div class="small mt-2 text-warning text-break" data-plugin-problem>{{.}}</div>{{end}}
+        {{if and (eq $refusedID .ID) $refused}}<div class="small mt-2 text-danger text-break" data-plugin-refusal>{{$refused}}</div>{{end}}
+        {{with .Origin.Step}}
+        <div class="d-flex flex-wrap align-items-center gap-2 mt-3" data-plugin-step="{{.To}}">
+          <span class="badge bg-azure-lt" data-plugin-step-label>{{.From}} → {{.To}}</span>
+          <form method="post" action="/settings/plugins" data-plugin-update-form>
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="id" value="{{$row.ID}}">
+            <input type="hidden" name="form" value="update">
+            <input type="hidden" name="version" value="{{.To}}">
+            <button type="submit" class="btn btn-primary" data-plugin-action="update"><i class="ti ti-arrow-up-circle me-1" aria-hidden="true"></i>Update to {{.To}}</button>
+          </form>
+          <button type="button" class="btn" data-plugin-notes-open data-plugin-notes-title="{{$row.Name}} {{.From}} → {{.To}}"><i class="ti ti-notes me-1" aria-hidden="true"></i>Release notes</button>
+          <template data-plugin-notes>{{$row.Notes}}</template>
+        </div>
+        {{end}}
+        <div class="d-flex flex-wrap gap-2 mt-3" data-plugin-actions>
+          {{if ne .State "broken"}}
+          <form method="post" action="/settings/plugins">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            {{if .Enabled}}
+            <input type="hidden" name="form" value="disable">
+            <button type="submit" class="btn" data-plugin-action="disable"><i class="ti ti-player-pause me-1" aria-hidden="true"></i>Disable</button>
+            {{else}}
+            <input type="hidden" name="form" value="enable">
+            <button type="submit" class="btn" data-plugin-action="enable"><i class="ti ti-player-play me-1" aria-hidden="true"></i>Enable</button>
+            {{end}}
+          </form>
+          {{end}}
+          {{if or .Enabled (eq .State "broken")}}
+          <form method="post" action="/settings/plugins">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <input type="hidden" name="form" value="restart">
+            <button type="submit" class="btn" data-plugin-action="restart"><i class="ti ti-refresh me-1" aria-hidden="true"></i>{{if eq .State "broken"}}Load again{{else}}Restart{{end}}</button>
+          </form>
+          {{end}}
+          {{if .Origin.Repository}}
+          <form method="post" action="/settings/plugins">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <input type="hidden" name="form" value="{{if .Origin.Auto}}auto-off{{else}}auto-on{{end}}">
+            <button type="submit" class="btn" aria-pressed="{{if .Origin.Auto}}true{{else}}false{{end}}" data-plugin-action="auto" data-plugin-auto="{{if .Origin.Auto}}on{{else}}off{{end}}"><i class="ti {{if .Origin.Auto}}ti-toggle-right text-green{{else}}ti-toggle-left{{end}} me-1" aria-hidden="true"></i>Auto updates {{if .Origin.Auto}}on{{else}}off{{end}}</button>
+          </form>
+          {{end}}
+          <a class="btn" href="/settings/plugins/{{.ID}}/log" data-plugin-action="log"><i class="ti ti-file-text me-1" aria-hidden="true"></i>Log</a>
+          <form method="post" action="/settings/plugins" data-confirm="Remove the plugin {{.Name}}?" data-confirm-warning="Its directory and kept releases are deleted, a linked directory only loses the link. Its state directory stays." data-confirm-kind="delete" data-confirm-button="Remove">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <input type="hidden" name="form" value="remove">
+            <button type="submit" class="btn btn-ghost-danger" data-plugin-action="remove"><i class="ti ti-trash me-1" aria-hidden="true"></i>Remove</button>
+          </form>
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{else}}
+  <div class="text-secondary" data-plugin-empty>No plugin is installed.</div>
+  {{end}}
+</div>
+{{end}}
+
+{{/* The last lines one plugin's process wrote, oldest first. */}}
+{{define "settings_plugin_log.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<h1 class="dc-work-title text-break">Log of {{.Name}}</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow">
+  <div class="d-flex flex-wrap gap-2 mb-3">
+    <a class="btn" href="/settings/plugins#plugin-{{.ID}}"><i class="ti ti-arrow-left me-1" aria-hidden="true"></i>Plugins</a>
+    <a class="btn" href="/settings/plugins/{{.ID}}/log"><i class="ti ti-refresh me-1" aria-hidden="true"></i>Refresh</a>
+  </div>
+  {{if .Lines}}
+  <pre class="mb-0 overflow-auto dc-run-output" data-plugin-log>{{join .Lines "\n"}}</pre>
+  {{else}}
+  <div class="text-secondary" data-plugin-log-empty>No output yet.</div>
+  {{end}}
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* The install from a repository as a page, for a browser without the
+     dialog. */}}
+{{define "settings_plugin_new.gohtml"}}
+{{template "app_start.gohtml" .}}
+{{template "settings_ctx.gohtml" .}}
+{{template "work_start.gohtml" .}}
+<a class="btn btn-icon btn-ghost-secondary" href="/settings/plugins" aria-label="Back" title="Back"><i class="ti ti-arrow-left" aria-hidden="true"></i></a>
+<h1 class="dc-work-title text-truncate">Install from a repository</h1>
+{{template "work_body.gohtml" .}}
+<div class="dc-narrow dc-form-width">
+  <div class="card">
+    {{template "plugin_repository.gohtml" .}}
+  </div>
+</div>
+{{template "app_end.gohtml" .}}
+{{end}}
+
+{{/* The repository address. Look up downloads the newest release for this
+     host, verifies its checksum and reads its plugin.json, then shows the
+     offer at the same dialog height (data-form-fixed). */}}
+{{define "plugin_repository.gohtml"}}
+{{if .Offer}}{{template "plugin_offer.gohtml" .}}{{else}}
+<form method="post" action="/settings/plugins/new{{if .Modal}}?modal=1{{end}}" autocomplete="off" data-plugin-repository-form{{if .Modal}} class="d-flex flex-column overflow-hidden flex-fill" data-form-scrollable data-form-fixed data-form-title="Install from a repository" data-form-wait="Downloading the newest release…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="form" value="look">
+  <div class="{{if .Modal}}modal-body{{else}}card-body{{end}}">
+    {{with .Refused}}<div class="alert alert-danger" role="alert" data-form-modal-error>{{.}}</div>{{end}}
+    <div class="form-label required" id="plugin-forge-label">Forge</div>
+    <div class="btn-group w-100 mb-3" role="radiogroup" aria-labelledby="plugin-forge-label" data-plugin-forge-pick>
+      <input type="radio" class="btn-check" name="forge" id="plugin-forge-github" value="github" autocomplete="off" required{{if eq .Forge "github"}} checked{{end}}>
+      <label class="btn btn-outline-primary" for="plugin-forge-github"><i class="ti ti-brand-github me-1" aria-hidden="true"></i>GitHub</label>
+      <input type="radio" class="btn-check" name="forge" id="plugin-forge-gitlab" value="gitlab" autocomplete="off" required{{if eq .Forge "gitlab"}} checked{{end}}>
+      <label class="btn btn-outline-primary" for="plugin-forge-gitlab"><i class="ti ti-brand-gitlab me-1" aria-hidden="true"></i>GitLab</label>
+    </div>
+    <label class="form-label required" for="plugin-url">Repository</label>
+    <input type="text" id="plugin-url" name="url" class="form-control{{if .URLError}} is-invalid{{end}}" value="{{.URL}}" placeholder="https://git.example.com/owner/name" maxlength="512" required autofocus autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="url"{{if .URLError}} aria-invalid="true" aria-describedby="plugin-url-error"{{end}}>
+    {{with .URLError}}<div class="invalid-feedback" id="plugin-url-error" data-plugin-url-error>{{.}}</div>{{end}}
+    <div class="form-hint mt-2">Any https host, GitHub Enterprise and GitLab subgroups included. The newest release is downloaded and checked, nothing is installed before you confirm.</div>
+  </div>
+  <div class="{{if .Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if .Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>{{else}}<a class="btn btn-ghost-secondary" href="/settings/plugins">Cancel</a>{{end}}
+    <button type="submit" class="btn btn-primary" data-plugin-look>Look up</button>
+  </div>
+</form>
+{{end}}
+{{end}}
+
+{{/* What the newest release installs, to confirm once. */}}
+{{define "plugin_offer.gohtml"}}
+{{with .Offer}}
+<form method="post" action="/settings/plugins/new{{if $.Modal}}?modal=1{{end}}" data-plugin-offer="{{.ID}}"{{if $.Modal}} class="d-flex flex-column overflow-hidden flex-fill" data-form-scrollable data-form-fixed data-form-title="{{if .Updates}}Update {{.Name}}?{{else if .Replaces}}Replace {{.ID}}?{{else}}Install {{.Name}}?{{end}}" data-form-wait="Installing {{.Name}} {{.Version}}…"{{end}}>
+  <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+  <input type="hidden" name="form" value="install">
+  <input type="hidden" name="token" value="{{.Token}}">
+  <input type="hidden" name="url" value="{{$.URL}}">
+  <input type="hidden" name="forge" value="{{.Repository.Forge}}">
+  <input type="hidden" name="replaces" value="{{.Replaces}}">
+  <div class="{{if $.Modal}}modal-body{{else}}card-body{{end}}">
+    {{with $.Ask}}<div class="alert alert-warning" role="alert" data-plugin-offer-ask>{{.}} This changed since the look up, confirm again.</div>{{end}}
+    <dl class="row mb-0 small" data-plugin-offer-details>
+      <dt class="col-4 text-secondary fw-normal">Name</dt><dd class="col-8 text-break" data-plugin-offer-name>{{.Name}}</dd>
+      <dt class="col-4 text-secondary fw-normal">Version</dt><dd class="col-8 dc-mono" data-plugin-offer-version>{{.Version}}</dd>
+      <dt class="col-4 text-secondary fw-normal">Id</dt><dd class="col-8 dc-mono text-break" data-plugin-offer-id>{{.ID}}</dd>
+      {{with .Description}}<dt class="col-4 text-secondary fw-normal">Description</dt><dd class="col-8 text-break" data-plugin-offer-description>{{.}}</dd>{{end}}
+      <dt class="col-4 text-secondary fw-normal">Source</dt><dd class="col-8 text-break" data-plugin-offer-source><a href="{{.Repository.URL}}" target="_blank" rel="noopener noreferrer">{{.Repository.Short}}</a> on {{.Repository.ForgeName}}</dd>
+      <dt class="col-4 text-secondary fw-normal">Archive</dt><dd class="col-8 dc-mono text-break mb-0" data-plugin-offer-archive>{{.Archive}}</dd>
+    </dl>
+    {{if .Updates}}<div class="alert alert-info mt-3 mb-0" role="alert" data-plugin-offer-updates>This updates the installed {{.Name}} {{.Updates}}, the previous version is kept for a rollback.</div>
+    {{else if .Replaces}}<div class="alert alert-warning mt-3 mb-0" role="alert" data-plugin-offer-replaces>A plugin with the id {{.ID}} is installed from {{.Replaces}}. Installing replaces it, its state directory stays.</div>{{end}}
+    <label class="form-check form-switch mt-3 mb-0">
+      <input class="form-check-input" type="checkbox" name="auto" value="1" checked data-plugin-offer-auto>
+      <span class="form-check-label">Update automatically</span>
+      <span class="form-hint">Newer releases install on their own, a failing one is rolled back.</span>
+    </label>
+  </div>
+  <div class="{{if $.Modal}}modal-footer{{else}}card-footer d-flex justify-content-end gap-2{{end}}">
+    {{if $.Modal}}<button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Cancel</button>{{else}}<a class="btn btn-ghost-secondary" href="/settings/plugins">Cancel</a>{{end}}
+    <button type="submit" class="btn {{if .Replaces}}btn-warning{{else}}btn-primary{{end}}" data-plugin-offer-install>{{if .Updates}}Update{{else if .Replaces}}Replace{{else}}Install{{end}}</button>
+  </div>
+</form>
+{{end}}
+{{end}}

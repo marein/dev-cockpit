@@ -3,9 +3,11 @@
 // distribution builds, the slot names and the one sentinel error. A custom
 // distribution constructs its plugins and hands them to distro.Main in
 // distro.Build as ordered named pairs, see the custom distributions section
-// of the README. Nothing is loaded at runtime and there is no registry, a
-// binary carries exactly the plugins its distribution passes; the
-// implementations behind these interfaces live inside the cockpit.
+// of the README. There is no registry, a binary carries exactly the compiled
+// plugins its distribution passes; the implementations behind these
+// interfaces live inside the cockpit. External plugins are separate
+// processes the cockpit loads at runtime, they reach the same surface through
+// a manifest and a callback socket, see the plugins section of the README.
 //
 // A plugin does not name itself: the distribution picks the id when it wires
 // the plugin in, and everything the plugin contributes carries that id, the
@@ -13,9 +15,11 @@
 // typed by the surface it extends, and the one surface so far is the serving
 // cockpit: at serve start, after the configuration is loaded and before the
 // server listens, the cockpit hands every ServePlugin its own Serve, and the
-// plugin's ConfigureServe adds what it contributes. The whole surface is
-// experimental, and these interfaces grow with the cockpit: a plugin that
-// builds its own fakes of them must expect new methods with any release.
+// plugin's ConfigureServe adds what it contributes. A plugin wired with
+// Named.Optional ships switched off and configures at every switch on under
+// Settings › Plugins. The whole surface is experimental, and these
+// interfaces grow with the cockpit: a plugin that builds its own fakes of
+// them must expect new methods with any release.
 package plugin
 
 import (
@@ -23,6 +27,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"time"
 )
 
 // ServePlugin extends the serving cockpit. ConfigureServe is one call at
@@ -30,6 +35,11 @@ import (
 // when it returns the Serve is sealed. An error aborts the start, a plugin
 // that cannot wire itself is a build wiring mistake and nothing to limp
 // past.
+//
+// An optional plugin, see Named.Optional, is configured with a fresh Serve at
+// every switch on. Every switch off ends that Serve's Context and takes away
+// what it added, so what ConfigureServe starts must end with the Context. An
+// error or a panic refuses the switch on, the cockpit goes on.
 type ServePlugin interface {
 	ConfigureServe(s Serve) error
 }
@@ -39,6 +49,10 @@ type ServePlugin interface {
 type Named[T any] struct {
 	ID     string
 	Plugin T
+	// Optional ships the plugin switched off, with a switch under Settings ›
+	// Plugins that lasts across restarts. Nothing of it runs or is written
+	// while it is off. Without it the plugin is always on.
+	Optional bool
 }
 
 // Slot names the templates offer. A slot is a place in a cockpit page where
@@ -54,6 +68,38 @@ const (
 	SlotProjectsEmptyActions = "projects-empty-actions"
 )
 
+// Event sources for AddEventHandler. The cockpit decides which exist, the
+// list only ever grows.
+const (
+	// EventJob is an assistant's job closing, done, blocked or expired.
+	EventJob = "job"
+	// EventCoder is a coder that ended its turn or asks a question.
+	EventCoder = "coder"
+	// EventCompose is a compose run ending.
+	EventCompose = "compose"
+)
+
+// Event is one thing that happened in the cockpit, as an assistant's trigger
+// sees it. Fields are only ever added. The JSON names are what an external
+// plugin reads on its callback socket.
+type Event struct {
+	// Source is one of the Event constants.
+	Source string `json:"source"`
+	// Kind says what happened within the source, like done or asks.
+	Kind string `json:"kind"`
+	// Target is what the event is about: the terminal of a job or a coder,
+	// the run of a compose event.
+	Target string `json:"target,omitempty"`
+	// Time is when it happened.
+	Time time.Time `json:"time"`
+	// Headline is one line that says what happened, Body the rest, like a
+	// job's report.
+	Headline string `json:"headline"`
+	Body     string `json:"body,omitempty"`
+	// Project names the project the event is about, where one is known.
+	Project string `json:"project,omitempty"`
+}
+
 // ErrProjectExists is what Projects.Create answers when a project of that
 // name already exists and holds content. An existing empty directory is not
 // this error, Create adopts it, see there. Check with errors.Is; how a
@@ -62,11 +108,11 @@ var ErrProjectExists = errors.New("A project with that name already exists.")
 
 // Serve is the serving cockpit as one plugin sees it, registrar and host in
 // one object: what the plugin contributes is added here, and what the
-// instance is stands here to read. The cockpit builds one per ServePlugin,
-// bound to the wiring id, and hands it to ConfigureServe; everything on it
-// answers real values during that call, and when ConfigureServe returns the
-// Serve is sealed and every further Add panics. A handler may keep the Serve
-// or anything it answered.
+// instance is stands here to read. The cockpit builds one per ServePlugin and
+// call of ConfigureServe, bound to the wiring id, and hands it to
+// ConfigureServe; everything on it answers real values during that call, and
+// when ConfigureServe returns the Serve is sealed and every further Add
+// panics. A handler may keep the Serve or anything it answered.
 type Serve interface {
 	// AddRoutes adds the plugin's HTTP handler, mounted under the plugin's
 	// URL subtree; the answered handle's Path names where. The handler sees
@@ -113,12 +159,20 @@ type Serve interface {
 	AddPage(page Page)
 	// AddAssistantMemory adds top level <slug>.md files to the assistant's
 	// shared memory, a slug being lower case letters, digits and dashes,
-	// other files are skipped. Applied at serve start in plugin order,
-	// without overwrite an existing file is kept.
+	// other files are skipped. Applied at serve start in plugin order, an
+	// optional plugin's at every switch on, without overwrite an existing
+	// file is kept. A switch off leaves the written files as they are.
 	AddAssistantMemory(files fs.FS, overwrite bool)
+	// AddEventHandler subscribes the plugin to the events of the named
+	// sources, each one of the Event constants, any other panics. Every
+	// handler runs on the cockpit's one event goroutine in publish order, so
+	// it returns quickly and hands longer work to a goroutine of its own.
+	// Events that arrive while the plugins fall behind are dropped.
+	AddEventHandler(sources []string, handler func(Event))
 	// AddSettings adds values to the settings store, key to value. Applied at
-	// serve start before anything reads the store, in plugin order, without
-	// overwrite an existing key is kept.
+	// serve start before anything reads the store, in plugin order, an
+	// optional plugin's at every switch on, without overwrite an existing key
+	// is kept. A switch off leaves the written keys as they are.
 	AddSettings(values map[string]string, overwrite bool)
 	// StateDir answers the serving instance's state directory, which is what
 	// addresses the running cockpit itself, for example as --state-dir of a
@@ -130,6 +184,12 @@ type Serve interface {
 	// directory is not part of the cockpit backup. Unlike an Add it keeps
 	// answering after the Serve is sealed, so a handler uses it at runtime.
 	PluginStateDir() string
+	// Context answers a context that ends when the plugin is switched off or
+	// the cockpit shuts down. What ConfigureServe starts beyond the call, a
+	// goroutine, a ticker, a connection, ends with it, so an optional plugin
+	// runs nothing while it is off. Unlike an Add it keeps answering after the
+	// Serve is sealed.
+	Context() context.Context
 	// ProjectsDir answers the serving instance's projects root directory,
 	// where a project on the projects page lives.
 	ProjectsDir() string

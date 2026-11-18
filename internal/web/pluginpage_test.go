@@ -31,9 +31,7 @@ func pagedShell(t *testing.T, plugins ...plugin.Named[plugin.ServePlugin]) *gin.
 	}
 	withShell(t, r, s, serves)
 	signedIn := func(c *gin.Context) { ginsessions.Default(c).Set(sessionUserKey, "admin") }
-	for _, p := range serves {
-		r.Any("/plugins/"+p.ID()+"/*path", signedIn, s.servePlugin(p))
-	}
+	r.Any("/plugins/:id/*path", signedIn, s.servePlugins)
 	r.GET("/ctx/:area", signedIn, s.handleCtx)
 	r.GET("/assistants/:id", signedIn, s.handleAssistantPage)
 	return r
@@ -76,8 +74,8 @@ func TestPluginPageNavLabelFallsBackToTheTitle(t *testing.T) {
 	}
 	rail := between(t, body, `<nav class="dc-rail `, "</nav>")
 	for _, want := range []string{
-		`<a class="dc-rail-btn active" href="/plugins/tickets/" title="Ticket board" aria-label="Ticket board"><i class="ti ti-ticket icon" aria-hidden="true"></i><span class="dc-trunc mw-100">Tickets</span></a>`,
-		`<a class="dc-rail-btn" href="/plugins/long/" title="Release checklist of every team" aria-label="Release checklist of every team"><i class="ti ti-checklist icon" aria-hidden="true"></i><span class="dc-trunc mw-100">Release checklist of every team</span></a>`,
+		`<a class="dc-rail-btn active" href="/plugins/tickets/" title="Ticket board" aria-label="Ticket board" data-region-key="tickets"><i class="ti ti-ticket icon" aria-hidden="true"></i><span class="dc-trunc mw-100">Tickets</span></a>`,
+		`<a class="dc-rail-btn" href="/plugins/long/" title="Release checklist of every team" aria-label="Release checklist of every team" data-region-key="long"><i class="ti ti-checklist icon" aria-hidden="true"></i><span class="dc-trunc mw-100">Release checklist of every team</span></a>`,
 	} {
 		if !strings.Contains(rail, want) {
 			t.Fatalf("the rail misses %s", want)

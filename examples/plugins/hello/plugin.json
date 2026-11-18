@@ -1,0 +1,25 @@
+{
+  "protocol": 1,
+  "id": "hello",
+  "name": "Hello",
+  "version": "1.0.0",
+  "description": "Notes on a page of its own and a button that creates a project, written in Python.",
+  "run": "hello.py",
+  "assets": "assets",
+  "elements": [
+    {"name": "button", "module": "button.js"},
+    {"name": "board", "module": "board.js"}
+  ],
+  "slots": [
+    {"slot": "projects-actions", "html": "slot.html"}
+  ],
+  "page": {
+    "title": "Hello notes",
+    "icon": "ti-notes",
+    "nav_label": "Hello",
+    "html": "page.html"
+  },
+  "settings": {"values": {"hello-greeting": "Hello from Python"}, "overwrite": false},
+  "memory": {"dir": "memory", "overwrite": false},
+  "events": ["job", "coder", "compose"]
+}

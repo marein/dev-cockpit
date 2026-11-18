@@ -206,7 +206,7 @@ func testTemplates(t *testing.T) *template.Template {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil)
+	return render.HTMLTemplate(assets.assetPath, "test", "test", pluginhost.NewSet(serves, nil), nil)
 }
 
 func renderTemplate(t *testing.T, tpl *template.Template, name string, data any) string {
@@ -401,7 +401,7 @@ func TestTheTabStripTemplateRendersRunningInactiveAndResumableSessions(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	tpl := render.HTMLTemplate(assets.assetPath, "test", "test", serves, nil)
+	tpl := render.HTMLTemplate(assets.assetPath, "test", "test", pluginhost.NewSet(serves, nil), nil)
 	launched := render.TerminalTab{ID: "aaa", Name: "through ollama", URL: "/coders/aaa", Project: "smoke", Coder: "claude", Launcher: "ollama", Kind: "coder", Working: 1}
 	plain := render.TerminalTab{ID: "bbb", Name: "plain", URL: "/coders/bbb", Project: "smoke", Coder: "claude", Kind: "coder", HasNews: true}
 	shell := render.TerminalTab{ID: "ccc", Name: "a shell", URL: "/shells/ccc", Project: "smoke", Kind: "shell"}
