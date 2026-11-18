@@ -63,8 +63,8 @@ func slackCall(id string) map[string]any {
 // A turn's tool call stands as an approval naming the assistant, the tool and
 // its input, with the box that allows the tool for good and its short wait.
 // Approving with the box ticked lets it run and stores the tool, and from then
-// on that tool runs at once, for every assistant, without a question. Nothing
-// of it lands in the thread.
+// on that tool runs at once, for every Claude assistant, without a question.
+// Nothing of it lands in the thread.
 func TestAToolCallWaitsForTheUserAndCanBeAllowedForGood(t *testing.T) {
 	f := newComposeFixture(t)
 	done := f.askTool(context.Background(), t, slackCall("toolu_1"))
@@ -267,21 +267,30 @@ func TestAllowedToolsAreKeptAndForgotten(t *testing.T) {
 	if tools := AllowedTools(f.s.settings); !slices.Equal(tools, []string{slackTool}) {
 		t.Fatalf("the tools read %q after a remove", tools)
 	}
-	f.postApprovals(t, url.Values{"forget-tool": {slackTool}})
+	req := httptest.NewRequest(http.MethodPost, assistantApprovalsSettingsPath, strings.NewReader(url.Values{"forget-tool": {slackTool}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	f.router.ServeHTTP(rec, req)
+	if got := decodeJSON(t, rec); rec.Code != http.StatusOK || got["message"] != toolRemoved {
+		t.Fatalf("the list's remove answered %d %v", rec.Code, got)
+	}
 	if _, ok := f.s.settings.Lookup(allowedToolsKey); ok {
 		t.Fatal("the last tool removed left the key")
 	}
 }
 
-func TestTheShortNameOfATool(t *testing.T) {
-	for tool, want := range map[string]string{
-		slackTool:  "slack_search_channels",
-		"Bash":     "Bash",
-		"mcp__x__": "mcp__x__",
-		"mcp__a":   "mcp__a",
+func TestTheServerAndNameOfATool(t *testing.T) {
+	for tool, want := range map[string][2]string{
+		slackTool:               {"claude_ai_Slack", "slack_search_channels"},
+		"mcp__fake-slack__x__y": {"fake-slack__x", "y"},
+		"Bash":                  {"", "Bash"},
+		"mcp__x__":              {"", "mcp__x__"},
+		"mcp____x":              {"", "mcp____x"},
+		"mcp__a":                {"", "mcp__a"},
 	} {
-		if got := toolShortName(tool); got != want {
-			t.Fatalf("%s reads %q, want %q", tool, got, want)
+		if server, name := toolParts(tool); server != want[0] || name != want[1] {
+			t.Fatalf("%s reads %q and %q, want %q", tool, server, name, want)
 		}
 	}
 }

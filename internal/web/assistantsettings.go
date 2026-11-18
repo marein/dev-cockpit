@@ -209,7 +209,7 @@ func (s *Server) handleSettingsAssistantApprovals(c *gin.Context) {
 		Page:         s.page(c, "Settings", "settings"),
 		SettingsNav:  s.settingsNav("assistant"),
 		Section:      "approvals",
-		AllowedTools: AllowedTools(s.settings),
+		AllowedTools: allowedToolRows(s.settings),
 	}
 	for _, kind := range approvalKinds {
 		data.Approvals = append(data.Approvals, render.ApprovalRow{
@@ -233,7 +233,11 @@ func (s *Server) handleSettingsAssistantApprovalsSave(c *gin.Context) {
 	}
 	if tool, ok := c.GetPostForm("forget-tool"); ok {
 		forgetTool(s.settings, tool)
-		s.redirectWithFlash(c, assistantApprovalsSettingsPath, "Tool removed.", "")
+		if wantsJSON(c.Request) {
+			c.JSON(http.StatusOK, gin.H{"message": toolRemoved})
+			return
+		}
+		s.redirectWithFlash(c, assistantApprovalsSettingsPath, toolRemoved, "")
 		return
 	}
 	for _, kind := range approvalKinds {

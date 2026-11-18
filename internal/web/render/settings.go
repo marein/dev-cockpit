@@ -189,7 +189,15 @@ type SettingsAssistantApprovalsData struct {
 	SettingsNav  SettingsNav
 	Section      string
 	Approvals    []ApprovalRow
-	AllowedTools []string
+	AllowedTools []AllowedToolRow
+}
+
+// AllowedToolRow is one tool allowed for good: Tool its full name, Name its own
+// and Server the MCP server it comes from, empty for a coder's own tool.
+type AllowedToolRow struct {
+	Tool   string
+	Name   string
+	Server string
 }
 
 // ApprovalRow is one kind of approval on that tab; Ask is whether it waits for

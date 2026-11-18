@@ -17,13 +17,15 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // tells the turn with the cockpit's sentence, no note lands in the thread
 // either way. The assistant cannot answer it over the local socket. Stopping
 // the turn and deleting the assistant take the question along. The box stores
-// the tool for every assistant, its next call runs without a question, and the
-// Approvals tab (/settings/assistant/approvals) lists it under Always allowed
-// tools with a Remove that makes it ask again. The fake's INPUT:<kind> picks
-// the input: a shell command with && and redirections shows as it will run, a
-// multi line Write with its line breaks, a Write of 98 KB of minified JSON and
-// one of 1 MB with their first 64 KiB and the cut note, markup as text that
-// stays out of the news. RESTART_WAIT restarts the cockpit while the question
+// the tool for every Claude assistant, its next call runs without a question,
+// and the Approvals tab (/settings/assistant/approvals) lists it under Always
+// allowed Claude tools by its own name, its MCP server and its full name, with
+// a Remove that makes it ask again. On the phone Remove takes the row out in
+// place, without a navigation, counts down, toasts "Tool removed." and ends in
+// the empty state, which a reload keeps. The fake's INPUT:<kind> picks the
+// input: a shell command with && and redirections shows as it will run, a multi line Write with its
+// line breaks, a Write of 98 KB of minified JSON and one of 1 MB with their
+// first 64 KiB and the cut note, markup as text that stays out of the news. RESTART_WAIT restarts the cockpit while the question
 // waits, which denies the call with one sentence.
 //
 // Instance: the assistant shape of the README (tests/e2e/fakes ahead of the
@@ -34,6 +36,7 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 const APISOCK = process.env.APISOCK || "/apisock/s";
 const DIALOG = ".swal2-popup:not(.swal2-toast)";
 const TOOL = "mcp__claude_ai_Slack__slack_search_channels";
+const APPROVALS = "/settings/assistant/approvals";
 const DENIED = "denied: The user denied this tool call in the cockpit.";
 const CUT = "Only the first 64 KiB are shown, the run takes the whole value.";
 
@@ -135,7 +138,66 @@ async function newAssistant(page) {
   return id;
 }
 
-L.runFeature("TOOL APPROVALS", async ({ page, run }) => {
+// allowForGood approves a call of the tool with Always allow this tool ticked.
+async function allowForGood(page, id, tool) {
+  await ask(page, id, `PERMIT:${tool}`);
+  await waitQuestion(page);
+  await page.check(`${DIALOG} .swal2-checkbox input`);
+  await page.click(`${DIALOG} .swal2-confirm`);
+  await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
+  const answer = await lastAnswer(page);
+  assert(answer.text === `Tool ${tool}: allowed`, `the approved call of ${tool} answered "${answer.text}"`);
+}
+
+// allowedList reads the list the way a person sees it: the tools shown, the
+// count beside the head and whether the empty state stands.
+async function allowedList(page) {
+  return page.evaluate(() => {
+    const seen = (el) => {
+      if (!el) return false;
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0;
+    };
+    const count = document.querySelector("[data-allowed-tools-count]");
+    return {
+      tools: [...document.querySelectorAll("[data-allowed-tool]")].filter(seen).map((row) => row.dataset.allowedTool),
+      count: seen(count) ? count.textContent.trim() : "",
+      empty: seen(document.querySelector("[data-allowed-tools-empty]")),
+    };
+  });
+}
+
+// watchApprovals counts the requests to the Approvals tab by method, and marks
+// the list, so a navigation of any kind, pe.js's swap included, shows.
+async function watchApprovals(page) {
+  const seen = { GET: 0, POST: 0 };
+  const count = (req) => {
+    if (new URL(req.url()).pathname === APPROVALS) seen[req.method()] = (seen[req.method()] || 0) + 1;
+  };
+  page.on("request", count);
+  await page.evaluate(() => { document.querySelector("dc-allowed-tools").dataset.e2eStay = "1"; });
+  return {
+    seen,
+    async stayed() {
+      return page.evaluate(() => document.querySelector("dc-allowed-tools")?.dataset.e2eStay === "1");
+    },
+    stop: () => page.off("request", count),
+  };
+}
+
+async function toastSays(page, text) {
+  await page.waitForFunction((want) => [...document.querySelectorAll("[data-dc-toasts] .toast.show")]
+    .some((toast) => toast.textContent.includes(want)), text, { timeout: 8000 });
+}
+
+// openApprovals opens the tab and waits for the list's element.
+async function openApprovals(page) {
+  await page.goto(`${BASE}${APPROVALS}`, { waitUntil: "domcontentloaded" });
+  assert((await L.waitUpgraded(page, ["dc-allowed-tools"])).length === 0, "dc-allowed-tools did not upgrade");
+}
+
+L.runFeature("TOOL APPROVALS", async ({ page, run, mobilePage }) => {
   let assistantID = "";
 
   await run("an assistant is made for the checks", async () => {
@@ -209,12 +271,7 @@ L.runFeature("TOOL APPROVALS", async ({ page, run }) => {
   });
 
   await run("Always allow this tool stores it and its next call runs without asking", async () => {
-    await ask(page, assistantID);
-    await waitQuestion(page);
-    await page.check(`${DIALOG} .swal2-checkbox input`);
-    await page.click(`${DIALOG} .swal2-confirm`);
-    await page.waitForSelector(DIALOG, { state: "detached", timeout: 8000 });
-    assert((await lastAnswer(page)).text === `Tool ${TOOL}: allowed`, "the approved call did not run");
+    await allowForGood(page, assistantID, TOOL);
     const other = await newAssistant(page);
     await ask(page, other);
     const answer = await lastAnswer(page);
@@ -225,17 +282,60 @@ L.runFeature("TOOL APPROVALS", async ({ page, run }) => {
     assert(gone.status() === 200, `the other assistant's delete answered ${gone.status()}`);
   });
 
-  await run("the Approvals tab lists the tool and Remove makes it ask again", async () => {
-    await page.goto(`${BASE}/settings/assistant/approvals`, { waitUntil: "domcontentloaded" });
+  await run("the Approvals tab lists the tool under its heading by its name, its server and its full name", async () => {
+    await openApprovals(page);
     const row = `[data-allowed-tool="${TOOL}"]`;
     assert(await shown(page, row), "the tab does not show the tool");
     assert(!(await shown(page, "[data-allowed-tools-empty]")), "the tab says no tool");
-    assert((await page.textContent(`${row} code`)).trim() === TOOL, "the row does not name the tool");
-    await Promise.all([page.waitForURL(/\/settings\/assistant\/approvals/), page.click(`${row} button[type="submit"]`)]);
-    await page.waitForSelector("[data-allowed-tools-empty]", { timeout: 8000 });
-    assert(!(await shown(page, row)), "the removed tool still shows");
-    assert(await shown(page, "[data-allowed-tools-empty]"), "the empty list says nothing");
-    const save = await page.request.post(`${BASE}/settings/assistant/approvals`, { form: { csrf_token: await csrfOf(page), "forget-tool": TOOL } });
+    const named = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      const text = (part) => (el.querySelector(`[data-allowed-tool-${part}]`)?.textContent || "").trim();
+      const section = document.querySelector("dc-allowed-tools");
+      return {
+        heading: section.querySelector("h3").textContent.trim(),
+        hint: section.querySelector("[data-allowed-tools-hint]").textContent.trim(),
+        name: text("name"), server: text("server"), full: text("full"),
+        count: section.querySelector("[data-allowed-tools-count]").textContent.trim(),
+        remove: el.querySelector('button[type="submit"]').getAttribute("aria-label"),
+      };
+    }, row);
+    assert(named.heading === "Always allowed Claude tools", `the heading reads "${named.heading}"`);
+    const hint = "When a Claude assistant wants a tool that needs approval, like a Slack connector, it asks you first. The tools below run without asking. OpenCode and Copilot assistants never ask.";
+    assert(named.hint === hint, `the description reads "${named.hint}"`);
+    assert(named.name === "slack_search_channels" && named.server === "claude_ai_Slack" && named.full === TOOL, `the row reads ${JSON.stringify(named)}`);
+    assert(named.count === "1" && named.remove === `Remove ${TOOL}`, `the count and the Remove read ${JSON.stringify(named)}`);
+  });
+
+  await run("on the phone Remove takes two tools out in place, counts down and ends in the empty state", async () => {
+    await allowForGood(page, assistantID, "WebFetch");
+    const phone = await mobilePage();
+    await dismissUpdate(phone);
+    await openApprovals(phone);
+    const before = await allowedList(phone);
+    assert(JSON.stringify(before.tools) === JSON.stringify(["WebFetch", TOOL]) && before.count === "2" && !before.empty, `the list reads ${JSON.stringify(before)}`);
+    const watch = await watchApprovals(phone);
+    await phone.locator('[data-allowed-tool="WebFetch"] button[type="submit"]').tap();
+    await phone.waitForSelector('[data-allowed-tool="WebFetch"]', { state: "detached", timeout: 8000 });
+    await toastSays(phone, "Tool removed.");
+    const one = await allowedList(phone);
+    assert(JSON.stringify(one.tools) === JSON.stringify([TOOL]) && one.count === "1" && !one.empty, `after one remove the list reads ${JSON.stringify(one)}`);
+    // The row slid up under the finger, a tap on it within 350 ms is not taken.
+    await sleep(400);
+    await phone.locator(`[data-allowed-tool="${TOOL}"] button[type="submit"]`).tap();
+    await phone.waitForSelector("[data-allowed-tool]", { state: "detached", timeout: 8000 });
+    watch.stop();
+    const none = await allowedList(phone);
+    assert(none.tools.length === 0 && none.count === "" && none.empty, `after the last remove the list reads ${JSON.stringify(none)}`);
+    assert(await watch.stayed() && watch.seen.POST === 2 && watch.seen.GET === 0 && new URL(phone.url()).pathname === APPROVALS, `the removes navigated: ${JSON.stringify(watch.seen)} ${phone.url()}`);
+  });
+
+  await run("after a reload the removed tools stay gone and a removed tool asks again", async () => {
+    const phone = await mobilePage();
+    await openApprovals(phone);
+    const list = await allowedList(phone);
+    assert(list.tools.length === 0 && list.count === "" && list.empty, `the reloaded list reads ${JSON.stringify(list)}`);
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    const save = await page.request.post(`${BASE}${APPROVALS}`, { form: { csrf_token: await csrfOf(page), "forget-tool": TOOL } });
     assert(save.status() < 400, `a second remove answered ${save.status()}`);
     await ask(page, assistantID);
     await waitQuestion(page);

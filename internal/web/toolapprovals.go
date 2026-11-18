@@ -15,6 +15,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/settings"
+	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
 // A turn runs without anybody at its terminal, so a tool call its coder would
@@ -56,6 +57,7 @@ var toolCallPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 // each says what happened and what to do instead of trying again.
 const (
 	toolRememberLabel = "Always allow this tool"
+	toolRemoved       = "Tool removed."
 	toolDeclined      = "The user denied this tool call in the cockpit. Do not call it again for the same purpose; go on without it or tell the user what you could not do."
 	toolExpired       = "Nobody answered the approval of this tool call within %d minutes, so it was denied. Do not call it again in this turn; tell the user it needs their approval."
 	toolWithdrawn     = "The approval of this tool call was withdrawn before the user answered."
@@ -108,11 +110,12 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 		details = append(details, askpass.Detail{Label: label, Value: field.Value, As: askpass.AsCode, Cut: field.Cut})
 	}
 	tool := req.Tool
+	_, name := toolParts(tool)
 	verdict, err := s.approvals.Await(c.Request.Context(), approval.Request{
 		Owner:         owner,
 		Kind:          toolApprovalKind,
 		Key:           owner + "/" + req.Call,
-		What:          "Use the tool " + toolShortName(tool),
+		What:          "Use the tool " + name,
 		Icon:          "tool",
 		Details:       details,
 		RememberLabel: toolRememberLabel,
@@ -132,15 +135,27 @@ func (s *Server) handleToolApproval(c *gin.Context) {
 	}
 }
 
-// toolShortName is the tool's own name without the server an MCP tool comes
-// from, the part a person recognises in the one line the question is read by.
-func toolShortName(tool string) string {
+// toolParts splits an MCP tool, mcp__<server>__<tool>, into the server it
+// comes from and its own name, the part a person recognises. Any other tool is
+// its own name and comes from no server.
+func toolParts(tool string) (server, name string) {
 	if rest, ok := strings.CutPrefix(tool, "mcp__"); ok {
-		if i := strings.LastIndex(rest, "__"); i >= 0 && i+2 < len(rest) {
-			return rest[i+2:]
+		if i := strings.LastIndex(rest, "__"); i > 0 && i+2 < len(rest) {
+			return rest[:i], rest[i+2:]
 		}
 	}
-	return tool
+	return "", tool
+}
+
+// allowedToolRows are the tools allowed for good as the Approvals tab lists them.
+func allowedToolRows(store *settings.Store) []render.AllowedToolRow {
+	tools := AllowedTools(store)
+	rows := make([]render.AllowedToolRow, 0, len(tools))
+	for _, tool := range tools {
+		server, name := toolParts(tool)
+		rows = append(rows, render.AllowedToolRow{Tool: tool, Name: name, Server: server})
+	}
+	return rows
 }
 
 // AllowedTools are the tools the user allowed for good, sorted. A value that
