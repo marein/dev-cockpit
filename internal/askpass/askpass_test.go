@@ -91,6 +91,51 @@ func TestAskRoundTripDeliversTheAnswer(t *testing.T) {
 	}
 }
 
+// A git question carries the kind of caller its action runs for, set before
+// the helper asks, and nothing where none was set.
+func TestAQuestionNamesWhoTheActionRunsFor(t *testing.T) {
+	b := bridge(t)
+	for by, icon := range map[string]string{"Coder": "robot", "": ""} {
+		a := b.Begin("demo", "push")
+		if by != "" {
+			a.SetBy(by, icon)
+		}
+		go func() { _, _ = Ask(b.socketPath, a.token, "Enter passphrase for key '/zz/k':") }()
+		if q := waitQuestion(t, a); q.By != by || q.Icon != icon || q.Action != "push" {
+			t.Fatalf("the question reads %+v", q)
+		}
+		a.End()
+	}
+}
+
+// A proxied command's question names who the command runs for, read when a
+// helper asks and again for its next question, and nothing where no namer
+// was set or it found nobody.
+func TestAQuestionNamesWhoItsCommandRunsFor(t *testing.T) {
+	b := bridge(t)
+	for _, want := range []string{"fix-login in shop", "", "-"} {
+		a := b.BeginCommand("shop", "push", "git push", "/zz/shop")
+		var asked atomic.Int32
+		if want != "-" {
+			a.SetNamer(func() string { asked.Add(1); return want })
+		}
+		for i := 1; i <= 2; i++ {
+			go func() { _, _ = Ask(b.socketPath, a.token, "Enter passphrase for key '/zz/k':") }()
+			q := waitQuestion(t, a)
+			if name := strings.TrimPrefix(want, "-"); q.Name != name || q.Command != "git push" || q.Dir != "/zz/shop" {
+				t.Fatalf("question %d of namer %q reads %+v", i, want, q)
+			}
+			if !a.Answer(q.ID, "x", false) {
+				t.Fatalf("question %d of namer %q took no answer", i, want)
+			}
+		}
+		if want != "-" && asked.Load() != 2 {
+			t.Fatalf("the namer %q was asked %d times", want, asked.Load())
+		}
+		a.End()
+	}
+}
+
 // The negative side: cancel denies the helper, marks the action, and an
 // ended action denies a late asker instead of blocking it.
 func TestCancelAndEndDenyTheHelper(t *testing.T) {

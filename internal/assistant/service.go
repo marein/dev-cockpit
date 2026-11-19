@@ -88,6 +88,7 @@ type Service struct {
 	onDone    func(instanceID string)
 	onRetitle func(id string)
 	render    func(string) (string, error)
+	agent     []string
 
 	// events is the reactor: where an event a source publishes goes, and where
 	// the triggers live. Built with the service, see newReactor.
@@ -147,6 +148,13 @@ func (s *Service) retitled(id string) {
 	if s.onRetitle != nil {
 		s.onRetitle(id)
 	}
+}
+
+// SetAgent hands every turn started from now on, a chat turn, a check or a
+// reaction, the environment of the assistants' socket of the cockpit's ssh
+// agent. It is set at wiring time, before the first turn starts.
+func (s *Service) SetAgent(env []string) {
+	s.agent = env
 }
 
 // SetRenderer installs the Markdown renderer used while an answer streams. The
@@ -321,6 +329,21 @@ func (s *Service) RunningSince(id string) time.Time {
 		return a.rec.StartedAt
 	}
 	return time.Time{}
+}
+
+// TurnProcesses answers the process the cockpit started for every running
+// turn, chat, check and reaction alike, with the instance the turn belongs
+// to. Everything the turn runs descends from it.
+func (s *Service) TurnProcesses() map[int]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	turns := map[int]string{}
+	for _, a := range s.running {
+		if a.launched && a.proc.PID() > 0 {
+			turns[a.proc.PID()] = a.rec.Instance
+		}
+	}
+	return turns
 }
 
 // chatRunLocked is the user's own turn of one instance, if it is running. A

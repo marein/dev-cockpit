@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -14,6 +17,25 @@ import (
 // every question eventually — the action's own watchdog sees to that — so
 // this only catches a broker that died mid-question.
 const askBudget = 15 * time.Minute
+
+// Helper is the whole askpass helper: the token and the socket come from its
+// environment, the prompt line from its arguments, the answer goes to out.
+// It answers false for a denial, which the helper turns into its exit code
+// without a word of its own: whatever it wrote would end up in git's or ssh's
+// message as if they had said it.
+func Helper(args []string, out io.Writer) bool {
+	socket := os.Getenv("DC_ASKPASS_SOCKET")
+	token := os.Getenv("DC_ASKPASS_TOKEN")
+	if socket == "" || token == "" {
+		return false
+	}
+	answer, err := Ask(socket, token, strings.TrimSpace(strings.Join(args, " ")))
+	if err != nil {
+		return false
+	}
+	_, err = fmt.Fprintln(out, answer)
+	return err == nil
+}
 
 // Ask is the helper's one move: report the prompt over the broker's socket
 // and block until the person answered, was denied, or the action ended. It

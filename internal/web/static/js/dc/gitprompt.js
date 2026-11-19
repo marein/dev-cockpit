@@ -2,7 +2,7 @@ import { CLOSED_EVENT, fire, isVisible } from "@dc/dialog";
 import { onServerEvent } from "@dc/events";
 import { getJSON, postJSON, postForm } from "@dc/http";
 import { windowSeen } from "@dc/dom";
-import { approvalView, gitQuestionView } from "@dc/prompt-view";
+import { approvalView, gitQuestionView, sshKeyView } from "@dc/prompt-view";
 
 let shownId = "";
 let shownTarget = "";
@@ -22,6 +22,16 @@ async function showApproval(question) {
   await settle(question, result.isConfirmed || denied, {
     approve: result.isConfirmed,
     remember: result.isConfirmed && result.value === 1,
+  });
+}
+
+async function showSSHKey(question) {
+  const result = await fire({ ...sshKeyView(question), reverseButtons: true, allowOutsideClick: false });
+  const reason = window.Swal.DismissReason || {};
+  const denied = result.isDenied || result.dismiss === reason.cancel || result.dismiss === reason.esc;
+  await settle(question, result.isConfirmed || denied, {
+    answer: question.unlock && result.isConfirmed ? result.value || "" : "",
+    cancel: !result.isConfirmed,
   });
 }
 
@@ -47,6 +57,10 @@ async function show(question) {
   markSeen();
   if (question.kind === "approval") {
     await showApproval(question);
+    return;
+  }
+  if (question.kind === "ssh-key") {
+    await showSSHKey(question);
     return;
   }
   // Through @dc/dialog, not around it: the question can stand over an open

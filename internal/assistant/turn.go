@@ -54,6 +54,7 @@ func (s *Service) launch(rec *RunRecord, runner Runner, req TurnRequest) (detach
 	if err != nil {
 		return detach.Process{}, err
 	}
+	cmd.Env = append(cmd.Env, s.agent...)
 	out, errs, lock, err := s.runs.Files(rec.ID)
 	if err != nil {
 		log.Printf("assistant: no place for the output of turn %s: %v", rec.ID, err)

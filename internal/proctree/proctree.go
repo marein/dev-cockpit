@@ -5,11 +5,12 @@ package proctree
 type strategy interface {
 	// fill loads the whole table into t in a single shot when that is cheaper
 	// than per-PID reads (platforms without /proc). It returns true once
-	// children/cmdline/environ are populated; false leaves them to the lazy
-	// per-PID readers below.
+	// children/parent/cmdline/environ are populated; false leaves them to the
+	// lazy per-PID readers below.
 	fill(t *Tree) bool
 
 	childrenOf(pid int) []int
+	parentOf(pid int) int
 	cmdlineOf(pid int) []string
 	cwdOf(pid int) string
 	environOf(pid int) map[string]string
@@ -24,8 +25,9 @@ var processTree strategy = newStrategy()
 // Environ checked per candidate) never refork.
 type Tree struct {
 	s        strategy
-	bulk     bool // children/cmdline/environ already loaded by fill
+	bulk     bool // children/parent/cmdline/environ already loaded by fill
 	children map[int][]int
+	parent   map[int]int
 	cmdline  map[int][]string
 	environ  map[int]map[string]string
 	cwd      map[int]string
@@ -37,6 +39,7 @@ func Capture() *Tree {
 	t := &Tree{
 		s:        processTree,
 		children: map[int][]int{},
+		parent:   map[int]int{},
 		cmdline:  map[int][]string{},
 		environ:  map[int]map[string]string{},
 		cwd:      map[int]string{},
@@ -60,6 +63,18 @@ func (t *Tree) Descendants(rootPID int) []int {
 		seen[pid] = true
 		result = append(result, pid)
 		pending = append(pending, t.childrenOf(pid)...)
+	}
+	return result
+}
+
+// Ancestors returns the parent of the given process, its parent and so on up
+// to the root of the table, nearest first.
+func (t *Tree) Ancestors(pid int) []int {
+	seen := map[int]bool{pid: true}
+	var result []int
+	for p := t.parentOf(pid); p > 0 && !seen[p]; p = t.parentOf(p) {
+		seen[p] = true
+		result = append(result, p)
 	}
 	return result
 }
@@ -113,5 +128,17 @@ func (t *Tree) childrenOf(pid int) []int {
 	}
 	v := t.s.childrenOf(pid)
 	t.children[pid] = v
+	return v
+}
+
+func (t *Tree) parentOf(pid int) int {
+	if t.bulk {
+		return t.parent[pid]
+	}
+	if v, ok := t.parent[pid]; ok {
+		return v
+	}
+	v := t.s.parentOf(pid)
+	t.parent[pid] = v
 	return v
 }

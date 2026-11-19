@@ -120,7 +120,10 @@ func runGitProxy(stdout, stderr io.Writer, stateDir string, args []string) (int,
 	if err != nil {
 		return 0, err
 	}
-	answer, err := client.PostJSON("/git", map[string]any{"cwd": cwd, "args": args}, gitProxyTimeout)
+	// The socket of the cockpit's ssh agent in this process's environment
+	// names the kind of caller it signs as, the server reads which one.
+	body := map[string]any{"cwd": cwd, "args": args, "sshAuthSock": os.Getenv("SSH_AUTH_SOCK")}
+	answer, err := client.PostJSON("/git", body, gitProxyTimeout)
 	if err != nil {
 		return 0, err
 	}

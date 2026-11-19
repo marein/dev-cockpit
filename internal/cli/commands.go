@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/marein/dev-cockpit/internal/askpass"
 	"github.com/marein/dev-cockpit/internal/config"
@@ -31,24 +30,10 @@ func newAskpassCommand() *cobra.Command {
 		DisableFlagParsing: true,
 		SilenceErrors:      true,
 		SilenceUsage:       true,
-		// A denial exits silently: whatever this command wrote would end up
-		// in git's error message as if git had said it, and the server
-		// already words the refusal.
 		Run: func(cmd *cobra.Command, args []string) {
-			socket := os.Getenv("DC_ASKPASS_SOCKET")
-			token := os.Getenv("DC_ASKPASS_TOKEN")
-			if socket == "" || token == "" {
+			if !askpass.Helper(args, os.Stdout) {
 				os.Exit(1)
 			}
-			prompt := ""
-			if len(args) > 0 {
-				prompt = strings.TrimSpace(strings.Join(args, " "))
-			}
-			answer, err := askpass.Ask(socket, token, prompt)
-			if err != nil {
-				os.Exit(1)
-			}
-			fmt.Println(answer)
 		},
 	}
 }

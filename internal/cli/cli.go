@@ -405,6 +405,10 @@ func runServe(opts serveOptions) error {
 	// for whoever was steering it.
 	jobs := assistant.NewJobs(assistant.NewStore(cfg.StateDir))
 
+	// The agent stands before the startup restore, whose sessions get their
+	// socket like every other.
+	agent := newSSHAgent(cfg.StateDir, settingsStore, coders, shells, conversations)
+
 	// The startup pass runs before the watchers and the server, so restored
 	// sessions are in place when the first page renders. Off by default, the
 	// snapshot file itself is kept current regardless of the setting.
@@ -573,7 +577,7 @@ func runServe(opts serveOptions) error {
 	}
 	defer localListener.Close()
 	go func() {
-		if err := (&http.Server{Handler: srv.LocalHandler()}).Serve(localListener); err != nil {
+		if err := (&http.Server{Handler: srv.LocalHandler(), ConnContext: localapi.ConnContext}).Serve(localListener); err != nil {
 			log.Printf("the local API stopped: %v", err)
 		}
 	}()
@@ -597,6 +601,7 @@ func runServe(opts serveOptions) error {
 		return fmt.Errorf("failed to write the askpass helper: %w", err)
 	}
 	srv.SetAskpass(askBroker, askScript)
+	srv.SetSSHAgent(agent)
 	costs.SetOnChange(func() { bus.Publish(eventbus.Event{Type: "costs"}) })
 	srv.SetCosts(costs, prices)
 	forgeService := forge.New(cfg.StateDir, []forge.Provider{forgegithub.Provider{}, forgegitlab.Provider{}}, forgegithub.Builtin(), forgegitlab.Builtin())
@@ -659,6 +664,7 @@ func runServe(opts serveOptions) error {
 	// After the server is up, so the change callback is wired before the
 	// first list can move the state. A machine without a daemon just idles.
 	go dockerService.Run(context.Background())
+	go agent.Run(context.Background(), agentRound)
 	go costs.Run(costPollInterval, costOwners(coders, conversations))
 	go prices.Run(context.Background())
 	// The forge poller keeps the status of the bound projects' branches the

@@ -98,6 +98,7 @@ type Shells struct {
 	streams        *terminal.Hub
 	listCache      *shellsCache
 	historyEnabled func() bool
+	agent          map[string]string
 }
 
 // NewShells wires up Shells with its dependencies. historyEnabled reads the
@@ -115,6 +116,13 @@ func NewShells(cfg config.Config, t *tmux.Client, projects *project.Repository, 
 		listCache:      &shellsCache{ttl: cfg.SnapshotCacheTTL},
 		historyEnabled: historyEnabled,
 	}
+}
+
+// SetAgent hands every shell started from now on the shells' socket of the
+// cockpit's ssh agent. It is set at wiring time, before the first shell
+// starts.
+func (s *Shells) SetAgent(env map[string]string) {
+	s.agent = env
 }
 
 // List returns every live shell session, sorted by tmux's pane order. The result
@@ -229,7 +237,7 @@ func (s *Shells) start(workdir, name, key, command string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.tmux.NewSession(key, dir, command, env); err != nil {
+	if err := s.tmux.NewSession(key, dir, command, terminal.WithAgent(env, s.agent)); err != nil {
 		return "", err
 	}
 	if err := s.tmux.SetOption(key, shellNameOption, label); err != nil {

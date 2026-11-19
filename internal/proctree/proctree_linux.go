@@ -33,6 +33,29 @@ func (procStrategy) childrenOf(pid int) []int {
 	return out
 }
 
+// parentOf reads the parent from /proc/<pid>/stat. The name in parentheses
+// before it may hold spaces and parentheses of its own, so the fields are
+// counted from the last closing one.
+func (procStrategy) parentOf(pid int) int {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0
+	}
+	i := bytes.LastIndexByte(data, ')')
+	if i < 0 {
+		return 0
+	}
+	fields := strings.Fields(string(data[i+1:]))
+	if len(fields) < 2 {
+		return 0
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0
+	}
+	return ppid
+}
+
 func (procStrategy) cmdlineOf(pid int) []string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {

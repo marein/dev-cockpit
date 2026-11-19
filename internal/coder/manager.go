@@ -53,6 +53,9 @@ type Manager struct {
 	// the start default. Read on every start, so a change applies to the
 	// next session; nil, which a test manager has, means none is stored.
 	modelDefaults func() assistant.ModelDefaults
+	// agent is the environment that points a session at the coders' socket
+	// of the cockpit's ssh agent, nil where the cockpit serves none.
+	agent map[string]string
 }
 
 // NewManager wires up a coder Manager with its dependencies.
@@ -86,6 +89,12 @@ func (s *Manager) SetHidden(hidden func(sessionID string) bool) {
 // see Start.
 func (s *Manager) SetModelDefaults(defaults func() assistant.ModelDefaults) {
 	s.modelDefaults = defaults
+}
+
+// SetAgent hands every session started from now on the coders' socket of the
+// cockpit's ssh agent. It is set at wiring time, before the first start.
+func (s *Manager) SetAgent(env map[string]string) {
+	s.agent = env
 }
 
 // visibleSessions is the stored session list with the hidden ones removed.
@@ -249,7 +258,8 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 	}
 	shellCmd := s.coder.SessionRuntime().StartCommand(start)
 	s.trustWorkdir(workdir)
-	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, s.coder.SessionRuntime().Env()); err != nil {
+	env := terminal.WithAgent(s.coder.SessionRuntime().Env(), s.agent)
+	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, env); err != nil {
 		return StartResult{}, err
 	}
 	if starter, ok := s.coder.SessionRuntime().(SessionStarter); ok {
@@ -303,7 +313,8 @@ func (s *Manager) resume(stored Session, checked bool) (Session, error) {
 	}
 	cmd := s.coder.SessionRuntime().ResumeCommand(stored.SessionID, stored.CWD, true)
 	s.trustWorkdir(stored.CWD)
-	if err := s.tmux.NewSession(stored.SessionID, stored.CWD, cmd, s.coder.SessionRuntime().Env()); err != nil {
+	env := terminal.WithAgent(s.coder.SessionRuntime().Env(), s.agent)
+	if err := s.tmux.NewSession(stored.SessionID, stored.CWD, cmd, env); err != nil {
 		return Session{}, err
 	}
 	if err := s.configureTerminal(stored.SessionID); err != nil {

@@ -19,7 +19,7 @@ func newStrategy() strategy { return psStrategy{} }
 // processes; this caps the table reads at two forks total. CWD stays lazy (it
 // forks lsof) because the common ID-matched path never needs it.
 func (psStrategy) fill(t *Tree) bool {
-	children, cmdline, ok := psTable()
+	children, parent, cmdline, ok := psTable()
 	if !ok {
 		return false
 	}
@@ -28,18 +28,21 @@ func (psStrategy) fill(t *Tree) bool {
 		return false
 	}
 	t.children = children
+	t.parent = parent
 	t.cmdline = cmdline
 	t.environ = environ
 	return true
 }
 
-// psTable returns pid->children and pid->argv from a single `ps` invocation.
-func psTable() (children map[int][]int, cmdline map[int][]string, ok bool) {
+// psTable returns pid->children, pid->parent and pid->argv from a single `ps`
+// invocation.
+func psTable() (children map[int][]int, parent map[int]int, cmdline map[int][]string, ok bool) {
 	out, err := exec.Command("ps", "-axww", "-o", "pid=,ppid=,command=").Output()
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	children = map[int][]int{}
+	parent = map[int]int{}
 	cmdline = map[int][]string{}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
@@ -52,11 +55,12 @@ func psTable() (children map[int][]int, cmdline map[int][]string, ok bool) {
 			continue
 		}
 		children[ppid] = append(children[ppid], pid)
+		parent[pid] = ppid
 		if len(fields) > 2 {
 			cmdline[pid] = fields[2:]
 		}
 	}
-	return children, cmdline, true
+	return children, parent, cmdline, true
 }
 
 // psEnviron returns pid->environment from a single `ps -E` invocation.
@@ -91,11 +95,19 @@ func parseEnviron(tokens []string) map[string]string {
 }
 
 func (psStrategy) childrenOf(pid int) []int {
-	children, _, ok := psTable()
+	children, _, _, ok := psTable()
 	if !ok {
 		return nil
 	}
 	return children[pid]
+}
+
+func (psStrategy) parentOf(pid int) int {
+	_, parent, _, ok := psTable()
+	if !ok {
+		return 0
+	}
+	return parent[pid]
 }
 
 func (psStrategy) cmdlineOf(pid int) []string {

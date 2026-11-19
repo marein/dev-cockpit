@@ -3,6 +3,7 @@ package localapi
 import (
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -235,5 +236,35 @@ func TestTheSocketDoesNotDependOnTheSpelling(t *testing.T) {
 	}
 	if SocketPath(spelled) != SocketPath(filepath.Join(dir, "sub")) {
 		t.Fatalf("%q and %q resolve to different sockets", spelled, filepath.Join(dir, "sub"))
+	}
+}
+
+// A request over the socket carries the process that connected, as the
+// kernel recorded it, and a request that came another way carries none.
+func TestARequestCarriesTheProcessThatSentIt(t *testing.T) {
+	dir := t.TempDir()
+	listener, err := Listen(dir)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	peers := make(chan int, 1)
+	server := &http.Server{ConnContext: ConnContext, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		peers <- PeerPID(r.Context())
+		_, _ = w.Write([]byte(`{}`))
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	client, err := Dial(dir, "")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	if _, err := client.GetJSON("/", time.Second); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if pid := <-peers; pid != os.Getpid() {
+		t.Fatalf("the request carries %d, want %d", pid, os.Getpid())
+	}
+	if pid := PeerPID(httptest.NewRequest(http.MethodGet, "/", nil).Context()); pid != 0 {
+		t.Fatalf("a request of another way carries %d", pid)
 	}
 }

@@ -32,6 +32,8 @@ const ASKS = [
 
 const mark = (name) => (NAME.test(name || "") ? ` ${name}` : "");
 const icon = (name) => `<i class="ti ti-${/^[a-z0-9-]+$/.test(name || "") ? name : "help"}" aria-hidden="true"></i>`;
+const by = (name, glyph, tag) => `<span class="dc-ask-by">${icon(glyph)}<span class="dc-ask-who" ${tag}>${escapeHtml(name)}</span></span>`;
+const SEP = '<span class="dc-ask-sep">·</span>';
 const cut = (detail) => (detail.cut
   ? `<div class="dc-ask-note mt-1" data-approval-cut>${icon("scissors")}<div>Only the first 64 KiB are shown, the run takes the whole value.</div></div>`
   : "");
@@ -176,7 +178,8 @@ function command(question) {
   if (!question.command) return "";
   const text = `${question.dir ? `<span class="text-secondary">${escapeHtml(question.dir)}</span>\n` : ""}`
     + `<span class="dc-ask-ps">$</span> ${escapeHtml(question.command)}`;
-  return `<div class="dc-ask-section">${code("command", text, "data-gitprompt-command")}</div>`;
+  const who = question.name ? ` · <span class="dc-ask-who" data-gitprompt-name>${escapeHtml(question.name)}</span>` : "";
+  return `<div class="dc-ask-section">${code(question.head || "command", text, "data-gitprompt-command", who)}</div>`;
 }
 
 function head(name, title, meta, what = " data-approval-what") {
@@ -224,9 +227,10 @@ export function gitQuestionView(question) {
   const line = question.prompt || "An answer is needed to continue.";
   const ask = ASKS.find((a) => a.test.test(line)) || { title: "Git asks a question", by: "git" };
   const secret = /pass(word|phrase)|secret|token|pin\b/i.test(line);
-  const meta = question.command
-    ? ""
-    : `<span>git ${escapeHtml(question.action)} in <span class="dc-ask-who">${escapeHtml(question.project)}</span></span>`;
+  const meta = [
+    question.by ? by(question.by, question.icon, "data-gitprompt-caller") : "",
+    question.command ? "" : `<span>git ${escapeHtml(question.action)} in <span class="dc-ask-who">${escapeHtml(question.project)}</span></span>`,
+  ].filter(Boolean).join(SEP);
   return {
     html: head("key", ask.title, meta)
       + `<div class="dc-ask-body"><div class="dc-ask-prompt font-monospace dc-prompt-text">${escapeHtml(line)}</div>${command(question)}`
@@ -244,6 +248,37 @@ export function gitQuestionView(question) {
       input: "form-control",
       confirmButton: "btn btn-primary",
       cancelButton: "btn",
+    },
+  };
+}
+
+export function sshKeyView(question) {
+  const unlock = Boolean(question.unlock);
+  const meta = by(question.action, question.icon, "data-ssh-key-caller")
+    + `${SEP}<span class="dc-ask-by">${icon("clock")}<span>waits up to 2 min</span></span>`;
+  const retry = question.retry ? [{ as: "warning", value: "The passphrase did not open the key.", mark: "data-ssh-key-retry" }] : [];
+  const note = unlock
+    ? `${icon("shield-lock")}<div>The cockpit hands it to ssh-add and never keeps it. The key opens in the ssh-agent of every caller, for the time set under Settings, SSH agent.</div>`
+    : `${icon("info-circle")}<div>Denying fails this one signature.</div>`;
+  return {
+    html: head("key", unlock ? "Unlock your SSH key" : "Sign with your SSH key", meta, "")
+      + `<div class="dc-ask-body" data-ssh-key-details>${details([...retry, ...(question.details || [])])}`
+      + `${(question.callers || []).map(command).join("")}<div class="dc-ask-note">${note}</div></div>`,
+    width: "34rem",
+    ...(unlock && {
+      input: "password",
+      inputPlaceholder: "Passphrase",
+      inputAttributes: { autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "Passphrase" },
+    }),
+    showDenyButton: true,
+    confirmButtonText: unlock ? "Unlock and sign" : "Allow",
+    denyButtonText: "Deny",
+    buttonsStyling: false,
+    customClass: {
+      popup: popup("git", " dc-ask-plain"),
+      input: "form-control",
+      confirmButton: "btn btn-primary",
+      denyButton: "btn",
     },
   };
 }

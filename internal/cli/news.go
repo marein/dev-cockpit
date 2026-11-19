@@ -60,6 +60,22 @@ func notifyResolver(coders []*coder.Manager, shells *shell.Shells, conversations
 			info.Title, info.Detail = approvalNews(who, what)
 			return info
 		}
+		if notify.IsSSHKeyTarget(targetID) {
+			// Written while the question stands, so its caller is the one it
+			// is about. The dialog is app-wide, so the entry leads home.
+			key := askpass.SSHKeyKey(notify.SSHKeyTargetID(targetID))
+			info.Name = "SSH key"
+			info.URL = "/projects"
+			who := ""
+			for _, q := range askBroker.Questions() {
+				if q.Key == key {
+					who = q.Action
+					break
+				}
+			}
+			info.Title, info.Detail = sshKeyNews(who)
+			return info
+		}
 		if notify.IsDockerTarget(targetID) {
 			project := notify.DockerTargetProject(targetID)
 			info.Name = "Compose"
@@ -209,6 +225,15 @@ func approvalNews(who, what string) (title, detail string) {
 		what = "an action"
 	}
 	return "Assistant asks approval.", newsDetail(who, what)
+}
+
+// sshKeyNews is what a standing question of the ssh agent says: a key is
+// wanted, and below it the kind of caller that wants it ("Shell").
+func sshKeyNews(who string) (title, detail string) {
+	if who == "" {
+		who = "A terminal"
+	}
+	return "SSH key wanted.", newsDetail(who, "")
 }
 
 // composeNews is what a finished docker compose run says: how it went, and

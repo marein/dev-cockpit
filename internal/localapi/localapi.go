@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/filesystem"
+	"github.com/marein/dev-cockpit/internal/proctree"
 )
 
 // Reaching the socket says the caller is on this machine and may act. It does
@@ -93,13 +94,8 @@ func resolve(stateDir string) string {
 // connections.
 func Listen(stateDir string) (net.Listener, error) {
 	path := SocketPath(stateDir)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	// MkdirAll applies the umask and leaves an existing directory alone, so the
-	// mode is set explicitly. This is the access rule of the whole local API.
-	if err := os.Chmod(dir, 0o700); err != nil {
+	// The directory's permission is the access rule of the whole local API.
+	if err := filesystem.PrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -259,4 +255,20 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimSpace(s)
+}
+
+// peerKey keeps the process that connected with the requests it sends.
+type peerKey struct{}
+
+// ConnContext is the server's hook for every connection to the socket: it
+// keeps the process on the other end as the kernel recorded it, see PeerPID.
+func ConnContext(ctx context.Context, c net.Conn) context.Context {
+	return context.WithValue(ctx, peerKey{}, proctree.PeerPID(c))
+}
+
+// PeerPID answers the process that sent a request over the socket, 0 where it
+// is unknown. It names a caller for a person to read and decides nothing.
+func PeerPID(ctx context.Context) int {
+	pid, _ := ctx.Value(peerKey{}).(int)
+	return pid
 }

@@ -20,7 +20,9 @@ const { assert, BASE, sleep } = L;
 //     subcommand, are refused rather than proxied
 //   - a question raised by a call NO page started reaches the browser anyway:
 //     the runner sits on /projects, never opens an editor, and the app-wide
-//     dialog (@dc/gitprompt) comes up there
+//     dialog (@dc/gitprompt) comes up there, naming no kind of caller for a
+//     call that carries no socket of the cockpit's ssh agent, and nobody it
+//     runs for, the call comes from no terminal of the cockpit
 //   - a directory outside every project runs like any other, this is a proxy
 //     and no project surface
 //   - the same question is a notification, one entry per scope, so it
@@ -221,6 +223,15 @@ L.runFeature("GIT PROXY", async ({ page, ctx, run }) => {
       // The editor's question has no such block and keeps its line, which is
       // what tests/e2e/editor-git.js holds on to.
       assert(!question.includes(`git push in ${PROJECT}`), `the dialog repeats project and action: ${question}`);
+      // The call carries no socket of the cockpit's ssh agent, so its kind of
+      // caller is unknown and the head names none, see ssh-agent.js for the
+      // kinds.
+      assert(await page.locator("[data-gitprompt-caller]").count() === 0, "a call of no known kind names a caller");
+      assert(await page.locator(".swal2-popup .dc-ask-meta").evaluate((el) => getComputedStyle(el).display) === "none",
+        "the head of a call of no known kind shows a meta line");
+      // The CLI runs in this runner's container, in no terminal and no turn
+      // of the cockpit, so its command panel names nobody.
+      assert(await page.locator("[data-gitprompt-name]").count() === 0, "a call outside every terminal names somebody");
       assert(await page.getAttribute(".swal2-popup input.swal2-input", "type") === "password",
         "a passphrase field is not masked");
 

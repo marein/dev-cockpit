@@ -114,6 +114,22 @@ cannot show stays at that function, within the comment rule below.
   allowlisted root.
 - Secrets (webhook URLs, keys, passphrases, forge tokens) are stored 0600
   outside the shared settings store, or never stored and never logged.
+- The cockpit never parses, decrypts or holds a private key. OpenSSH's
+  `ssh-agent` holds them, one per kind of caller (UI, shells, coders,
+  assistants), started by `internal/sshagent`, and `ssh-add` loads them. A
+  passphrase passes through the cockpit to `ssh-add` over the askpass bridge,
+  stays a `[]byte`, is cleared after use and never stored, and the process is
+  not dumpable while the agents run. Each kind has one socket at a fixed path
+  in the state directory, a relay to its agent, under its own policy. Every
+  process of the user may open every socket, so a policy guards against an
+  accident, not against intent, and the process on the other end is shown in
+  the question, never decided by. A git action of the UI gets the UI's
+  socket for a browser alone, `dev-cockpit git` the one its caller's
+  `SSH_AUTH_SOCK` names, every other git call none. Nothing sets
+  `SSH_AUTH_SOCK` for the whole process.
+- A directory that holds a socket is made with `filesystem.PrivateDir`,
+  which takes no link, no directory of another user and none that ever
+  stood open to others, the feature then stays off.
 - HTTP to a user supplied URL (webhooks, Web Push, the Ollama host, the forge
   hosts) never follows redirects and refuses link local targets
   (`internal/netguard`). The exception is a plugin's release fetch
@@ -193,7 +209,7 @@ The layers are listed top down, a layer imports only the layers below it.
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
    `linecomment` (the editor's line comments, a forge's review notes
    among them),
-   `update`, `askpass`, `activity`, `hostinfo`, `terminalstate`, `cost`
+   `update`, `askpass`, `sshagent`, `activity`, `hostinfo`, `terminalstate`, `cost`
    (one ledger for every coder CLI, one source per CLI under it, `claude`,
    and the list prices by provider and model in `cost/price`) and `forge`
    (the forge a project's origin lives on, one subpackage per provider:
