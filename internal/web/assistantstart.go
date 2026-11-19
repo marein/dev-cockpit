@@ -11,14 +11,10 @@ import (
 // posts: the page's create with a name and a first message the new assistant
 // answers as if the user had sent it. When to run it is the assistant's
 // instructions' rule, on the user's word alone; the server checks the input.
-// A coder the call names wins, else the one the page's New offers. A first
-// message that could not go out after the assistant was made is reported
-// beside it, the assistant stands.
+// A first message that could not go out after the assistant was made is
+// reported beside it, the assistant stands.
 func (s *Server) assistantStart(c *gin.Context, coderID string) {
-	if coderID == "" {
-		coderID = s.assistantLastCoderID()
-	}
-	created, run, err := s.assistants.CreateWith(assistant.Handover{
+	created, run, err := s.startAssistant(assistant.Handover{
 		CoderID: coderID,
 		Name:    c.PostForm("name"),
 		Message: c.PostForm("message"),
@@ -32,4 +28,27 @@ func (s *Server) assistantStart(c *gin.Context, coderID string) {
 		answer["messageError"] = err.Error()
 	}
 	c.JSON(http.StatusOK, answer)
+}
+
+// startAssistant is the create with a name and a first message that
+// `assistant-new` and a plugin run. A coder the handover names wins, else
+// assistantDefaultCoderID.
+func (s *Server) startAssistant(h assistant.Handover) (assistant.Instance, assistant.Run, error) {
+	if h.CoderID == "" {
+		h.CoderID = s.assistantDefaultCoderID(s.assistants.Coders())
+	}
+	return s.assistants.CreateWith(h)
+}
+
+// assistantDefaultCoderID picks from coders the one a create without a coder
+// runs on: the one the page's New offers, else the first, as the service
+// takes it for an empty id. The plugins' coder list marks the same one.
+func (s *Server) assistantDefaultCoderID(coders []assistant.CoderInfo) string {
+	if id := s.assistantLastCoderID(); id != "" {
+		return id
+	}
+	if len(coders) > 0 {
+		return coders[0].ID
+	}
+	return ""
 }

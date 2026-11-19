@@ -59,7 +59,7 @@ func (h *Host) writeOn(id string, on bool) error {
 // configureOptional runs ConfigureServe with a fresh Serve. An error or a
 // panic there answers an error and ends the Serve's context.
 func (h *Host) configureOptional(o *optional) (s *Serve, err error) {
-	s, err = newCompiledServe(o.id, o.order, h.cfg.ProjectsDir, h.cfg.StateDir, h.projects)
+	s, err = newCompiledServe(o.id, o.order, h.cfg.ProjectsDir, h.cfg.StateDir, h.projects, h.cfg.Assistants)
 	if err != nil {
 		return nil, err
 	}

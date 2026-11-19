@@ -261,7 +261,7 @@ repository: semver tags, `dev-cockpit_<version>_<os>_<arch>.tar.gz` containing `
 
 Plugins are experimental and not part of the stable contract. Compiled and external plugins reach the same
 surface: every `Add` of `plugin.Serve`, `AddPage` included, is a manifest entry, and the `Serve` readers
-(`StateDir`, `PluginStateDir`, `ProjectsDir`, `Projects`) answer on the callback socket.
+(`StateDir`, `PluginStateDir`, `ProjectsDir`, `Projects`, `Assistants`) answer on the callback socket.
 
 | `plugin.Serve` | External plugin |
 | --- | --- |
@@ -274,6 +274,7 @@ surface: every `Add` of `plugin.Serve`, `AddPage` included, is a manifest entry,
 | `AddSettings`, `AddAssistantMemory` | `settings`, `memory` |
 | `StateDir`, `PluginStateDir`, `ProjectsDir` | Environment, and `GET /v1/plugin` on the callback socket |
 | `Projects().Create`, `Project.Changed` | `POST /v1/projects`, `POST /v1/projects/<name>/changed` |
+| `Assistants().Create`, `List`, `LastMessage`, `Coders` | `POST /v1/assistants`, `GET /v1/assistants`, `GET /v1/assistants/<id>/last-message`, `GET /v1/assistants/coders` |
 | `AddEventHandler` | `events`, streamed from `GET /v1/events` |
 | `Context`, ended at a switch off | `SIGTERM` to its process group, see [Process](#process) |
 
@@ -305,9 +306,10 @@ restarts and reaches every open page live, like an external plugin's.
   memory are applied with their overwrite rules, its page, rail entry, slot markup, routes, assets and event
   handlers appear on every open page without a reload.
 * Every switch off ends the `Serve`'s `Context` and removes what it added. Whatever `ConfigureServe` started
-  ends with `Context().Done()`. Its routes answer 404, its open page says it is not running, after a reload
-  too. Written settings and memory files stay, edits included, and so does its state directory. The next
-  switch on writes them only where the overwrite rule says so.
+  ends with `Context().Done()`, a call of `Assistants` through that `Serve` answers an error. Its routes
+  answer 404, its open page says it is not running, after a reload too. Written settings and memory files
+  stay, edits included, and so does its state directory. The next switch on writes them only where the
+  overwrite rule says so.
 * An error or panic in `ConfigureServe` refuses the switch on and the plugin stays off. One that fails at a
   start while switched on shows as broken, the cockpit starts anyway.
 * Ids are unique across compiled and external plugins, an optional plugin's id is taken while it is off.
@@ -384,10 +386,30 @@ HTTP on `DEV_COCKPIT_SOCKET` with `Authorization: Bearer <DEV_COCKPIT_TOKEN>`, J
 * `POST /v1/projects` with `{"name": "..."}`: creates the project like the projects page, `201` with `name`
   and `dir`, `409` when a project of that name has content. Every open page shows it.
 * `POST /v1/projects/<name>/changed`: announces that the project's content changed, `204`.
+* `POST /v1/assistants` with `{"name": "...", "message": "...", "coder_id": "..."}`, each optional: starts an
+  assistant like the New of the assistants page, `201` with `{"assistant": {...}}`, its fields as in the
+  list. The message is answered as if the user had sent it, a paid turn that nobody approves: a plugin is
+  trusted as installed. When the assistant was made but its first message could not go out, `error` stands
+  beside `assistant`.
+* `GET /v1/assistants`, optional `?contains=<word>` for the name or a message: `{"assistants": [...]}` in the
+  list's order, each with `id`, `name`, `named`, `coder_id`, `model`, `check_model`, `trigger_model`,
+  `created_at`, `last_message_at`, `message_count`, `preview`, `running`, `unfinished` and `url`.
+* `GET /v1/assistants/<id>/last-message`: the newest message with `id`, `role` (`user`, `assistant` or
+  `cockpit`), `text`, `headline` (a note's line), `time`, `state` (`complete`, `streaming`, `queued`,
+  `cancelled`, `failed` or `interrupted`), `error` and `model`. Without messages `id` is empty. `404` for an
+  id no assistant carries, deleted ones included.
+* `GET /v1/assistants/coders`: `{"coders": [...]}`, the coders `coder_id` takes in the order the assistants
+  page offers them, each with `id`, `name` as the cockpit shows it and `default`, set on the one a create
+  without `coder_id` runs on. That one follows the assistant opened last.
+* The JSON names are the Go fields of `plugin.Assistants`' inputs and outputs, and fields only get added. A
+  field or query parameter these calls do not know answers `400`, so a plugin notices a cockpit older than
+  the field.
 * `GET /v1/events`: server sent events of the sources in `events`, `job` (a steered job closed), `coder` (a
   coder ended its turn or asks) and `compose` (a compose run ended). One JSON object per `data:` line with
   `source`, `kind`, `target`, `time`, `headline`, `body` and `project`, a comment line every 15 seconds.
   Events are dropped while a stream lags behind.
+
+An answer may leave out a field whose value is empty, so a plugin reads every field with a default.
 
 #### Releases
 

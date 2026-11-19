@@ -41,7 +41,7 @@ func modelSettingsServer(t *testing.T) (*gin.Engine, *Server) {
 	if err != nil {
 		t.Fatalf("assistant: %v", err)
 	}
-	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil)
+	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ConfigureServe() = %v", err)
 	}

@@ -12,6 +12,11 @@ const { assert, sleep, BASE } = L;
 // optional compiled plugins. Routes /settings/plugins, /settings/plugins/new
 // and /plugins/<id>/, elements dc-plugin-list and dc-plugin-region.
 //
+// The plugins start assistants on the coders they list, so the instance MUST
+// run with tests/e2e/fakes ahead of the real CLIs on PATH and a scratch HOME,
+// like assistant.js: the fake claude and copilot answer MAGIC with AIRPORT
+// and no model is asked.
+//
 // Needs the plugins folder read write, the example read only, the host path
 // of the example and the notify inbox, which takes a coder signal the plugin
 // reads off its event stream:
@@ -171,6 +176,91 @@ const csrf = (page) => page.evaluate(() => document.querySelector('meta[name="cs
 async function fail(page, how) {
   const token = await csrf(page);
   return call(page, "/plugins/hello/fail", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": token }, body: JSON.stringify({ how }) });
+}
+
+// The assistants the plugins started, deleted at the end.
+const assistants = [];
+
+// pickCoder reads the coders a plugin lists, checks that its page's select
+// offers them in that order with the default picked, and answers the id to
+// start on: one beside the default where there are several, so the pick is
+// seen to arrive, else the default.
+async function pickCoder(p, prefix) {
+  const listed = JSON.parse((await call(p, `/plugins/${prefix}/assistants/coders`)).text).coders;
+  assert(listed.length > 0 && listed.every((c) => /^\w+$/.test(c.id) && c.name) && listed.filter((c) => c.default).length === 1,
+    `${prefix} lists the coders ${JSON.stringify(listed)}`);
+  const select = `[data-${prefix}-coders]`;
+  await p.waitForFunction(({ select, n }) => document.querySelector(select)?.options.length === n, { select, n: listed.length }, { timeout: 15000 });
+  await waitShown(p, select);
+  const offered = await p.evaluate((sel) => [...document.querySelector(sel).options].map((o) => ({ id: o.value, name: o.textContent, default: o.selected })), select);
+  const want = listed.map((c) => ({ id: c.id, name: c.name, default: c.default }));
+  assert(JSON.stringify(offered) === JSON.stringify(want), `${prefix}'s select offers ${JSON.stringify(offered)}, the list ${JSON.stringify(want)}`);
+  return (listed.find((c) => !c.default) || listed[0]).id;
+}
+
+// startOnDefault starts an assistant through a plugin without a coder and
+// without a message, so no turn runs, and checks that it runs on the coder
+// the plugin's list marks as the default.
+async function startOnDefault(p, prefix) {
+  const fallback = JSON.parse((await call(p, `/plugins/${prefix}/assistants/coders`)).text).coders.find((c) => c.default);
+  const name = `xpl-default-${prefix}-${Date.now() % 100000}`;
+  const res = await call(p, `/plugins/${prefix}/assistants`, { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": await csrf(p) }, body: JSON.stringify({ name }) });
+  const made = JSON.parse(res.text).assistant;
+  if (made?.id) assistants.push(made.id);
+  assert(res.status < 300 && made.name === name && made.coder_id === fallback.id, `a start without a coder answered ${res.status} ${res.text}, the default is ${fallback.id}`);
+}
+
+// startAssistant types a name and a first message into a plugin page's
+// assistant form, picks the coder when one is named, waits for the plugin's
+// toast that names the assistant the create answered and answers the id of
+// the row the plugin lists it under.
+async function startAssistant(p, prefix, name, message, { tap = false, coder = "" } = {}) {
+  const form = `[data-${prefix}-assistant-form]`;
+  const press = (sel) => (tap ? p.tap(sel) : p.click(sel));
+  await waitShown(p, `${form} textarea`);
+  await press(`${form} input[name=name]`);
+  await p.keyboard.type(name);
+  if (coder) {
+    await press(`${form} select[name=coder_id]`);
+    await p.selectOption(`${form} select[name=coder_id]`, coder);
+  }
+  await press(`${form} textarea`);
+  await p.keyboard.type(message);
+  await press(`${form} button[type=submit]`);
+  await p.locator("[data-dc-toasts] .toast", { hasText: `started ${name}.` }).waitFor({ state: "visible", timeout: 15000 });
+  const id = await (await p.waitForFunction(({ prefix, name }) => {
+    const row = [...document.querySelectorAll(`[data-${prefix}-assistant]`)].find((r) => r.querySelector("a")?.textContent === name);
+    return row?.getAttribute(`data-${prefix}-assistant`) || false;
+  }, { prefix, name }, { timeout: 15000 })).jsonValue();
+  assistants.push(id);
+  return id;
+}
+
+// readLast presses a row's Last message until its line matches.
+async function readLast(p, prefix, id, pattern, { tap = false } = {}) {
+  const text = `[data-${prefix}-assistant="${id}"] [data-${prefix}-last-text]`;
+  const button = p.locator(`[data-${prefix}-assistant="${id}"] [data-${prefix}-last]`);
+  const deadline = Date.now() + 20000;
+  let last = "";
+  while (Date.now() < deadline) {
+    await p.evaluate((sel) => { document.querySelector(sel).textContent = ""; }, text);
+    if (tap) await button.tap(); else await button.click();
+    await p.waitForFunction((sel) => document.querySelector(sel)?.textContent, text, { timeout: 8000 });
+    last = await p.locator(text).innerText();
+    if (pattern.test(last)) {
+      await waitShown(p, text);
+      return last;
+    }
+    await sleep(400);
+  }
+  throw new Error(`the last message of ${id} reads "${last}", want ${pattern}`);
+}
+
+async function deleteAssistant(p, id) {
+  const token = await csrf(p);
+  const res = await p.request.post(`${BASE}/assistants/${id}`, { form: { csrf_token: token, form: "delete" }, headers: { Accept: "application/json" } });
+  assert(res.ok(), `deleting assistant ${id} answered ${res.status()}`);
+  assistants.splice(assistants.indexOf(id), 1);
 }
 
 async function scrollDown(page, engine, scroller) {
@@ -363,6 +453,45 @@ L.runFeature("external-plugins", async ({ engine, browser, page, run, mobilePage
     await page.waitForSelector(`[data-index-project="${name}"]`, { timeout: 15000 });
   });
 
+  await run("the plugin lists the coders, starts an assistant on one, the cockpit lists it and the plugin reads its last message", async () => {
+    await page.goto(`${BASE}/plugins/hello/`, { waitUntil: "domcontentloaded" });
+    const coder = await pickCoder(page, "hello");
+    await startOnDefault(page, "hello");
+    const name = `xpl-asst-${engine}-${Date.now() % 100000}`;
+    const id = await startAssistant(page, "hello", name, "MAGIC from hello", { coder });
+    const line = await readLast(page, "hello", id, /complete: AIRPORT$/);
+    assert(/^assistant, .+, complete: AIRPORT$/.test(line), `the last message reads ${line}`);
+    const listed = JSON.parse((await call(page, "/plugins/hello/assistants")).text).assistants.find((a) => a.id === id);
+    assert(listed && listed.name === name && listed.named === true && listed.coder_id === coder && listed.url === `/assistants/${id}`
+      && listed.message_count === 2 && listed.preview === "AIRPORT" && listed.running === false && listed.unfinished === false
+      && Date.parse(listed.created_at) > 0 && Date.parse(listed.last_message_at) > 0, `the plugin lists ${JSON.stringify(listed)}`);
+    await Promise.all([page.waitForURL(new RegExp(`/assistants/${id}$`)), page.click(`[data-hello-assistant="${id}"] a`)]);
+    await waitShown(page, `[data-assistant-rows] [data-assistant-instance="${id}"]`);
+    await page.waitForFunction(() => /AIRPORT/.test(document.querySelector('[data-role="assistant"]')?.textContent || ""), null, { timeout: 15000 });
+  });
+
+  await run("a second page lists an assistant the plugin starts live, deleted it leaves the list and reads 404", async () => {
+    const first = assistants[assistants.length - 1];
+    await watcher.goto(`${BASE}/assistants/${first}`, { waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(watcher);
+    await waitShown(watcher, `[data-assistant-rows] [data-assistant-instance="${first}"]`);
+    await watcher.evaluate(() => { window.__stayed = true; });
+    await page.goto(`${BASE}/plugins/hello/`, { waitUntil: "domcontentloaded" });
+    const id = await startAssistant(page, "hello", `xpl-gone-${engine}-${Date.now() % 100000}`, "MAGIC once more");
+    await waitShown(watcher, `[data-assistant-rows] [data-assistant-instance="${id}"]`);
+    await readLast(page, "hello", id, /complete: AIRPORT$/);
+    await deleteAssistant(page, id);
+    await waitShown(watcher, `[data-assistant-rows] [data-assistant-instance="${id}"]`, false);
+    assert(await watcher.evaluate(() => window.__stayed === true), "the second page reloaded");
+    const listed = JSON.parse((await call(page, "/plugins/hello/assistants")).text).assistants;
+    assert(!listed.some((a) => a.id === id) && listed.some((a) => a.id === first), "the plugin's list does not match the cockpit's");
+    const gone = await call(page, `/plugins/hello/assistants/${id}/last-message`);
+    assert(gone.status === 404 && /There is no assistant with that id\./.test(gone.text), `a deleted assistant read ${gone.status} ${gone.text}`);
+    await readLast(page, "hello", id, /^There is no assistant with that id\.$/);
+    await watcher.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    await waitShown(watcher, ".dc-ctx-tools hello-button button[data-hello-button]");
+  });
+
   await run("a crash shows why, empties the slot, answers 503 at once and comes back", async () => {
     await plugins(page);
     const asked = await fail(page, "exit");
@@ -487,12 +616,28 @@ L.runFeature("external-plugins", async ({ engine, browser, page, run, mobilePage
     assert(moved > 20, `the notes scrolled ${moved}px`);
   });
 
+  await run("phone: the plugin's page starts an assistant on a listed coder with taps and typing, the sheet lists it and its last message reads", async () => {
+    const m = await mobilePage();
+    await m.goto(`${BASE}/plugins/hello/`, { waitUntil: "domcontentloaded" });
+    await L.dismissUpdate(m);
+    const coder = await pickCoder(m, "hello");
+    const id = await startAssistant(m, "hello", `xplm-asst-${engine}-${Date.now() % 100000}`, "MAGIC from the phone", { tap: true, coder });
+    await readLast(m, "hello", id, /^assistant, .+, complete: AIRPORT$/, { tap: true });
+    const listed = JSON.parse((await call(m, "/plugins/hello/assistants")).text).assistants.find((a) => a.id === id);
+    assert(listed?.coder_id === coder, `the phone's assistant runs on ${listed?.coder_id}, picked ${coder}`);
+    await m.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+    await waitShown(m, `dc-ctx-sheet [data-assistant-rows] [data-assistant-instance="${id}"]`);
+    await m.tap('.dc-tabbar button[data-ctx-area="assistants"]');
+  });
+
   await releaseChecks({ L, engine, page, run, mobilePage, second, feed, EXAMPLE, EXAMPLE_HOST, PLUGINS_DIR, ROW, shown, waitShown, waitRow, plugins, removePlugin, call, csrf, scrollDown });
 
-  if (DISTRO) await optionalChecks({ L, engine, page, run, mobilePage, second, INBOX, PLUGINS_DIR, waitShown, plugins, act, call, csrf, scrollDown, waitNotice, pageNotice, writeBroken, minimal });
+  if (DISTRO) await optionalChecks({ L, engine, page, run, mobilePage, second, INBOX, PLUGINS_DIR, waitShown, plugins, act, call, csrf, scrollDown, waitNotice, pageNotice, writeBroken, minimal, startAssistant, readLast, pickCoder, startOnDefault });
 
-  await run("cleanup: the projects and the plugin go, its open page says it is not installed anymore", async () => {
+  await run("cleanup: the projects, the assistants and the plugin go, its open page says it is not installed anymore", async () => {
     for (const name of projects) await L.deleteProject(page, name);
+    await page.goto(`${BASE}/projects`, { waitUntil: "domcontentloaded" });
+    for (const id of [...assistants]) await deleteAssistant(page, id);
     const own = await second.newPage();
     L.wirePage(own, { consoleErrors: [], pageErrors: [], cdnNoise: [] });
     try {

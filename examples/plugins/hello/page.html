@@ -1,9 +1,17 @@
-<hello-board class="d-block dc-narrow" data-notes-url="{{base}}/notes" data-events-url="{{base}}/events">
+<hello-board class="d-block dc-narrow" data-notes-url="{{base}}/notes" data-events-url="{{base}}/events" data-assistants-url="{{base}}/assistants">
   <form class="d-flex gap-2 mb-3" data-hello-form data-no-pe autocomplete="off">
     <input type="text" class="form-control" name="text" maxlength="500" required placeholder="Write a note" aria-label="Note">
     <button type="submit" class="btn btn-primary">Add</button>
   </form>
   <div class="list-group" data-hello-notes></div>
+  <h3 class="mt-4">Assistants</h3>
+  <form class="d-flex flex-column gap-2 mb-3" data-hello-assistant-form data-no-pe autocomplete="off">
+    <input type="text" class="form-control" name="name" maxlength="120" placeholder="Name" aria-label="Assistant name">
+    <select class="form-select" name="coder_id" aria-label="Coder" data-hello-coders></select>
+    <textarea class="form-control" name="message" rows="2" required placeholder="First message" aria-label="First message"></textarea>
+    <div><button type="submit" class="btn btn-primary">Start</button></div>
+  </form>
+  <div class="list-group" data-hello-assistants></div>
   <h3 class="mt-4">Latest events</h3>
   <div class="list-group" data-hello-events></div>
 </hello-board>

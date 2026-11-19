@@ -86,12 +86,13 @@ func newOptionalHost(t *testing.T, stateDir string, lamp plugin.ServePlugin) *op
 		{ID: "lamp", Plugin: lamp, Optional: true},
 		{ID: "fixed", Plugin: &testPlugin{routeBody: "fixed"}},
 	}
-	required, err := ConfigureServe(wiring, "", stateDir, nil, nil)
+	assistants := &Assistants{}
+	required, err := ConfigureServe(wiring, "", stateDir, nil, nil, assistants)
 	if err != nil {
 		t.Fatal(err)
 	}
-	th := &testHost{stateDir: stateDir, projectsDir: t.TempDir()}
-	th.Host = NewHost(HostConfig{StateDir: stateDir, ProjectsDir: th.projectsDir, Compiled: required, Wiring: wiring, CSRFField: "csrf_token"})
+	th := &testHost{stateDir: stateDir, projectsDir: t.TempDir(), assistants: assistants}
+	th.Host = NewHost(HostConfig{StateDir: stateDir, ProjectsDir: th.projectsDir, Compiled: required, Wiring: wiring, Assistants: assistants, CSRFField: "csrf_token"})
 	t.Cleanup(func() {
 		th.Close()
 		_ = os.RemoveAll(runRoot(stateDir))
@@ -426,7 +427,7 @@ func TestConfigureServeLeavesOptionalPairs(t *testing.T) {
 		{ID: "first", Plugin: &testPlugin{}},
 		{ID: "lamp", Plugin: lamp, Optional: true},
 		{ID: "last", Plugin: &testPlugin{}},
-	}, "", t.TempDir(), nil, nil)
+	}, "", t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

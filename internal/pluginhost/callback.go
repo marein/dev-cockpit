@@ -1,6 +1,7 @@
 package pluginhost
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -14,12 +15,13 @@ import (
 	"github.com/marein/dev-cockpit/plugin"
 )
 
-// maxCallbackBody bounds what a plugin may send the cockpit in one call.
-const maxCallbackBody = 64 << 10
+// maxCallbackBody bounds what a plugin may send the cockpit in one call. It
+// holds an assistant's first message at its limit with every byte escaped.
+const maxCallbackBody = 256 << 10
 
 // callbackHandler serves one external plugin's callback socket: the readers
-// of plugin.Serve, its Projects surface and its events, scoped to this
-// plugin. The socket's directory is the owner's alone, the bearer token tells
+// of plugin.Serve, its Projects and Assistants surfaces and its events,
+// scoped to this plugin. The socket's directory is the owner's alone, the bearer token tells
 // this plugin from other processes of the same user. It changes with every
 // start and is compared in constant time.
 func (s *supervisor) callbackHandler(pluginStateDir string) http.Handler {
@@ -46,7 +48,7 @@ func (s *supervisor) callbackHandler(pluginStateDir string) http.Handler {
 		case errors.Is(err, plugin.ErrProjectExists):
 			writeError(w, http.StatusConflict, err.Error())
 		case err != nil:
-			writeError(w, http.StatusBadRequest, cut(err.Error()))
+			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			writeJSON(w, http.StatusCreated, map[string]string{"name": project.Name(), "dir": project.Dir()})
 		}
@@ -58,10 +60,76 @@ func (s *supervisor) callbackHandler(pluginStateDir string) http.Handler {
 			return
 		}
 		if err := s.host.projects.changed(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, cut(err.Error()))
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	})
+	assistants := s.host.cfg.Assistants
+	mux.HandleFunc("POST /v1/assistants", func(w http.ResponseWriter, r *http.Request) {
+		var in plugin.AssistantSpec
+		if err := decodeBody(r, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "Send the assistant as {\"name\": \"...\", \"message\": \"...\", \"coder_id\": \"...\"}, no other field.")
+			return
+		}
+		made, err := assistants.Create(r.Context(), in)
+		if made.ID == "" {
+			if err == nil {
+				err = errors.New("No assistant was made.")
+			}
+			writeError(w, assistantsStatus(err, http.StatusBadRequest), err.Error())
+			return
+		}
+		answer := createdAssistant{Assistant: made}
+		if err != nil {
+			answer.Error = errorMessage(err.Error())
+		}
+		writeJSON(w, http.StatusCreated, answer)
+	})
+	mux.HandleFunc("GET /v1/assistants", func(w http.ResponseWriter, r *http.Request) {
+		var in plugin.AssistantQuery
+		if err := decodeQuery(r, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "Narrow the list with ?contains=<word>, once, and nothing else.")
+			return
+		}
+		list, err := assistants.List(r.Context(), in)
+		if err != nil {
+			writeError(w, assistantsStatus(err, http.StatusInternalServerError), err.Error())
+			return
+		}
+		if list.Assistants == nil {
+			list.Assistants = []plugin.Assistant{}
+		}
+		writeJSON(w, http.StatusOK, list)
+	})
+	mux.HandleFunc("GET /v1/assistants/{assistant_id}/last-message", func(w http.ResponseWriter, r *http.Request) {
+		var in plugin.AssistantMessageQuery
+		if err := decodeQuery(r, &in, "assistant_id"); err != nil {
+			writeError(w, http.StatusBadRequest, "The last message takes no query parameter.")
+			return
+		}
+		message, err := assistants.LastMessage(r.Context(), in)
+		if err != nil {
+			writeError(w, assistantsStatus(err, http.StatusInternalServerError), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, message)
+	})
+	mux.HandleFunc("GET /v1/assistants/coders", func(w http.ResponseWriter, r *http.Request) {
+		var in plugin.AssistantCoderQuery
+		if err := decodeQuery(r, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "The coder list takes no query parameter.")
+			return
+		}
+		list, err := assistants.Coders(r.Context(), in)
+		if err != nil {
+			writeError(w, assistantsStatus(err, http.StatusInternalServerError), err.Error())
+			return
+		}
+		if list.Coders == nil {
+			list.Coders = []plugin.AssistantCoder{}
+		}
+		writeJSON(w, http.StatusOK, list)
 	})
 	mux.HandleFunc("GET /v1/events", s.streamEvents)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,6 +188,18 @@ func (s *supervisor) streamEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// assistantsStatus is the status of an error of the assistant surface,
+// otherwise for one it does not know.
+func assistantsStatus(err error, otherwise int) int {
+	switch {
+	case errors.Is(err, plugin.ErrAssistantNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, plugin.ErrAssistantsNotReady):
+		return http.StatusServiceUnavailable
+	}
+	return otherwise
+}
+
 // projectExists answers whether name is a project directory directly under
 // the projects root.
 func (h *Host) projectExists(name string) bool {
@@ -136,6 +216,55 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// maxErrorBytes bounds every error message the callback socket answers. The
+// cockpit's sentences fit whole, a value a sentence quotes is cut where it is
+// quoted.
+const maxErrorBytes = 1 << 10
+
+func errorMessage(message string) string { return cutTo(message, maxErrorBytes) }
+
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	writeJSON(w, status, map[string]string{"error": errorMessage(message)})
+}
+
+// createdAssistant is the answer of POST /v1/assistants: the assistant Create
+// made, and beside it the error of a first message that could not go out.
+type createdAssistant struct {
+	Assistant plugin.Assistant `json:"assistant"`
+	Error     string           `json:"error,omitempty"`
+}
+
+// decodeBody reads a request's JSON body into in. A field that in does not
+// name is refused, so a plugin learns that this cockpit does not know it yet.
+func decodeBody(r *http.Request, in any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(in)
+}
+
+// decodeQuery reads a request's query parameters and the named path values
+// into the string fields of in, by their JSON names. A parameter that in does
+// not name, one given twice or one that repeats a path value is refused, like
+// an unknown field of a body.
+func decodeQuery(r *http.Request, in any, path ...string) error {
+	values := map[string]string{}
+	for key, given := range r.URL.Query() {
+		if len(given) != 1 {
+			return errors.New("a query parameter is given twice")
+		}
+		values[key] = given[0]
+	}
+	for _, key := range path {
+		if _, ok := values[key]; ok {
+			return errors.New("a query parameter repeats a path value")
+		}
+		values[key] = r.PathValue(key)
+	}
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(in)
 }

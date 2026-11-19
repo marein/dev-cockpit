@@ -680,7 +680,7 @@ func (s *Service) pushReaction(rec RunRecord, text string, state State, errText 
 	c, ok := s.store.Load(owner)
 	if !ok {
 		s.mu.Unlock()
-		return Message{}, errors.New("Assistant not found.")
+		return Message{}, ErrNotFound
 	}
 	if messageID == "" {
 		messageID = statefile.NewID()

@@ -737,7 +737,7 @@ func (slotPlugin) ConfigureServe(s plugin.Serve) error {
 // belongs next to the plus that starts one, in the projects column. That
 // column is also the sheet a phone opens, so one place serves both.
 func TestProjectsActionsSlotStandsLeftOfTheCreateButton(t *testing.T) {
-	serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "demo", Plugin: slotPlugin{}}}, t.TempDir(), t.TempDir(), nil, nil)
+	serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "demo", Plugin: slotPlugin{}}}, t.TempDir(), t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("configure serve: %v", err)
 	}

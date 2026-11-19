@@ -259,11 +259,14 @@ func runServe(opts serveOptions) error {
 	// anything listens: everything their Serve answers is real, and what they
 	// add becomes part of the server built below. The bus exists this early
 	// so the Projects facade delegates to the web UI's own creation path,
-	// which announces on it; the server below is built on the same bus. A
-	// plugin that cannot configure aborts the start with its id on the error.
+	// which announces on it; the server below is built on the same bus. The
+	// assistants need the plugins' settings and memory first, so their
+	// surface is bound once the server stands. A plugin that cannot
+	// configure aborts the start with its id on the error.
 	bus := eventbus.New()
 	createProject, projectChanged := web.NewProjectCreator(projectRepo, bus), web.NewProjectChanged(bus)
-	serves, err := pluginhost.ConfigureServe(servePlugins, cfg.ProjectsRoot, cfg.StateDir, createProject, projectChanged)
+	pluginAssistants := &pluginhost.Assistants{}
+	serves, err := pluginhost.ConfigureServe(servePlugins, cfg.ProjectsRoot, cfg.StateDir, createProject, projectChanged, pluginAssistants)
 	if err != nil {
 		return err
 	}
@@ -278,6 +281,7 @@ func runServe(opts serveOptions) error {
 		Wiring:         servePlugins,
 		CreateProject:  createProject,
 		ProjectChanged: projectChanged,
+		Assistants:     pluginAssistants,
 		CSRFField:      web.CSRFField,
 		PluginAPI:      devPluginAPI(),
 		CheckEvery:     devPluginCheckEvery(),
@@ -513,6 +517,7 @@ func runServe(opts serveOptions) error {
 		pluginhost.ApplySettings([]*pluginhost.Serve{p}, settingsStore)
 		applyPluginMemory(cfg.StateDir, assistantService, []*pluginhost.Serve{p})
 	}
+	pluginAssistants.Bind(srv.PluginAssistants())
 	pluginHost.Start(pluginHooks)
 	// A finished answer is normal cockpit news, and a change refreshes the open
 	// lists. Neither hook may run while the service holds its lock, both are

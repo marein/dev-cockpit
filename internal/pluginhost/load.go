@@ -115,7 +115,7 @@ func (h *Host) build(dir string, root *os.Root, m *Manifest) (*Serve, *superviso
 		return nil, nil, roots, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Serve{id: m.ID, ctx: ctx, cancel: cancel, projectsDir: h.cfg.ProjectsDir, stateDir: h.cfg.StateDir, pluginStateDir: pluginStateDir, projects: h.projects}
+	s := &Serve{id: m.ID, ctx: ctx, cancel: cancel, projectsDir: h.cfg.ProjectsDir, stateDir: h.cfg.StateDir, pluginStateDir: pluginStateDir, projects: h.projects, assistants: h.cfg.Assistants}
 	sup := newSupervisor(h, m, dir, runDir, pluginStateDir)
 	s.AddRoutes(sup)
 	if p.assets != nil {

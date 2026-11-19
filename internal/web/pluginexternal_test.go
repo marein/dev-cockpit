@@ -25,7 +25,7 @@ import (
 func externalShell(t *testing.T, configure ...func(*pluginhost.HostConfig)) (*gin.Engine, *Server, *pluginhost.Host, <-chan eventbus.Event) {
 	t.Helper()
 	r, s, _ := assistantEntryServer(t, assistantA)
-	compiled, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "fake", Plugin: subtreePlugin{}}}, "", t.TempDir(), nil, nil)
+	compiled, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "fake", Plugin: subtreePlugin{}}}, "", t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ConfigureServe() = %v", err)
 	}
@@ -38,6 +38,8 @@ func externalShell(t *testing.T, configure ...func(*pluginhost.HostConfig)) (*gi
 	events, cancel := s.bus.Subscribe()
 	t.Cleanup(cancel)
 	projectsDir := t.TempDir()
+	assistants := &pluginhost.Assistants{}
+	assistants.Bind(s.PluginAssistants())
 	cfg := pluginhost.HostConfig{
 		StateDir:    stateDir,
 		ProjectsDir: projectsDir,
@@ -47,6 +49,7 @@ func externalShell(t *testing.T, configure ...func(*pluginhost.HostConfig)) (*gi
 			return dir, os.Mkdir(dir, 0o755)
 		},
 		ProjectChanged: func(ctx context.Context) error { return nil },
+		Assistants:     assistants,
 		CSRFField:      CSRFField,
 	}
 	for _, change := range configure {
@@ -110,7 +113,8 @@ func shellDo(t *testing.T, r *gin.Engine, method, path, body string) *httptest.R
 
 // An external plugin reaches its page, the rail, the Cockpit sheet, its slot,
 // its hashed assets with the starter and, through its process, the cockpit's
-// project surface. The compiled plugin beside it keeps working.
+// project and assistant surfaces. The compiled plugin beside it keeps
+// working.
 func TestAnExternalPluginReachesEverySurface(t *testing.T) {
 	r, _, _, _ := externalShell(t)
 
@@ -119,7 +123,7 @@ func TestAnExternalPluginReachesEverySurface(t *testing.T) {
 	if page.Code != http.StatusOK || !strings.Contains(body, `<h1 class="dc-work-title">Hello notes</h1>`) {
 		t.Fatalf("the page answered %d without its heading", page.Code)
 	}
-	mount := regexp.MustCompile(`<div class="dc-plugin-mount" data-region-key="hello@\d+" data-dc-module="(/plugins/hello/elements\.[0-9a-f]{12}\.js)"><hello-board class="d-block dc-narrow" data-notes-url="/plugins/hello/notes" data-events-url="/plugins/hello/events">\s*<form `).FindStringSubmatch(body)
+	mount := regexp.MustCompile(`<div class="dc-plugin-mount" data-region-key="hello@\d+" data-dc-module="(/plugins/hello/elements\.[0-9a-f]{12}\.js)"><hello-board class="d-block dc-narrow" data-notes-url="/plugins/hello/notes" data-events-url="/plugins/hello/events" data-assistants-url="/plugins/hello/assistants">\s*<form `).FindStringSubmatch(body)
 	if mount == nil || !strings.Contains(body, `placeholder="Write a note"`) {
 		t.Fatalf("the page does not carry the board's markup: %s", between(t, body, `data-region="page-hello"`, "</dc-plugin-region>"))
 	}
@@ -157,6 +161,34 @@ func TestAnExternalPluginReachesEverySurface(t *testing.T) {
 	_ = json.Unmarshal(created.Body.Bytes(), &project)
 	if created.Code != http.StatusCreated || project["name"] != "made-by-hello" {
 		t.Fatalf("the plugin's create answered %d %s", created.Code, created.Body.String())
+	}
+	coders := shellDo(t, r, http.MethodGet, "/plugins/hello/assistants/coders", "")
+	if coders.Code != http.StatusOK || strings.Join(strings.Fields(coders.Body.String()), " ") != `{"coders": [{"id": "claude", "name": "Claude", "default": true}]}` {
+		t.Fatalf("the plugin's coder list answered %d %s", coders.Code, coders.Body.String())
+	}
+	started := shellDo(t, r, http.MethodPost, "/plugins/hello/assistants", `{"name":"Made by hello","coder_id":"claude"}`)
+	var answer struct {
+		Assistant map[string]any `json:"assistant"`
+	}
+	_ = json.Unmarshal(started.Body.Bytes(), &answer)
+	assistant := answer.Assistant
+	id, _ := assistant["id"].(string)
+	if started.Code != http.StatusCreated || id == "" || assistant["name"] != "Made by hello" || assistant["named"] != true || assistant["coder_id"] != "claude" || assistant["url"] != "/assistants/"+id {
+		t.Fatalf("the plugin's assistant start answered %d %s", started.Code, started.Body.String())
+	}
+	listed := shellDo(t, r, http.MethodGet, "/plugins/hello/assistants", "")
+	var list struct {
+		Assistants []plugin.Assistant `json:"assistants"`
+	}
+	_ = json.Unmarshal(listed.Body.Bytes(), &list)
+	if listed.Code != http.StatusOK || len(list.Assistants) != 2 || list.Assistants[0].ID != id || list.Assistants[1].ID != assistantA {
+		t.Fatalf("the plugin's assistant list answered %d %s", listed.Code, listed.Body.String())
+	}
+	if last := shellDo(t, r, http.MethodGet, "/plugins/hello/assistants/"+assistantA+"/last-message", ""); last.Code != http.StatusOK || !strings.Contains(last.Body.String(), `"id": ""`) {
+		t.Fatalf("an assistant without messages read %d %s", last.Code, last.Body.String())
+	}
+	if gone := shellDo(t, r, http.MethodGet, "/plugins/hello/assistants/..%2Fescape/last-message", ""); gone.Code != http.StatusNotFound || !strings.Contains(gone.Body.String(), plugin.ErrAssistantNotFound.Error()) {
+		t.Fatalf("a missing assistant read %d %s", gone.Code, gone.Body.String())
 	}
 	if fake := shellDo(t, r, http.MethodGet, "/plugins/fake/page", ""); fake.Code != http.StatusOK || fake.Body.String() != "plugin page" {
 		t.Fatalf("the compiled plugin answered %d %q", fake.Code, fake.Body.String())

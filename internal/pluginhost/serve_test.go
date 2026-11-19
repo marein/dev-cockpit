@@ -142,7 +142,7 @@ func TestServeAnswersTheInstance(t *testing.T) {
 		return nil
 	})
 	pairs := []plugin.Named[plugin.ServePlugin]{{ID: "aware", Plugin: check}}
-	if _, err := ConfigureServe(pairs, "/srv/projects", stateDir, create, changed); err != nil {
+	if _, err := ConfigureServe(pairs, "/srv/projects", stateDir, create, changed, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !checked || len(created) != 1 || created[0] != "fresh" {
@@ -179,7 +179,7 @@ func TestPluginStateDirIsThePluginsOwn(t *testing.T) {
 	if _, err := ConfigureServe([]plugin.Named[plugin.ServePlugin]{
 		{ID: "first", Plugin: keep("first")},
 		{ID: "second", Plugin: keep("second")},
-	}, "", stateDir, nil, nil); err != nil {
+	}, "", stateDir, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
@@ -206,7 +206,7 @@ func TestConfigureServeRefusesAStateDirItCannotCreate(t *testing.T) {
 	_, err := ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "homeless", Plugin: serveFunc(func(s plugin.Serve) error {
 		ran = true
 		return nil
-	})}}, "", stateDir, nil, nil)
+	})}}, "", stateDir, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "homeless") {
 		t.Fatalf("ConfigureServe() = %v, want an error naming plugin homeless", err)
 	}
@@ -242,7 +242,7 @@ func TestConfigureServeErrorCarriesTheID(t *testing.T) {
 	_, err := ConfigureServe([]plugin.Named[plugin.ServePlugin]{
 		{ID: "fine", Plugin: &recordingPlugin{}},
 		{ID: "broken", Plugin: &recordingPlugin{err: boom}},
-	}, "", t.TempDir(), nil, nil)
+	}, "", t.TempDir(), nil, nil, nil)
 	if err == nil {
 		t.Fatal("ConfigureServe() = nil, want the broken plugin's error")
 	}
@@ -272,7 +272,7 @@ func TestAddSlotHTMLRefusesUnknownSlots(t *testing.T) {
 	}()
 	_, _ = ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "typo", Plugin: &recordingPlugin{
 		slots: map[string]string{"misplaced-slot": "<x></x>"},
-	}}}, "", t.TempDir(), nil, nil)
+	}}}, "", t.TempDir(), nil, nil, nil)
 	t.Fatal("an unknown slot was accepted")
 }
 
@@ -285,7 +285,7 @@ func TestAddCustomElementRefusesDuplicateNames(t *testing.T) {
 	}()
 	_, _ = ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "doubled", Plugin: &recordingPlugin{
 		elements: [][2]string{{"widget", "widget.js"}, {"widget", "other.js"}},
-	}}}, "", t.TempDir(), nil, nil)
+	}}}, "", t.TempDir(), nil, nil, nil)
 	t.Fatal("a duplicate element name was accepted")
 }
 
@@ -295,7 +295,7 @@ func TestAddPageNeedsATitleAndATablerIcon(t *testing.T) {
 		_, _ = ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "untitled", Plugin: serveFunc(func(s plugin.Serve) error {
 			s.AddPage(plugin.Page{Title: title, Icon: icon, NavLabel: "Label"})
 			return nil
-		})}}, "", t.TempDir(), nil, nil)
+		})}}, "", t.TempDir(), nil, nil, nil)
 		return nil
 	}
 	for _, tc := range []struct{ title, icon string }{{"", "ti-box"}, {"Page", ""}, {"Page", "ticket"}, {"Page", "ti-box d-none"}} {

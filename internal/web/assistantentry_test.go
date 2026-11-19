@@ -112,7 +112,7 @@ func TestAssistantsEntryNamesNoneWithNoAssistant(t *testing.T) {
 func assistantPageServer(t *testing.T, ids ...string) (*gin.Engine, *recent.Store) {
 	t.Helper()
 	r, s, opened := assistantEntryServer(t, ids...)
-	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil)
+	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ConfigureServe() = %v", err)
 	}

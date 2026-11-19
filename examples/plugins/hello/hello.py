@@ -2,8 +2,9 @@
 """Example external plugin of dev-cockpit, see the README.
 
 Serves its URL subtree on the socket the cockpit names, keeps notes in its
-state directory, creates projects through the callback socket and keeps the
-last job, coder and compose events.
+state directory, creates projects and assistants through the callback
+socket, reads the assistants, their last messages and the coders they run
+on and keeps the last job, coder and compose events.
 """
 import http.client
 import http.server
@@ -15,6 +16,7 @@ import socketserver
 import sys
 import threading
 import time
+from urllib.parse import quote
 
 SOCKET = os.environ["DEV_COCKPIT_PLUGIN_SOCKET"]
 COCKPIT = os.environ["DEV_COCKPIT_SOCKET"]
@@ -115,6 +117,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/plugin":
             status, value = cockpit("GET", "/v1/plugin")
             return self.send_json(status, value)
+        if self.path == "/assistants":
+            status, value = cockpit("GET", "/v1/assistants")
+            return self.send_json(status, value)
+        if self.path == "/assistants/coders":
+            status, value = cockpit("GET", "/v1/assistants/coders")
+            return self.send_json(status, value)
+        if self.path.startswith("/assistants/") and self.path.endswith("/last-message"):
+            assistant = self.path[len("/assistants/"):-len("/last-message")]
+            status, value = cockpit("GET", "/v1/assistants/%s/last-message" % quote(assistant, safe=""))
+            return self.send_json(status, value)
         return self.send_json(404, {"error": "Not found."})
 
     def do_POST(self):
@@ -131,6 +143,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status, value = cockpit("POST", "/v1/projects", {"name": name})
             if status == 201:
                 cockpit("POST", "/v1/projects/%s/changed" % value["name"])
+            return self.send_json(status, value)
+        if self.path == "/assistants":
+            body = self.read_json()
+            status, value = cockpit("POST", "/v1/assistants", {"name": str(body.get("name", "")), "message": str(body.get("message", "")), "coder_id": str(body.get("coder_id", ""))})
             return self.send_json(status, value)
         if self.path == "/echo":
             length = int(self.headers.get("Content-Length") or 0)

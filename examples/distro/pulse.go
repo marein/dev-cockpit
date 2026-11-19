@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io/fs"
@@ -22,9 +23,10 @@ import (
 var pulseFiles embed.FS
 
 // pulse is optional. While on, a goroutine counts beats into its state
-// directory, its page keeps lines and the events it heard, its button shows
-// the beats, and it adds a setting and a memory file. Everything it starts
-// ends with its Serve's context, so nothing runs while it is off.
+// directory, its page keeps lines and the events it heard and starts
+// assistants on a listed coder and reads them, its button shows the beats,
+// and it adds a setting and a memory file. Everything it starts ends with
+// its Serve's context, so nothing runs while it is off.
 type pulse struct {
 	mu sync.Mutex
 }
@@ -70,20 +72,77 @@ func (p *pulse) ConfigureServe(s plugin.Serve) error {
 		beats, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
 		writeJSON(w, map[string]int{"beats": beats})
 	})
+	assistants := s.Assistants()
+	mux.HandleFunc("GET /assistants", func(w http.ResponseWriter, r *http.Request) {
+		list, err := assistants.List(r.Context(), plugin.AssistantQuery{})
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		writeJSON(w, list)
+	})
+	mux.HandleFunc("GET /assistants/coders", func(w http.ResponseWriter, r *http.Request) {
+		list, err := assistants.Coders(r.Context(), plugin.AssistantCoderQuery{})
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		writeJSON(w, list)
+	})
+	mux.HandleFunc("POST /assistants", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name    string `json:"name"`
+			Message string `json:"message"`
+			CoderID string `json:"coder_id"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, errors.New("Send a name and a message."))
+			return
+		}
+		made, err := assistants.Create(r.Context(), plugin.AssistantSpec{Name: body.Name, Message: body.Message, CoderID: body.CoderID})
+		if made.ID == "" {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		answer := map[string]any{"assistant": made}
+		if err != nil {
+			answer["error"] = err.Error()
+		}
+		writeJSON(w, answer)
+	})
+	mux.HandleFunc("GET /assistants/{id}/last-message", func(w http.ResponseWriter, r *http.Request) {
+		last, err := assistants.LastMessage(r.Context(), plugin.AssistantMessageQuery{AssistantID: r.PathValue("id")})
+		switch {
+		case errors.Is(err, plugin.ErrAssistantNotFound):
+			writeError(w, http.StatusNotFound, err)
+		case err != nil:
+			writeError(w, http.StatusServiceUnavailable, err)
+		default:
+			writeJSON(w, last)
+		}
+	})
 	routes := s.AddRoutes(mux)
 	s.AddSlotHTML(plugin.SlotProjectsActions, fmt.Sprintf(
 		`<%[1]s data-beats-url="%[2]s"><a class="btn btn-icon btn-ghost-secondary" href="%[3]s" title="Pulse" aria-label="Pulse" data-pulse-button><i class="ti ti-activity" aria-hidden="true"></i></a></%[1]s>`,
 		button.Name(), html.EscapeString(routes.Path("/beats")), html.EscapeString(routes.Path("/"))))
-	s.AddPage(plugin.Page{Title: "Pulse", Icon: "ti-activity", HTML: fmt.Sprintf(`<%[1]s class="d-block dc-narrow" data-lines-url="%[2]s" data-events-url="%[3]s" data-beats-url="%[4]s">
+	s.AddPage(plugin.Page{Title: "Pulse", Icon: "ti-activity", HTML: fmt.Sprintf(`<%[1]s class="d-block dc-narrow" data-lines-url="%[2]s" data-events-url="%[3]s" data-beats-url="%[4]s" data-assistants-url="%[5]s">
   <p class="text-secondary" data-pulse-beats>Beating while the plugin is on.</p>
   <form class="d-flex gap-2 mb-3" data-pulse-form data-no-pe autocomplete="off">
     <input type="text" class="form-control" name="text" maxlength="500" required placeholder="Write a line" aria-label="Line">
     <button type="submit" class="btn btn-primary">Add</button>
   </form>
   <div class="list-group" data-pulse-lines></div>
+  <h3 class="mt-4">Assistants</h3>
+  <form class="d-flex flex-column gap-2 mb-3" data-pulse-assistant-form data-no-pe autocomplete="off">
+    <input type="text" class="form-control" name="name" maxlength="120" placeholder="Name" aria-label="Assistant name">
+    <select class="form-select" name="coder_id" aria-label="Coder" data-pulse-coders></select>
+    <textarea class="form-control" name="message" rows="2" required placeholder="First message" aria-label="First message"></textarea>
+    <div><button type="submit" class="btn btn-primary">Start</button></div>
+  </form>
+  <div class="list-group" data-pulse-assistants></div>
   <h3 class="mt-4">Events heard</h3>
   <div class="list-group" data-pulse-events></div>
-</%[1]s>`, board.Name(), html.EscapeString(routes.Path("/lines")), html.EscapeString(routes.Path("/events")), html.EscapeString(routes.Path("/beats")))})
+</%[1]s>`, board.Name(), html.EscapeString(routes.Path("/lines")), html.EscapeString(routes.Path("/events")), html.EscapeString(routes.Path("/beats")), html.EscapeString(routes.Path("/assistants")))})
 	s.AddSettings(map[string]string{"pulse-greeting": "Hello from pulse"}, false)
 	s.AddAssistantMemory(memory, false)
 	s.AddEventHandler([]string{plugin.EventJob, plugin.EventCoder, plugin.EventCompose}, func(ev plugin.Event) {
@@ -142,4 +201,10 @@ func readList(path string) []string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }

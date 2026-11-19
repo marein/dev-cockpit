@@ -112,18 +112,20 @@ func helperPlugin(mode string) {
 	_ = http.Serve(listener, mux)
 }
 
-// testHost is a host over a fresh state and projects directory.
+// testHost is a host over a fresh state and projects directory. Its
+// assistant surface is bound by the test that needs it.
 type testHost struct {
 	*Host
 	stateDir    string
 	projectsDir string
+	assistants  *Assistants
 	changed     atomic.Int32
 	released    atomic.Int32
 }
 
 func newTestHost(t *testing.T, compiled ...*Serve) *testHost {
 	t.Helper()
-	th := &testHost{stateDir: t.TempDir(), projectsDir: t.TempDir()}
+	th := &testHost{stateDir: t.TempDir(), projectsDir: t.TempDir(), assistants: &Assistants{}}
 	th.Host = NewHost(HostConfig{
 		StateDir:    th.stateDir,
 		ProjectsDir: th.projectsDir,
@@ -136,6 +138,7 @@ func newTestHost(t *testing.T, compiled ...*Serve) *testHost {
 			return dir, nil
 		},
 		ProjectChanged: func(ctx context.Context) error { th.changed.Add(1); return nil },
+		Assistants:     th.assistants,
 		CSRFField:      "csrf_token",
 	})
 	t.Cleanup(func() {

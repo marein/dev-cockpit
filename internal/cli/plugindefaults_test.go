@@ -44,7 +44,7 @@ func TestNewAssistantWritesPluginMemoryAfterTheMove(t *testing.T) {
 			serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "example", Plugin: serveFunc(func(s plugin.Serve) error {
 				s.AddAssistantMemory(fstest.MapFS{"worktrees.md": {Data: []byte("---\ntitle: Worktrees\n---\nplugin")}}, false)
 				return nil
-			})}}, "", stateDir, nil, nil)
+			})}}, "", stateDir, nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +82,7 @@ func TestNewAssistantWritesOnlyWhatTheMemoryReads(t *testing.T) {
 			"big.md":        {Data: []byte("---\ntitle: Big\n---\n" + strings.Repeat("x", assistant.MaxMemoryBytes+1))},
 		}, false)
 		return nil
-	})}}, "", stateDir, nil, nil)
+	})}}, "", stateDir, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestNewAssistantPutsPluginMemoryIntoExistingInstructions(t *testing.T) {
 	serves, err := pluginhost.ConfigureServe([]plugin.Named[plugin.ServePlugin]{{ID: "example", Plugin: serveFunc(func(s plugin.Serve) error {
 		s.AddAssistantMemory(fstest.MapFS{"worktrees.md": {Data: []byte("---\ntitle: Worktrees\n---\nfork a worktree per branch")}}, false)
 		return nil
-	})}}, "", stateDir, nil, nil)
+	})}}, "", stateDir, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

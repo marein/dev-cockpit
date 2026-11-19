@@ -198,7 +198,7 @@ func TestTheWarningLineStandsUnderTheNewCoderSelectWhileSomethingIsMissing(t *te
 
 func testTemplates(t *testing.T) *template.Template {
 	t.Helper()
-	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil)
+	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestTheTabStripRendersAResumableOllamaSessionWithTheMark(t *testing.T) {
 }
 
 func TestTheTabStripTemplateRendersRunningInactiveAndResumableSessions(t *testing.T) {
-	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil)
+	serves, err := pluginhost.ConfigureServe(nil, "", "", nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

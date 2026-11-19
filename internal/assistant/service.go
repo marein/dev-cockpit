@@ -193,11 +193,14 @@ func (s *Service) List() []Summary { return s.store.List() }
 // arriving in another one moves nothing.
 func (s *Service) Reorder(ids []string) { s.store.Reorder(ids) }
 
+// ErrNotFound is the answer for an id no assistant carries.
+var ErrNotFound = errors.New("Assistant not found.")
+
 // Get loads one instance.
 func (s *Service) Get(id string) (Instance, error) {
 	c, ok := s.store.Load(id)
 	if !ok {
-		return Instance{}, errors.New("Assistant not found.")
+		return Instance{}, ErrNotFound
 	}
 	return c, nil
 }
@@ -260,7 +263,7 @@ const TranscriptMessageRunes = 600
 func (s *Service) Transcript(id, contains string, entries, budget int) (Instance, int, error) {
 	c, ok := s.store.Load(id)
 	if !ok {
-		return Instance{}, 0, errors.New("Assistant not found.")
+		return Instance{}, 0, ErrNotFound
 	}
 	if word := strings.ToLower(strings.TrimSpace(contains)); word != "" {
 		kept := make([]Message, 0, len(c.Messages))
@@ -483,7 +486,7 @@ func (s *Service) Rename(id, rawTitle string) error {
 	c, ok := s.store.Load(id)
 	if !ok {
 		s.mu.Unlock()
-		return errors.New("Assistant not found.")
+		return ErrNotFound
 	}
 	c.Title = title
 	c.Named = true
@@ -534,7 +537,7 @@ func (s *Service) SetModels(id string, choice ModelChoice) (Instance, error) {
 	c, ok := s.store.Load(id)
 	if !ok {
 		s.mu.Unlock()
-		return Instance{}, errors.New("Assistant not found.")
+		return Instance{}, ErrNotFound
 	}
 	was := [3]string{c.Model, c.CheckModel, c.TriggerModel}
 	if choice.ChatSet {
@@ -571,7 +574,7 @@ func (s *Service) SaveDraft(id, text string, attachments []Attachment) (Draft, b
 		return Draft{}, false, errors.New("That message is too long.")
 	}
 	if _, ok := s.store.Load(id); !ok {
-		return Draft{}, false, errors.New("Assistant not found.")
+		return Draft{}, false, ErrNotFound
 	}
 	d, changed := s.drafts.Of(id).SaveText(text, attachments, s.now().UTC())
 	return d, changed, nil
@@ -582,7 +585,7 @@ func (s *Service) SaveDraft(id, text string, attachments []Attachment) (Draft, b
 // transcript.
 func (s *Service) Draft(id string) (Draft, error) {
 	if !ValidID(id) {
-		return Draft{}, errors.New("Assistant not found.")
+		return Draft{}, ErrNotFound
 	}
 	return s.drafts.Of(id).Get(), nil
 }
@@ -618,7 +621,7 @@ func (s *Service) Delete(id string) error {
 	c, ok := s.store.Load(id)
 	if !ok {
 		s.mu.Unlock()
-		return errors.New("Assistant not found.")
+		return ErrNotFound
 	}
 	if co, ok := s.coder(c.CoderID); ok && co.Runner.SessionExists(c.NativeSessionID) {
 		if err := co.Runner.DeleteSession(c.NativeSessionID); err != nil {

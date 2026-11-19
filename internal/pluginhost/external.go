@@ -84,7 +84,7 @@ var scanInterval = 2 * time.Second
 // compiled plugins always on. Wiring is every compiled pair: the host
 // switches the optional ones, and no external plugin may carry one of its
 // ids. CreateProject and ProjectChanged are the web UI's paths the callback
-// API delegates to. CSRFField is the form field a proxied request never
+// API delegates to, Assistants the assistant surface. CSRFField is the form field a proxied request never
 // forwards. PluginAPI is a dev build's release stub, see APIURLEnv,
 // CheckEvery the update check cadence, 0 for the default.
 type HostConfig struct {
@@ -94,6 +94,7 @@ type HostConfig struct {
 	Wiring         []plugin.Named[plugin.ServePlugin]
 	CreateProject  func(ctx context.Context, name string) (string, error)
 	ProjectChanged func(ctx context.Context) error
+	Assistants     *Assistants
 	CSRFField      string
 	PluginAPI      string
 	CheckEvery     time.Duration

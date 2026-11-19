@@ -23,7 +23,7 @@ func docsPluginsTopic() DocsTopic {
 			},
 			{
 				Title: "What a plugin can do",
-				Desc:  `It runs as your user on the host, and its frontend code runs in the cockpit page, signed in as you. Install only plugins you trust. A plugin serves its own addresses below <code>/plugins/&lt;id&gt;/</code> behind your login, adds a page to the rail and the Cockpit sheet, buttons to the projects column and the empty projects page, settings and assistant memory, creates projects and follows jobs, coders and compose runs.`,
+				Desc:  `It runs as your user on the host, and its frontend code runs in the cockpit page, signed in as you. Install only plugins you trust. A plugin serves its own addresses below <code>/plugins/&lt;id&gt;/</code> behind your login, adds a page to the rail and the Cockpit sheet, buttons to the projects column and the empty projects page, settings and assistant memory, creates projects, starts assistants on a coder of its choice, lists them, reads their last message and follows jobs, coders and compose runs. An assistant a plugin starts with a first message answers it at once, a paid turn nobody approves.`,
 			},
 			{
 				Title: "Where a plugin stands",

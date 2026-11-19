@@ -1,8 +1,9 @@
 // Optional compiled plugin checks of external-plugins.js with DISTRO=1,
 // never run on their own. The instance runs examples/distro: stamp is always
 // on, pulse is optional and ships off. Pulse beats into its state directory
-// from a goroutine and adds a setting and a memory file, the runner reads
-// them in the instance's state directory, mounted read only at STATE.
+// from a goroutine, adds a setting and a memory file and starts assistants
+// on a coder it lists through its Serve, the runner reads the state
+// directory, mounted read only at STATE.
 const fs = require("fs");
 const path = require("path");
 
@@ -27,7 +28,7 @@ function setting(key) {
 const heartbeat = () => readText(path.join(STATE, "plugins", "pulse", "heartbeat"));
 const memory = () => readText(path.join(STATE, "assistant", "memory", "pulse.md"));
 
-async function optionalChecks({ L, engine, page, run, mobilePage, second, INBOX, PLUGINS_DIR, waitShown, plugins, act, call, csrf, scrollDown, waitNotice, pageNotice, writeBroken, minimal }) {
+async function optionalChecks({ L, engine, page, run, mobilePage, second, INBOX, PLUGINS_DIR, waitShown, plugins, act, call, csrf, scrollDown, waitNotice, pageNotice, writeBroken, minimal, startAssistant, readLast, pickCoder, startOnDefault }) {
   const { assert, sleep, BASE } = L;
   const watcher = await second.newPage();
   const own = await second.newPage();
@@ -141,6 +142,21 @@ async function optionalChecks({ L, engine, page, run, mobilePage, second, INBOX,
     }
   });
 
+  await run("built in: pulse lists the coders, starts an assistant on one through its Serve, the cockpit lists it and pulse reads its last message", async () => {
+    const coder = await pickCoder(own, "pulse");
+    await startOnDefault(own, "pulse");
+    const name = `xopt-asst-${engine}-${Date.now() % 100000}`;
+    const id = await startAssistant(own, "pulse", name, "MAGIC from pulse", { coder });
+    await readLast(own, "pulse", id, /^assistant, .+, complete: AIRPORT$/);
+    const listed = JSON.parse((await call(page, "/plugins/pulse/assistants")).text).assistants.find((a) => a.id === id);
+    assert(listed && listed.name === name && listed.coder_id === coder && listed.url === `/assistants/${id}` && listed.message_count === 2 && listed.preview === "AIRPORT",
+      `pulse lists ${JSON.stringify(listed)}`);
+    const missing = await call(page, "/plugins/pulse/assistants/00000000-0000-4000-8000-000000000000/last-message");
+    assert(missing.status === 404 && /There is no assistant with that id\./.test(missing.text), `a missing assistant read ${missing.status} ${missing.text}`);
+    await page.goto(`${BASE}/assistants/${id}`, { waitUntil: "domcontentloaded" });
+    await waitShown(page, `[data-assistant-rows] [data-assistant-instance="${id}"]`);
+  });
+
   await run("built in: Disable takes pulse off every page live, its page says so, nothing beats and what it wrote stays", async () => {
     await plugins(page);
     await act(page, "pulse", "disable");
@@ -152,6 +168,10 @@ async function optionalChecks({ L, engine, page, run, mobilePage, second, INBOX,
     for (const p of [watcher, own]) assert(await p.evaluate(() => window.__stayed === true), "a page reloaded");
     const route = await call(page, "/plugins/pulse/beats");
     assert(route.status === 404, `pulse's route answered ${route.status} once off`);
+    for (const route of ["/plugins/pulse/assistants", "/plugins/pulse/assistants/coders"]) {
+      const asked = await call(page, route);
+      assert(asked.status === 404, `${route} answered ${asked.status} once off`);
+    }
     assert(await stillHeartbeat(1200), "pulse beats on after its switch off");
     assert(/pulse plugin/.test(memory() || ""), "the switch off took pulse's memory");
     assert(setting("pulse-greeting") === "Hello from pulse", "the switch off took pulse's setting");
@@ -221,6 +241,11 @@ async function optionalChecks({ L, engine, page, run, mobilePage, second, INBOX,
     }
     const moved = await scrollDown(m, engine, ".dc-work-body");
     assert(moved > 20, `the lines scrolled ${moved}px`);
+    const coder = await pickCoder(m, "pulse");
+    const id = await startAssistant(m, "pulse", `xoptm-asst-${engine}-${Date.now() % 100000}`, "MAGIC from pulse on the phone", { tap: true, coder });
+    await readLast(m, "pulse", id, /^assistant, .+, complete: AIRPORT$/, { tap: true });
+    const listed = JSON.parse((await call(m, "/plugins/pulse/assistants")).text).assistants.find((a) => a.id === id);
+    assert(listed?.coder_id === coder, `the phone's assistant runs on ${listed?.coder_id}, picked ${coder}`);
     await plugins(m);
     const disable = m.locator(`${BUILTIN("pulse")} [data-plugin-action="disable"]`);
     await disable.scrollIntoViewIfNeeded();

@@ -152,7 +152,7 @@ func (s *Service) Retry(id string) (Run, error) {
 func (s *Service) prepareLocked(id string) (Instance, CoderInfo, error) {
 	c, ok := s.store.Load(id)
 	if !ok {
-		return Instance{}, CoderInfo{}, errors.New("Assistant not found.")
+		return Instance{}, CoderInfo{}, ErrNotFound
 	}
 	co, ok := s.coder(c.CoderID)
 	if !ok {
@@ -258,7 +258,7 @@ func (s *Service) Discard(instanceID, messageID string) error {
 	c, ok := s.store.Load(instanceID)
 	if !ok {
 		s.mu.Unlock()
-		return errors.New("Assistant not found.")
+		return ErrNotFound
 	}
 	for i, m := range c.Messages {
 		if m.ID != messageID {

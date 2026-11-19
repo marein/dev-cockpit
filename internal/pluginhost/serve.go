@@ -42,6 +42,7 @@ type Serve struct {
 	stateDir       string
 	pluginStateDir string
 	projects       *projects
+	assistants     *Assistants
 	routes         http.Handler
 	assets         fs.FS
 	elements       []Registration
@@ -75,6 +76,8 @@ func (s *Serve) StateDir() string { return s.stateDir }
 func (s *Serve) PluginStateDir() string { return s.pluginStateDir }
 
 func (s *Serve) Projects() plugin.Projects { return s.projects }
+
+func (s *Serve) Assistants() plugin.Assistants { return serveAssistants{serve: s} }
 
 func (s *Serve) Context() context.Context { return s.ctx }
 
@@ -253,16 +256,17 @@ func (p project) Changed(ctx context.Context) error { return p.changed(ctx) }
 // cockpit's call at serve start, after the configuration is loaded and
 // before the server listens; the ids are validated before, see distro.Main.
 // createProject is the web UI's own project creation path and projectChanged
-// its announcement path, which is what the projects facade delegates to. A
-// failing plugin aborts the start with its id on the error.
-func ConfigureServe(plugins []plugin.Named[plugin.ServePlugin], projectsDir, stateDir string, createProject func(ctx context.Context, name string) (string, error), projectChanged func(ctx context.Context) error) ([]*Serve, error) {
+// its announcement path, which is what the projects facade delegates to, and
+// assistants is the assistant surface, bound later. A failing plugin aborts
+// the start with its id on the error.
+func ConfigureServe(plugins []plugin.Named[plugin.ServePlugin], projectsDir, stateDir string, createProject func(ctx context.Context, name string) (string, error), projectChanged func(ctx context.Context) error, assistants *Assistants) ([]*Serve, error) {
 	shared := &projects{create: createProject, changed: projectChanged}
 	serves := make([]*Serve, 0, len(plugins))
 	for i, p := range plugins {
 		if p.Optional {
 			continue
 		}
-		s, err := newCompiledServe(p.ID, i, projectsDir, stateDir, shared)
+		s, err := newCompiledServe(p.ID, i, projectsDir, stateDir, shared, assistants)
 		if err != nil {
 			return nil, err
 		}
@@ -278,11 +282,11 @@ func ConfigureServe(plugins []plugin.Named[plugin.ServePlugin], projectsDir, sta
 
 // newCompiledServe makes the plugin's state directory and a fresh, unsealed
 // Serve for one ConfigureServe call.
-func newCompiledServe(id string, order int, projectsDir, stateDir string, shared *projects) (*Serve, error) {
+func newCompiledServe(id string, order int, projectsDir, stateDir string, shared *projects, assistants *Assistants) (*Serve, error) {
 	pluginStateDir := filepath.Join(stateDir, "plugins", id)
 	if err := os.MkdirAll(pluginStateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("plugin %s has no state directory: %w", id, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Serve{id: id, order: order, ctx: ctx, cancel: cancel, projectsDir: projectsDir, stateDir: stateDir, pluginStateDir: pluginStateDir, projects: shared}, nil
+	return &Serve{id: id, order: order, ctx: ctx, cancel: cancel, projectsDir: projectsDir, stateDir: stateDir, pluginStateDir: pluginStateDir, projects: shared, assistants: assistants}, nil
 }

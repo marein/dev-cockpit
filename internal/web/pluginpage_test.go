@@ -25,7 +25,7 @@ func (p pagePlugin) ConfigureServe(s plugin.Serve) error {
 func pagedShell(t *testing.T, plugins ...plugin.Named[plugin.ServePlugin]) *gin.Engine {
 	t.Helper()
 	r, s, _ := assistantEntryServer(t, assistantA)
-	serves, err := pluginhost.ConfigureServe(plugins, "", t.TempDir(), nil, nil)
+	serves, err := pluginhost.ConfigureServe(plugins, "", t.TempDir(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ConfigureServe() = %v", err)
 	}

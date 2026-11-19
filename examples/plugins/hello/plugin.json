@@ -3,7 +3,7 @@
   "id": "hello",
   "name": "Hello",
   "version": "1.0.0",
-  "description": "Notes on a page of its own and a button that creates a project, written in Python.",
+  "description": "Notes and assistants on a page of its own and a button that creates a project, written in Python.",
   "run": "hello.py",
   "assets": "assets",
   "elements": [

@@ -188,12 +188,12 @@ func openChoices(c Instance, messageID string) (Choices, error) {
 // repeated save writes nothing and announces nothing, like the composer's.
 func (s *Service) SaveAnswers(id, messageID string, picks []Pick) (bool, error) {
 	if _, ok := s.store.Load(id); !ok {
-		return false, errors.New("Assistant not found.")
+		return false, ErrNotFound
 	}
 	return s.drafts.Of(id).saveAnswers(messageID, func() ([]Pick, error) {
 		c, ok := s.store.Load(id)
 		if !ok {
-			return nil, errors.New("Assistant not found.")
+			return nil, ErrNotFound
 		}
 		choices, err := openChoices(c, messageID)
 		if err != nil {

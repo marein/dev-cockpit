@@ -256,11 +256,15 @@ func hasControl(value string) bool {
 }
 
 // cut bounds a value a refusal quotes.
-func cut(value string) string {
-	if len(value) <= 40 {
+func cut(value string) string { return cutTo(value, 40) }
+
+// cutTo bounds value to limit bytes, cut at a rune start and ended with an
+// ellipsis.
+func cutTo(value string, limit int) string {
+	if len(value) <= limit {
 		return value
 	}
-	end := 40
+	end := limit
 	for end > 0 && !utf8.RuneStart(value[end]) {
 		end--
 	}
