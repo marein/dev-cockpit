@@ -104,7 +104,9 @@ func readContextUsage(source io.Reader) (assistant.ContextUsage, bool) {
 			tier = rec.Data.ContextTier
 			continue
 		}
-		if !hasTokens || rec.Data.CurrentTokens <= 0 {
+		// A compaction's start record carries currentTokens too, without the
+		// model, and is the last one a stopped compaction leaves.
+		if rec.Type != "session.shutdown" || rec.Data.CurrentTokens <= 0 {
 			continue
 		}
 		usage = assistant.ContextUsage{

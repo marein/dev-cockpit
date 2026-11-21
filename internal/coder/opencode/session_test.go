@@ -72,6 +72,9 @@ func fixtureRepository(t *testing.T, rows []fixtureRow) *sessionRepository {
 			switch {
 			case strings.Contains(sql, "parent_id IS NULL"):
 				return listJSON(t, answered), nil
+			case strings.Contains(sql, "AS leftover"):
+				// No compaction was left unfinished.
+				return []byte("[]"), nil
 			case strings.Contains(sql, "AS tokens"):
 				// The usage reading of a turn's end, see assistant.go: this
 				// store recorded none.

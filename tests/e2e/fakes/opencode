@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+# Fake opencode for the assistant e2e runners: answers `run --help` and
+# `models --verbose` the way 1.19.0 does, runs a turn as `run --session <id>
+# --format json --auto [-m <model>] -- <prompt>` with the JSONL records of a
+# real run, serves `serve --port <p> --hostname <h> --pure` behind the
+# password of OPENCODE_SERVER_PASSWORD (POST /session and POST
+# /session/<id>/summarize), and keeps everything in a SQLite store shaped like
+# opencode's own under the data directory, which is where the cockpit reads
+# sessions, their mapping and the context. It never spends a model request.
+#
+# Prompts steer it: MAGIC answers AIRPORT, FAIL ends the turn with an error
+# record and writes no answer, CONTEXT_HIGH records a nearly full context
+# (every other answer 68 percent of 200 thousand), SERVE_LEFT answers how many
+# servers of this fake still run. A summarize reads the prompt of the turn
+# before it like the other fakes' /compact: COMPACT_LONG takes ten seconds,
+# COMPACT_RESTART restarts the cockpit while it runs, COMPACT_REFUSE answers
+# 500 with opencode's error shape. Like opencode 1.19.0 it writes the
+# compaction's user message and an unfinished summary first and finishes the
+# summary at the end, a refusal leaves the user message alone, and a run on a
+# session holding a compaction no finished summary answers finishes that one
+# and ends with the summary instead of answering. The server also answers
+# abort and the delete of a message. COMPACT_KILL_HELPER makes the server
+# SIGKILL the compaction helper above it inside summarize and, should it
+# outlive it, finish the summary and keep serving. CLEAR_RESTART, read off the
+# turn before like the rest, restarts the cockpit once while a turn clears
+# what an unfinished compaction left.
+import base64
+import json
+import os
+import signal
+import sqlite3
+import subprocess
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SELF = os.path.realpath(__file__)
+DEFAULT_MODEL = "opencode/big-pickle"
+WINDOW = 200000
+
+
+def data_dir():
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "opencode")
+
+
+def store():
+    os.makedirs(data_dir(), exist_ok=True)
+    conn = sqlite3.connect(os.path.join(data_dir(), "opencode.db"), timeout=10, isolation_level=None)
+    conn.execute("CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, title TEXT, directory TEXT,"
+                 " time_created INTEGER, time_updated INTEGER, metadata TEXT, parent_id TEXT, time_archived INTEGER)")
+    conn.execute("CREATE TABLE IF NOT EXISTS message (id TEXT PRIMARY KEY, session_id TEXT,"
+                 " time_created INTEGER, time_updated INTEGER, data TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT,"
+                 " time_created INTEGER, time_updated INTEGER, data TEXT)")
+    return conn
+
+
+def stamp(conn):
+    last = conn.execute("SELECT MAX(time_created) FROM message").fetchone()[0] or 0
+    return max(int(time.time() * 1000), last + 1)
+
+
+def new_id(prefix):
+    return prefix + "_" + format(time.time_ns(), "x") + base64.b32encode(os.urandom(5)).decode().lower()
+
+
+def add_message(conn, session, data, parts):
+    at = stamp(conn)
+    mid = new_id("msg")
+    conn.execute("INSERT INTO message VALUES (?,?,?,?,?)", (mid, session, at, at, json.dumps(data)))
+    for part in parts:
+        conn.execute("INSERT INTO part VALUES (?,?,?,?,?,?)", (new_id("prt"), mid, session, at, at, json.dumps(part)))
+    conn.execute("UPDATE session SET time_updated = ? WHERE id = ?", (at, session))
+    return mid
+
+
+def finished(conn, session, marker):
+    return conn.execute("SELECT 1 FROM message WHERE session_id = ? AND json_extract(data,'$.parentID') = ?"
+                        " AND json_extract(data,'$.summary') = 1 AND json_extract(data,'$.finish') IS NOT NULL"
+                        " AND json_extract(data,'$.error') IS NULL", (session, marker)).fetchone() is not None
+
+
+def leftover(conn, session):
+    for (marker,) in conn.execute("SELECT DISTINCT m.id FROM message m JOIN part p ON p.message_id = m.id"
+                                  " WHERE m.session_id = ? AND json_extract(p.data,'$.type') = 'compaction'"
+                                  " ORDER BY m.time_created DESC", (session,)).fetchall():
+        if not finished(conn, session, marker):
+            return marker
+    return None
+
+
+def summary_of(conn, session, marker, provider, model):
+    row = conn.execute("SELECT id FROM message WHERE session_id = ? AND json_extract(data,'$.parentID') = ?",
+                       (session, marker)).fetchone()
+    if row:
+        return row[0]
+    return add_message(conn, session, {"role": "assistant", "parentID": marker, "providerID": provider, "modelID": model,
+                                       "mode": "compaction", "agent": "compaction", "summary": True,
+                                       "tokens": {"input": 1373, "output": 323, "cache": {"read": 0, "write": 0}}}, [])
+
+
+def finish_summary(conn, session, mid):
+    at = stamp(conn)
+    conn.execute("UPDATE message SET data = json_set(data, '$.finish', 'stop', '$.time', json_object('completed', ?)),"
+                 " time_updated = ? WHERE id = ?", (at, at, mid))
+    conn.execute("INSERT INTO part VALUES (?,?,?,?,?,?)", (new_id("prt"), mid, session, at, at,
+                                                          json.dumps({"type": "text", "text": "Summary of the conversation so far."})))
+
+
+def last_prompt(conn, session):
+    row = conn.execute("SELECT json_extract(p.data,'$.text') FROM part p JOIN message m ON m.id = p.message_id"
+                       " WHERE m.session_id = ? AND json_extract(m.data,'$.role') = 'user'"
+                       " AND json_extract(p.data,'$.type') = 'text' ORDER BY m.time_created DESC LIMIT 1",
+                       (session,)).fetchone()
+    return (row[0] if row else "") or ""
+
+
+def servers_left():
+    count = 0
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or int(pid) == os.getpid():
+            continue
+        try:
+            argv = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
+        except OSError:
+            continue
+        words = [a.decode(errors="replace") for a in argv]
+        mine = any(w.endswith("opencode") and os.path.realpath(w) == SELF for w in words)
+        if mine and "serve" in words:
+            count += 1
+    return count
+
+
+def emit(record):
+    sys.stdout.write(json.dumps(record) + "\n")
+    sys.stdout.flush()
+
+
+def run(args):
+    if "--help" in args:
+        print("opencode run [message..]\n\nOptions:\n  --session  session id to continue\n"
+              "  --format   format: default or json\n  --auto     approve every permission\n"
+              "  -m, --model  model to use in the format of provider/model")
+        return 0
+    session, model, prompt = "", DEFAULT_MODEL, ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            prompt = " ".join(args[i + 1:])
+            break
+        if a in ("--session", "-s"):
+            session, i = args[i + 1], i + 2
+        elif a in ("-m", "--model"):
+            model, i = args[i + 1], i + 2
+        elif a == "--format":
+            i += 2
+        else:
+            i += 1
+    conn = store()
+    if not conn.execute("SELECT 1 FROM session WHERE id = ?", (session,)).fetchone():
+        emit({"type": "error", "sessionID": session, "error": {"name": "NotFoundError", "data": {"message": "Session not found: " + session}}})
+        return 1
+    provider, _, model_id = model.partition("/")
+    add_message(conn, session, {"role": "user", "model": {"providerID": provider, "modelID": model_id}},
+                [{"type": "text", "text": prompt}])
+    marker = leftover(conn, session)
+    if marker:
+        finish_summary(conn, session, summary_of(conn, session, marker, provider, model_id))
+        emit({"type": "text", "sessionID": session, "part": {"type": "text", "text": "Summary of the conversation so far."}})
+        emit({"type": "step_finish", "sessionID": session, "part": {"type": "step-finish", "reason": "stop"}})
+        return 0
+    if "FAIL" in prompt:
+        emit({"type": "error", "sessionID": session, "error": {"name": "UnknownError", "data": {"message": "The fake failed on purpose."}}})
+        return 1
+    answer = "Fake opencode answer."
+    if "MAGIC" in prompt:
+        answer = "AIRPORT"
+    if "SERVE_LEFT" in prompt:
+        answer += f" Servers left: {servers_left()}."
+    tokens = 192000 if "CONTEXT_HIGH" in prompt else 136000
+    add_message(conn, session, {"role": "assistant", "providerID": provider, "modelID": model_id, "mode": "build",
+                                "agent": "build", "finish": "stop",
+                                "tokens": {"input": tokens - 2000, "output": 40, "cache": {"read": 2000, "write": 0}}},
+                [{"type": "text", "text": answer}])
+    emit({"type": "step_start", "sessionID": session, "part": {"type": "step-start"}})
+    emit({"type": "text", "sessionID": session, "part": {"type": "text", "text": answer}})
+    emit({"type": "step_finish", "sessionID": session, "part": {"type": "step-finish", "reason": "stop"}})
+    return 0
+
+
+def models(args):
+    print(DEFAULT_MODEL)
+    if "--verbose" in args:
+        print(json.dumps({"id": "big-pickle", "providerID": "opencode", "limit": {"context": WINDOW, "output": 32000}}))
+    return 0
+
+
+def restart_cockpit():
+    """Kills the cockpit this server belongs to and starts it again the way it
+    ran, with its own environment: the chain above this server is the compaction
+    helper, its hold process and then the cockpit's serve, or the cockpit
+    itself for a server it starts to clear a leftover. A forked child of its own
+    session does it, so it survives this server dying with its starter."""
+    starter = os.getppid()
+    if os.fork() != 0:
+        return
+    os.setsid()
+    try:
+        restart_from(starter)
+    finally:
+        os._exit(0)
+
+
+def restart_from(pid):
+    parent = 0
+    while pid > 1:
+        try:
+            argv = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
+        except OSError:
+            return
+        if b"serve" in argv:
+            parent = pid
+            break
+        pid = int(open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[1])
+    if not parent:
+        return
+    cwd = os.readlink(f"/proc/{parent}/cwd")
+    argv = [a.decode() for a in open(f"/proc/{parent}/cmdline", "rb").read().split(b"\0")[:-1]]
+    env = dict(e.decode().split("=", 1) for e in open(f"/proc/{parent}/environ", "rb").read().split(b"\0") if b"=" in e)
+    os.kill(parent, signal.SIGTERM)
+    for _ in range(100):
+        try:
+            os.kill(parent, 0)
+        except OSError:
+            break
+        time.sleep(0.1)
+    log = open(os.environ.get("DC_RESTART_LOG", "/tmp/dc-e2e-restart.log"), "ab")
+    subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                     start_new_session=True, close_fds=True)
+
+
+class Handler(BaseHTTPRequestHandler):
+    password = ""
+
+    def log_message(self, *args):
+        pass
+
+    def answer(self, status, body):
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def allowed(self):
+        if not self.password:
+            return True
+        want = "Basic " + base64.b64encode(("opencode:" + self.password).encode()).decode()
+        if self.headers.get("Authorization") == want:
+            return True
+        self.answer(401, b"")
+        return False
+
+    def body(self):
+        size = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(size) or b"{}")
+
+    def do_GET(self):
+        if self.allowed():
+            self.answer(200, [])
+
+    def do_POST(self):
+        if not self.allowed():
+            return
+        parts = self.path.strip("/").split("/")
+        conn = store()
+        if parts == ["session"]:
+            req = self.body()
+            sid, at = new_id("ses"), int(time.time() * 1000)
+            conn.execute("INSERT INTO session VALUES (?,?,?,?,?,?,NULL,NULL)",
+                         (sid, req.get("title") or "New session", os.getcwd(), at, at, json.dumps(req.get("metadata") or {})))
+            self.answer(200, {"id": sid})
+            return
+        if len(parts) == 3 and parts[0] == "session" and parts[2] == "summarize":
+            self.summarize(conn, parts[1], self.body())
+            return
+        if len(parts) == 3 and parts[0] == "session" and parts[2] == "abort":
+            once = os.path.join(data_dir(), "clear-restart-" + parts[1])
+            if "CLEAR_RESTART" in last_prompt(conn, parts[1]) and not os.path.exists(once):
+                open(once, "w").close()
+                restart_cockpit()
+                time.sleep(30)
+            conn.execute("UPDATE message SET data = json_set(data, '$.error', json_object('name', 'MessageAbortedError'))"
+                         " WHERE session_id = ? AND json_extract(data,'$.summary') = 1"
+                         " AND json_extract(data,'$.finish') IS NULL", (parts[1],))
+            self.answer(200, b"true")
+            return
+        self.answer(404, {"name": "NotFoundError", "data": {"message": "No route " + self.path}})
+
+    def do_DELETE(self):
+        if not self.allowed():
+            return
+        parts = self.path.strip("/").split("/")
+        if len(parts) == 4 and parts[0] == "session" and parts[2] == "message":
+            conn = store()
+            gone = conn.execute("DELETE FROM message WHERE session_id = ? AND id = ?", (parts[1], parts[3])).rowcount
+            conn.execute("DELETE FROM part WHERE message_id = ?", (parts[3],))
+            if gone:
+                self.answer(200, b"true")
+                return
+        self.answer(404, {"name": "NotFoundError", "data": {"message": "No message " + self.path}})
+
+    def summarize(self, conn, session, req):
+        if not conn.execute("SELECT 1 FROM session WHERE id = ?", (session,)).fetchone():
+            self.answer(404, {"name": "NotFoundError", "data": {"message": "Session not found: " + session}})
+            return
+        used = conn.execute("SELECT json_extract(data,'$.providerID'), json_extract(data,'$.modelID') FROM message"
+                            " WHERE session_id = ? AND json_extract(data,'$.role') = 'assistant'"
+                            " AND json_extract(data,'$.summary') IS NOT 1 ORDER BY time_created DESC LIMIT 1",
+                            (session,)).fetchone()
+        if not used or [req.get("providerID"), req.get("modelID")] != list(used):
+            self.answer(400, {"name": "BadRequest", "data": {"message": f"Not the session's model: {req}"}})
+            return
+        prompt = last_prompt(conn, session)
+        marker = add_message(conn, session, {"role": "user", "model": {"providerID": used[0], "modelID": used[1]}},
+                             [{"type": "compaction", "auto": False}])
+        summary = summary_of(conn, session, marker, used[0], used[1])
+        if "COMPACT_KILL_HELPER" in prompt:
+            time.sleep(1)
+            os.kill(os.getppid(), signal.SIGKILL)
+            time.sleep(3)
+        elif "COMPACT_LONG" in prompt:
+            time.sleep(10)
+        elif "COMPACT_RESTART" in prompt:
+            restart_cockpit()
+            time.sleep(4)
+        else:
+            time.sleep(2)
+        if "COMPACT_REFUSE" in prompt:
+            conn.execute("DELETE FROM message WHERE id = ?", (summary,))
+            self.answer(500, {"name": "UnknownError", "data": {"message": "Compaction failed: the summary was too long."}})
+            return
+        finish_summary(conn, session, summary)
+        self.answer(200, b"true")
+
+
+def serve(args):
+    port, host = 0, "127.0.0.1"
+    for i, a in enumerate(args):
+        if a == "--port":
+            port = int(args[i + 1])
+        elif a == "--hostname":
+            host = args[i + 1]
+    Handler.password = os.environ.get("OPENCODE_SERVER_PASSWORD", "")
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
+    return 0
+
+
+def session(args):
+    if len(args) >= 2 and args[0] == "delete":
+        conn = store()
+        conn.execute("DELETE FROM part WHERE session_id = ?", (args[1],))
+        conn.execute("DELETE FROM message WHERE session_id = ?", (args[1],))
+        conn.execute("DELETE FROM session WHERE id = ?", (args[1],))
+    return 0
+
+
+def main(argv):
+    if argv[:1] in (["--version"], ["-v"]):
+        print("1.19.0")
+        return 0
+    commands = {"run": run, "models": models, "serve": serve, "session": session}
+    if argv and argv[0] in commands:
+        return commands[argv[0]](argv[1:])
+    print("fake opencode interactive", flush=True)
+    while True:
+        time.sleep(3600)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

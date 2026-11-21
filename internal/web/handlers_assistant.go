@@ -251,6 +251,8 @@ func (s *Server) assistantData(current assistant.Instance, all bool) render.Assi
 		DraftFiles:      s.assistantDraftFiles(current.ID, draft),
 		DraftURL:        base + "/draft",
 		ContextPercent:  assistantContextPercent(current),
+		ContextPending:  current.Context != nil && current.Context.Pending,
+		Compact:         s.assistantCompactData(current, blocked != ""),
 		Models:          s.assistantModelsData(current),
 	}
 }
@@ -375,6 +377,8 @@ func (s *Server) handleAssistantAction(c *gin.Context) {
 		s.assistantRetry(c, id)
 	case "cancel":
 		s.assistantCancel(c, id)
+	case "compact":
+		s.assistantCompact(c, id)
 	case "discard":
 		s.assistantDiscard(c, id)
 	case "draft":
@@ -656,6 +660,9 @@ func (s *Server) handleAssistantInstanceRead(c *gin.Context) {
 				entry["headline"] = note.Headline
 				break
 			}
+		}
+		if line := compactHeadline(m); line != "" {
+			entry["headline"] = line
 		}
 		messages = append(messages, entry)
 	}

@@ -63,6 +63,9 @@ func (a pluginAssistants) LastMessage(ctx context.Context, in plugin.AssistantMe
 	if m.Note != nil {
 		answer.Headline = m.Note.Headline
 	}
+	if line := compactHeadline(m); line != "" {
+		answer.Headline = line
+	}
 	return answer, nil
 }
 

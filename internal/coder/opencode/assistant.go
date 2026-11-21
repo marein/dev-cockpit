@@ -29,13 +29,16 @@ const assistantConfig = `{"tools":{"question":false}}`
 // A conversation lives in a provider session the service addresses by an id
 // it chose, and opencode cannot create a session under a caller's id. So the
 // first turn creates the session through opencode's own API instead
-// (createSession, runtime.go), with the cockpit's id in the session metadata,
+// (createSession, serve.go), with the cockpit's id in the session metadata,
 // and every surface that takes an id resolves that mapping through the
 // store: SessionExists and DeleteSession here, the resume in ResumeCommand,
 // and the record guard in the parser.
 type runner struct {
 	sessions *sessionRepository
 	create   createFunc
+	// serve starts the throwaway server that clears what an unfinished
+	// compaction left, see leftover.go.
+	serve func(workdir string) (*throwawayServe, error)
 	// window answers how much context a model holds, out of the coder's
 	// cached model list (modelWindow in models.go); nil where no list stands,
 	// which reads as unknown.
@@ -57,7 +60,7 @@ func (p *Coder) probeAssistant() bool {
 		log.Printf("opencode conversations disabled, the installed CLI has no %s", strings.Join(missing, ", "))
 		return false
 	}
-	p.runner = &runner{sessions: p.sessions, create: createSession, window: p.modelWindow}
+	p.runner = &runner{sessions: p.sessions, create: createSession, serve: startServe, window: p.modelWindow}
 	return true
 }
 
@@ -98,10 +101,18 @@ func (r *runner) DeleteSession(sessionID string) error {
 // dash text (verified on 1.18.23, `opencode run -- -dxdebug.idekey=…`
 // delivers the words). A model the turn names rides behind -m, in the
 // provider/model form `opencode models` prints, and nothing else moves for it.
+// A resumed turn first clears what an unfinished compaction left, which the
+// run would otherwise finish in place of the answer, see leftover.go.
 func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	native := ""
 	if req.Resume {
 		native = r.sessions.nativeID(req.SessionID)
+		if id, err := validSessionID(native); err == nil {
+			if err := r.clearLeftovers(req.Workdir, id); err != nil {
+				log.Printf("opencode assistant: what an unfinished compaction left in %s could not be cleared: %v", id, err)
+				return assistant.Command{}, errors.New("An earlier compaction that did not finish could not be cleared from this conversation.")
+			}
+		}
 	} else {
 		id, err := r.create(req.Workdir, assistant.SessionName(req.Title), req.SessionID)
 		if err != nil {
@@ -163,6 +174,10 @@ type parser struct {
 	failed     bool
 	authFailed bool
 	errText    string
+	// compacted is whether the record of a compaction arrived, see
+	// compact.go. It carries the outcome, and the store holds no reading
+	// of the context it left.
+	compacted bool
 }
 
 type recordHead struct {
@@ -227,6 +242,8 @@ func (p *parser) Line(line []byte) error {
 			p.authFailed = true
 		}
 		p.errText = errorWording(rec)
+	case compactRecordType:
+		p.readCompaction(line)
 	}
 	return nil
 }
@@ -273,6 +290,9 @@ func (p *parser) skipUnreadable(line []byte, err error) {
 }
 
 func (p *parser) Finish() error {
+	if p.compacted {
+		return nil
+	}
 	// The context reading is read here and nowhere else: opencode writes the
 	// token counts onto the assistant message in its store, and nothing of it
 	// reaches the run's output records.
@@ -299,16 +319,19 @@ func (p *parser) Diagnose(err error, stderr string) error {
 	return nil
 }
 
-// usageQuery reads what the newest assistant message consumed and which model
-// it was, the provider and the model id the record keeps apart. The context is
-// everything that went in, cached or not: a cache read is context the model
-// saw, it was only cheaper to send.
+// usageQuery reads what the newest answer consumed and which model it was, the
+// provider and the model id the record keeps apart. The context is everything
+// that went in, cached or not: a cache read is context the model saw, it was
+// only cheaper to send. The summary a compaction writes is an assistant
+// message too, and what it took in is the conversation it summarized, not
+// the context after it, so it is skipped.
 const usageQuery = `SELECT json_extract(data,'$.providerID') AS provider,` +
 	` json_extract(data,'$.modelID') AS model,` +
 	` COALESCE(json_extract(data,'$.tokens.input'),0)` +
 	` + COALESCE(json_extract(data,'$.tokens.cache.read'),0)` +
 	` + COALESCE(json_extract(data,'$.tokens.cache.write'),0) AS tokens` +
 	` FROM message WHERE session_id = '%s' AND json_extract(data,'$.role') = 'assistant'` +
+	` AND json_extract(data,'$.summary') IS NOT 1` +
 	` ORDER BY time_created DESC, id DESC LIMIT 1`
 
 // reportUsage sends what the finished run recorded about its context. A run

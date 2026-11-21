@@ -30,6 +30,7 @@ type ChatMessageView struct {
 	// result, the way a check's report does.
 	Auto        bool
 	Origin      *AssistantNoteView
+	Compact     *ChatCompactView
 	Author      string
 	Text        string
 	HTML        template.HTML
@@ -58,6 +59,12 @@ type ChatMessageView struct {
 	// Copy is what the message's copy button puts on the clipboard, the words
 	// as recorded; empty renders no button.
 	Copy string
+}
+
+type ChatCompactView struct {
+	Line  string
+	Mark  string
+	Badge string
 }
 
 // ChatMessageData is the model of chat_message.gohtml, one bubble.

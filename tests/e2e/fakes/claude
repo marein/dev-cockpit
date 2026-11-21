@@ -296,6 +296,57 @@ if [ "$model" = "no-such-model" ]; then
   exit 1
 fi
 
+# /compact as the whole prompt compacts the session the way claude 2.1.330
+# does: a status record saying how it went, a boundary record, no assistant
+# record, usage all 0. The prompt of the turn before steers it: COMPACT_LONG
+# takes ten seconds, COMPACT_RESTART restarts the cockpit halfway through,
+# COMPACT_EMPTY answers like a session without messages and COMPACT_REFUSE
+# fails. A compaction with no turn since the last one has nothing to compact,
+# in 2.1.330's words.
+if [ "$prompt" = "/compact" ]; then
+  last=$(python3 -c '
+import json, sys
+last, since = "", False
+try:
+    for line in open(sys.argv[1]):
+        try: entry = json.loads(line)
+        except Exception: continue
+        if entry.get("isCompactSummary"):
+            since = True
+        elif entry.get("type") == "user" and isinstance(entry.get("message", {}).get("content"), str):
+            last, since = entry["message"]["content"], False
+except OSError:
+    pass
+print("COMPACT_EMPTY" if since else last)' "$transcript")
+  case "$last" in
+    ""|*COMPACT_EMPTY*)
+      emit "{\"type\":\"system\",\"subtype\":\"status\",\"status\":\"compacting\",\"session_id\":\"$session\"}"
+      emit "{\"type\":\"system\",\"subtype\":\"status\",\"status\":null,\"compact_result\":\"failed\",\"compact_error\":\"Not enough messages to compact.\",\"session_id\":\"$session\"}"
+      emit "{\"type\":\"assistant\",\"message\":{\"model\":\"<synthetic>\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"content\":[{\"type\":\"text\",\"text\":\"Not enough messages to compact.\"}]},\"parent_tool_use_id\":null,\"session_id\":\"$session\",\"local_command_run\":true}"
+      emit "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":0,\"result\":\"Not enough messages to compact.\",\"session_id\":\"$session\",\"modelUsage\":{}}"
+      exit 0
+      ;;
+  esac
+  emit "{\"type\":\"system\",\"subtype\":\"status\",\"status\":\"compacting\",\"session_id\":\"$session\"}"
+  case "$last" in
+    *COMPACT_LONG*) sleep 10 ;;
+    *COMPACT_RESTART*) restart_server; sleep 4 ;;
+    *) sleep 2 ;;
+  esac
+  case "$last" in
+    *COMPACT_REFUSE*)
+      emit "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"Compaction failed: the summary was too long\",\"session_id\":\"$session\"}"
+      exit 0
+      ;;
+  esac
+  printf '{"type":"system","subtype":"compact_boundary","sessionId":"%s","cwd":"%s","content":"Conversation compacted"}\n' "$session" "$PWD" >> "$transcript"
+  printf '{"type":"user","sessionId":"%s","cwd":"%s","isCompactSummary":true,"message":{"role":"user","content":"Summary of the conversation so far."}}\n' "$session" "$PWD" >> "$transcript"
+  emit "{\"type\":\"system\",\"subtype\":\"status\",\"status\":null,\"compact_result\":\"success\",\"session_id\":\"$session\"}"
+  emit "{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"session_id\":\"$session\",\"compact_metadata\":{\"trigger\":\"manual\",\"pre_tokens\":68000,\"post_tokens\":9000}}"
+  emit "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":0,\"result\":\"\",\"session_id\":\"$session\",\"usage\":{\"input_tokens\":0},\"modelUsage\":{\"fake\":{\"contextWindow\":100000}}}"
+  exit 0
+fi
+
 emit '{"type":"system","subtype":"status","status":"working"}'
 
 answer="Fake claude answer."

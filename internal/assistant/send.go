@@ -179,6 +179,12 @@ func (s *Service) prepareLocked(id string) (Instance, CoderInfo, error) {
 // and before the start frame, so a page that never saw them pulls them first
 // and the answer's bubble lands under them.
 func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce ...string) (Run, error) {
+	return s.beginLocked(c, co, RunChat, prompt, announce...)
+}
+
+// beginLocked is startLocked for a run of either kind that holds the chat's
+// place: a turn writes an answer, a compaction the line saying how it went.
+func (s *Service) beginLocked(c *Instance, co CoderInfo, kind RunKind, prompt string, announce ...string) (Run, error) {
 	workdir, err := s.workdirs.Workdir(c.ID)
 	if err != nil {
 		return Run{}, err
@@ -192,6 +198,10 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 		RunID:     runID,
 		Model:     model,
 		State:     StateStreaming,
+	}
+	if kind == RunCompact {
+		msg.Role = RoleCockpit
+		msg.Compact = &Compaction{}
 	}
 	c.Messages = append(c.Messages, msg)
 	c.UpdatedAt = s.now().UTC()
@@ -208,7 +218,7 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 	}
 	rec := RunRecord{
 		ID:        runID,
-		Kind:      RunChat,
+		Kind:      kind,
 		Instance:  c.ID,
 		MessageID: msg.ID,
 		CoderID:   co.ID,
@@ -219,7 +229,7 @@ func (s *Service) startLocked(c *Instance, co CoderInfo, prompt string, announce
 	for _, id := range announce {
 		s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: id})
 	}
-	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
+	s.hub.publish(c.ID, StreamEvent{Kind: FrameStart, RunID: runID, MessageID: msg.ID, Model: model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli(), Compact: kind == RunCompact})
 
 	a := &activeRun{rec: rec, done: make(chan struct{})}
 	s.running[runID] = a

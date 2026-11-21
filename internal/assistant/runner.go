@@ -66,7 +66,18 @@ const (
 	EventUsage EventKind = "usage"
 	// EventError ends the turn with a curated, user facing message.
 	EventError EventKind = "error"
+	// EventCompact carries what the coder's own record says about a
+	// compaction of its session.
+	EventCompact EventKind = "compact"
 )
+
+// CompactReport is how a compaction went by the coder's own record: Outcome
+// is CompactApplied or CompactNothing, and empty where it did not go through,
+// with the coder's words in Reason.
+type CompactReport struct {
+	Outcome string
+	Reason  string
+}
 
 // BlockSeparator stands between two text blocks of one turn. A turn that works
 // with tools answers in several blocks, what it says before a call and the
@@ -85,7 +96,8 @@ type Event struct {
 	Text string
 	Err  error
 	// Usage carries the context reading of an EventUsage and is nil otherwise.
-	Usage *ContextUsage
+	Usage   *ContextUsage
+	Compact *CompactReport
 }
 
 // Runner describes one provider CLI in non-interactive mode. Implementations
@@ -147,4 +159,11 @@ type Workdirs interface {
 // ahead of the start, the way the coder manager writes it for a terminal.
 type WorkdirTruster interface {
 	TrustWorkdir(dir string) error
+}
+
+// Compactor is the optional capability of a runner whose CLI compacts the
+// session it drives. CompactCommand builds that process the way Command builds
+// a turn, req carries no prompt, and the runner's own Parse reads its output.
+type Compactor interface {
+	CompactCommand(req TurnRequest) (Command, error)
 }

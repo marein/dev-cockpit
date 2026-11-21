@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -180,6 +181,28 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 		env = append(env, maxContextEnv+"="+strconv.Itoa(window))
 	}
 	return assistant.Command{Name: ollama.Executable, Args: append(ollamaLaunch(ollamaName), args...), Env: env}, nil
+}
+
+// compactCommand is what claude compacts a session on. It is read as the
+// command only as the whole prompt, anything in front of it makes it words.
+const compactCommand = "/compact"
+
+// nothingToCompact is how claude words a session that holds nothing to
+// compact, as the status record's error and as an assistant record of its
+// own: "Error: No messages to compact" up to 2.1.329, "Not enough messages to
+// compact." from 2.1.330, the latter also right after a compaction.
+var nothingToCompact = regexp.MustCompile(`(?i)\bmessages to compact\b`)
+
+// claudeStatusRecord is how a compaction ended by claude's status record
+// (2.1.329 on): compact_result is success or failed, compact_error says why.
+type claudeStatusRecord struct {
+	CompactResult string `json:"compact_result"`
+	CompactError  string `json:"compact_error"`
+}
+
+func (r *runner) CompactCommand(req assistant.TurnRequest) (assistant.Command, error) {
+	req.Prompt = compactCommand
+	return r.Command(req)
 }
 
 func (r *runner) pickedModel(sessionID string) string {
@@ -363,6 +386,28 @@ func (u claudeUsage) contextTokens() int {
 	return u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 }
 
+// readCompactStatus reports the end of a compaction a status record names.
+// A status record of a turn names none and reports nothing.
+func (p *claudeParser) readCompactStatus(line []byte) {
+	var rec claudeStatusRecord
+	if err := json.Unmarshal(line, &rec); err != nil {
+		p.skipUnreadable(line, err)
+		return
+	}
+	report := &assistant.CompactReport{}
+	switch {
+	case rec.CompactResult == "success":
+		report.Outcome = assistant.CompactApplied
+	case rec.CompactResult != "failed":
+		return
+	case nothingToCompact.MatchString(rec.CompactError):
+		report.Outcome = assistant.CompactNothing
+	default:
+		report.Reason = rec.CompactError
+	}
+	p.events <- assistant.Event{Kind: assistant.EventCompact, Compact: report}
+}
+
 func (p *claudeParser) Line(line []byte) error {
 	var head claudeHead
 	if err := json.Unmarshal(line, &head); err != nil {
@@ -370,6 +415,14 @@ func (p *claudeParser) Line(line []byte) error {
 		return nil
 	}
 	switch head.Type {
+	case "system":
+		switch head.Subtype {
+		case "compact_boundary":
+			p.events <- assistant.Event{Kind: assistant.EventCompact, Compact: &assistant.CompactReport{Outcome: assistant.CompactApplied}}
+		case "status":
+			p.readCompactStatus(line)
+		}
+		return nil
 	case "stream_event":
 		var rec claudeStreamRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
@@ -433,6 +486,9 @@ func (p *claudeParser) Line(line []byte) error {
 		}
 		if p.sawDelta || len(rec.Message.Content) == 0 {
 			return nil
+		}
+		if nothingToCompact.MatchString(firstText(rec.Message.Content)) {
+			p.events <- assistant.Event{Kind: assistant.EventCompact, Compact: &assistant.CompactReport{Outcome: assistant.CompactNothing}}
 		}
 		var blocks []struct {
 			Type string `json:"type"`

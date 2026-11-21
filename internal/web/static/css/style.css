@@ -1177,6 +1177,9 @@ coder-file-upload {
 .dc-context-ring[data-assistant-ring-level="full"] .dc-context-ring-fill {
   stroke: var(--tblr-red);
 }
+.dc-context-ring[data-assistant-ring-pending] .dc-context-ring-track {
+  stroke-dasharray: 3 3.25;
+}
 /* The assistant page. The work column is the dc-assistant element, the
    conversation scrolls in its own region under the head, the composer stands
    under it, and the steered coders and the memory sit in an aside that is

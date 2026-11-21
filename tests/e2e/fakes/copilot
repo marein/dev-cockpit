@@ -104,6 +104,40 @@ restart_server() {
 }
 
 emit '{"type":"session.mcp_servers_loaded","data":{"servers":[]},"ephemeral":true}'
+
+# /compact as the whole prompt compacts the session the way copilot 1.0.114
+# does, steered by the prompt of the turn before like the claude fake's:
+# COMPACT_LONG, COMPACT_RESTART, COMPACT_EMPTY (exit 1, nothing to compact)
+# and COMPACT_REFUSE. Its start record lands in the event log too, with the
+# model under another key than a shutdown's, so a stopped one leaves it last.
+# An applied one records the smaller context.
+if [ "$prompt" = "/compact" ]; then
+  last=$(sed -n 's/^{"prompt":"\(.*\)"}$/\1/p' "$dir/events.jsonl" 2>/dev/null | tail -1)
+  printf '{"type":"session.compaction_start","data":{"model":"claude-sonnet-5","currentTokens":135000,"tokenLimit":200000,"trigger":"manual","execution":"direct"}}\n' >> "$dir/events.jsonl"
+  emit '{"type":"session.compaction_start","data":{"currentTokens":136000,"tokenLimit":200000,"trigger":"manual","execution":"direct"}}'
+  case "$last" in
+    *COMPACT_LONG*) sleep 10 ;;
+    *COMPACT_RESTART*) restart_server; sleep 4 ;;
+    *) sleep 2 ;;
+  esac
+  case "$last" in
+    ""|*COMPACT_EMPTY*)
+      emit '{"type":"session.compaction_complete","data":{"success":false,"error":"Nothing to compact.","outcome":"not_applicable","outcomeReason":"nothing_to_compact"}}'
+      emit "{\"type\":\"result\",\"sessionId\":\"$session\",\"exitCode\":1}"
+      echo "Error executing prompt: Error: Nothing to compact." >&2
+      exit 1
+      ;;
+    *COMPACT_REFUSE*)
+      emit '{"type":"session.compaction_complete","data":{"success":false,"error":"Compaction failed: the summary was too long.","outcome":"failed"}}'
+      emit "{\"type\":\"result\",\"sessionId\":\"$session\",\"exitCode\":1}"
+      exit 1
+      ;;
+  esac
+  emit '{"type":"session.compaction_complete","data":{"success":true,"outcome":"applied","preCompactionTokens":136000,"postCompactionTokens":60000}}'
+  printf '{"type":"session.shutdown","data":{"shutdownType":"routine","currentModel":"claude-sonnet-5","currentTokens":60000,"systemTokens":17480,"toolDefinitionsTokens":12641}}\n' >> "$dir/events.jsonl"
+  emit "{\"type\":\"result\",\"sessionId\":\"$session\",\"exitCode\":0}"
+  exit 0
+fi
 emit '{"type":"assistant.turn_start","data":{"turnId":"0"}}'
 
 answer="Fake copilot answer."

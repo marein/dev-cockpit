@@ -212,7 +212,12 @@ func (c preparingCoders) Available() []CoderInfo {
 	all := c.coders.Available()
 	out := make([]CoderInfo, 0, len(all))
 	for _, info := range all {
-		info.Runner = preparingRunner{Runner: info.Runner, workspace: c.workspace}
+		prepared := preparingRunner{Runner: info.Runner, workspace: c.workspace}
+		if compactor, ok := info.Runner.(Compactor); ok {
+			info.Runner = preparingCompactor{preparingRunner: prepared, compactor: compactor}
+		} else {
+			info.Runner = prepared
+		}
 		out = append(out, info)
 	}
 	return out
@@ -223,9 +228,30 @@ type preparingRunner struct {
 	workspace *Workspace
 }
 
+// preparingCompactor keeps the Compactor of a runner that has one visible
+// through the wrapper.
+type preparingCompactor struct {
+	preparingRunner
+	compactor Compactor
+}
+
+func (r preparingCompactor) CompactCommand(req TurnRequest) (Command, error) {
+	if err := r.prepare(req); err != nil {
+		return Command{}, err
+	}
+	return r.compactor.CompactCommand(req)
+}
+
 func (r preparingRunner) Command(req TurnRequest) (Command, error) {
+	if err := r.prepare(req); err != nil {
+		return Command{}, err
+	}
+	return r.Runner.Command(req)
+}
+
+func (r preparingRunner) prepare(req TurnRequest) error {
 	if err := r.workspace.Prepare(req.Instance); err != nil {
-		return Command{}, errors.New("The assistant workspace could not be prepared.")
+		return errors.New("The assistant workspace could not be prepared.")
 	}
 	// A CLI that stops an unknown directory on its trust dialog would hold
 	// this turn there, and a non interactive turn cannot answer. Best effort
@@ -236,7 +262,7 @@ func (r preparingRunner) Command(req TurnRequest) (Command, error) {
 			log.Printf("assistant: %s was not marked as trusted, the turn may come up on the trust dialog: %v", req.Workdir, err)
 		}
 	}
-	return r.Runner.Command(req)
+	return nil
 }
 
 // SaveUpload stores one file of a message and classifies it for the browser.

@@ -12,13 +12,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/clirun"
 )
 
 // TestMain doubles as the fake language server: tests install a wrapper
 // script named like a real server that re-executes this binary with
 // GO_WANT_FAKE_LSP set, so no test depends on locally installed language
-// servers.
+// servers. It stands in as the guard DiesWithParent starts where the kernel
+// has no parent death signal, too.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == clirun.GuardCommand[0] {
+		os.Exit(clirun.Guard())
+	}
 	if os.Getenv("GO_WANT_FAKE_LSP") == "1" {
 		runFakeLSP(os.Getenv("FAKE_LSP_MODE"))
 		os.Exit(0)
@@ -69,6 +75,9 @@ func runFakeLSP(mode string) {
 	libraries := false
 	for {
 		payload, err := readFrame(r)
+		if err != nil && mode == "deaf" {
+			select {}
+		}
 		if err != nil {
 			return
 		}

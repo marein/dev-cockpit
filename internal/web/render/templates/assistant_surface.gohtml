@@ -55,7 +55,7 @@
   <input type="file" class="d-none" multiple data-assistant-file accept="image/*,video/*,audio/*,.pdf,.txt,.md,.json,.csv,.log,.zip">
   <div class="d-flex flex-wrap gap-2 mb-2 d-none" data-assistant-attachments aria-label="Attached files"></div>
   <div class="d-flex align-items-end gap-2">
-    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "Models" .Models "ContextPercent" .ContextPercent "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" (printf "%s-new" .DOMID))}}
+    {{template "assistant_new_button.gohtml" (dict "Coders" .Coders "CoderID" .CoderID "Models" .Models "ContextPercent" .ContextPercent "ContextPending" .ContextPending "Compact" .Compact "NewClass" "btn btn-icon btn-ghost-secondary flex-shrink-0" "Prefix" (printf "%s-new" .DOMID))}}
     <button type="button" class="btn btn-icon btn-ghost-secondary flex-shrink-0" aria-label="Attach a file" title="Attach a file, or drop it anywhere on the page" data-assistant-attach>
       <i class="ti ti-paperclip"></i>
     </button>
@@ -139,8 +139,9 @@
      ring says at a glance which coder it is) and is labelled for what it now
      only does, this assistant's models: the Chat, the Checks and the
      Triggers select over that coder's list, and the coder's own note under
-     them. It holds no New with entries and no divider, a new assistant is
-     made from the list column's own button instead. The selects post through
+     them, then for a coder that compacts how full the context is and the
+     compact action. It holds no New with entries, a new assistant is made
+     from the list column's own button instead. The selects post through
      the model form beside the composer (the form attribute), the element
      saves a change with fetch, and the Save button is the way without JS,
      hidden once the element runs. Without Models (the list column, the empty
@@ -151,12 +152,13 @@
 {{$base := "New assistant, the memory comes along"}}
 {{$toggleBase := $base}}{{if .Models}}{{$toggleBase = "This assistant's models"}}{{end}}
 {{$label := $base}}{{if .ContextPercent}}{{$label = printf "%s. Context %d percent" $base .ContextPercent}}{{end}}
-{{$toggleLabel := $toggleBase}}{{if .ContextPercent}}{{$toggleLabel = printf "%s. Context %d percent" $toggleBase .ContextPercent}}{{end}}
+{{$pending := "Compacted, the next answer shows how full the context is."}}
+{{$toggleLabel := $toggleBase}}{{if .ContextPending}}{{$toggleLabel = printf "%s. %s" $toggleBase $pending}}{{else if .ContextPercent}}{{$toggleLabel = printf "%s. Context %d percent" $toggleBase .ContextPercent}}{{end}}
 {{if or .Models (gt (len .Coders) 1)}}
 <div class="dropdown flex-shrink-0">
   <button type="button" class="{{.NewClass}} position-relative" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" data-assistant-new-label="{{$toggleBase}}" aria-label="{{$toggleLabel}}" title="{{$toggleLabel}}{{with .Key}} ({{.}}){{end}}">
     {{if .Models}}{{template "assistant_context_ring_icon.gohtml" (dict "ID" .CoderID "Hidden" (ne .Models.Launcher ""))}}<span class="dc-context-ring-icon" aria-hidden="true" data-assistant-ring-launcher data-launcher="ollama"{{if eq .Models.Launcher ""}} hidden{{end}}>{{template "coder_icon.gohtml" (dict "ID" .CoderID "Launcher" "ollama")}}</span>{{else}}<i class="ti ti-message-plus"></i>{{end}}
-    {{if not .NoRing}}{{template "assistant_context_ring.gohtml" .ContextPercent}}{{end}}
+    {{if not .NoRing}}{{template "assistant_context_ring.gohtml" (dict "Percent" .ContextPercent "Pending" .ContextPending)}}{{end}}
   </button>
   <div class="dropdown-menu dropdown-menu-end{{if .Models}} dc-model-menu{{end}}">
     {{if .Models}}
@@ -171,6 +173,20 @@
       <div class="form-hint mt-2 text-warning" data-ollama-warning{{if not .Models.Warning}} hidden{{end}}>{{.Models.Warning}}</div>
       <button type="submit" form="{{.Prefix}}-model" class="btn btn-sm mt-2" data-assistant-model-save>Save models</button>
     </div>
+    {{with .Compact}}
+    <div class="dropdown-divider"></div>
+    <div class="px-3 pb-2">
+      <div class="form-hint mb-2" data-assistant-context-line>
+        <span data-assistant-context-full{{if or $.ContextPending (not $.ContextPercent)}} hidden{{end}}>Context <span data-assistant-context-percent>{{$.ContextPercent}}</span> percent full.</span>
+        <span data-assistant-context-pending{{if not $.ContextPending}} hidden{{end}}>{{$pending}}</span>
+      </div>
+      <button type="button" class="btn btn-sm w-100" data-assistant-compact{{if .Ready}} data-assistant-compact-ready{{else}} disabled{{end}}><i class="ti ti-fold me-1" aria-hidden="true"></i>Compact conversation</button>
+      <div class="form-hint mt-1" data-assistant-compact-hint{{if .Ready}} hidden{{end}}>
+        <span data-assistant-compact-first{{if .Ready}} hidden{{end}}>Possible after the first answer.</span>
+        <span data-assistant-compact-busy hidden>Possible once the assistant is done.</span>
+      </div>
+    </div>
+    {{end}}
     {{else}}
     {{range .Coders}}
     <button type="submit" form="{{$.Prefix}}-{{.ID}}" class="dropdown-item d-flex align-items-center gap-2" data-assistant-new="{{.ID}}">
@@ -184,7 +200,7 @@
 {{else}}
 <button type="submit" form="{{.Prefix}}" class="{{.NewClass}} position-relative" data-assistant-new-label="{{$base}}" aria-label="{{$label}}" title="{{$label}}{{with .Key}} ({{.}}){{end}}" data-assistant-new="{{.CoderID}}">
   <i class="ti ti-message-plus"></i>
-  {{if not .NoRing}}{{template "assistant_context_ring.gohtml" .ContextPercent}}{{end}}
+  {{if not .NoRing}}{{template "assistant_context_ring.gohtml" (dict "Percent" .ContextPercent "Pending" .ContextPending)}}{{end}}
 </button>
 {{end}}
 {{end}}
@@ -197,10 +213,10 @@
      button fills its background while it is hovered, and that fill is what the
      level colors would otherwise sink into. */}}
 {{define "assistant_context_ring.gohtml"}}
-<svg class="dc-context-ring" viewBox="0 0 36 36" aria-hidden="true" focusable="false" data-assistant-ring{{if ge . 95}} data-assistant-ring-level="full"{{else if ge . 85}} data-assistant-ring-level="high"{{end}}>
+<svg class="dc-context-ring" viewBox="0 0 36 36" aria-hidden="true" focusable="false" data-assistant-ring{{if ge .Percent 95}} data-assistant-ring-level="full"{{else if ge .Percent 85}} data-assistant-ring-level="high"{{end}}{{if .Pending}} data-assistant-ring-pending{{end}}>
   <circle class="dc-context-ring-track" cx="18" cy="18" r="15.9155"></circle>
-  <circle class="dc-context-ring-halo" cx="18" cy="18" r="15.9155" transform="rotate(-90 18 18)" stroke-dasharray="{{.}} 100" data-assistant-ring-halo></circle>
-  <circle class="dc-context-ring-fill" cx="18" cy="18" r="15.9155" transform="rotate(-90 18 18)" stroke-dasharray="{{.}} 100" data-assistant-ring-fill></circle>
+  <circle class="dc-context-ring-halo" cx="18" cy="18" r="15.9155" transform="rotate(-90 18 18)" stroke-dasharray="{{.Percent}} 100" data-assistant-ring-halo></circle>
+  <circle class="dc-context-ring-fill" cx="18" cy="18" r="15.9155" transform="rotate(-90 18 18)" stroke-dasharray="{{.Percent}} 100" data-assistant-ring-fill></circle>
 </svg>
 {{end}}
 

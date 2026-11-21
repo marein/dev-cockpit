@@ -63,6 +63,7 @@ func (s *Server) messageView(instanceID string, m assistant.Message, retryable, 
 		Note:      s.assistantNoteView(m.Note, m.Content),
 		Auto:      m.Auto,
 		Origin:    s.assistantNoteView(m.Origin, m.Content),
+		Compact:   compactView(m),
 		Author:    render.CoderLabel(coderID),
 		Model:     m.Model,
 		ModelName: modelDisplayName(m.Model),
@@ -94,7 +95,7 @@ func (s *Server) messageView(instanceID string, m assistant.Message, retryable, 
 			Height:   height,
 		})
 	}
-	if view.Note != nil {
+	if view.Note != nil || view.Compact != nil {
 		view.Author = "Cockpit"
 	}
 	if view.User {

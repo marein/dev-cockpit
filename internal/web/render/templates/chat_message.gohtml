@@ -25,7 +25,7 @@
 
 {{define "chat_message.gohtml"}}
 {{with .Message}}
-<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{else if or .Note .Auto}} dc-msg-info{{else if .Coder}} dc-msg-coder{{else}} dc-msg-assistant{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else if .Note}}cockpit{{else if .Coder}}coder{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}"{{if .Auto}} data-assistant-auto{{end}}>
+<div id="message-{{.ID}}" class="dc-msg{{if .User}} dc-msg-user{{else if or .Note .Auto .Compact}} dc-msg-info{{else if .Coder}} dc-msg-coder{{else}} dc-msg-assistant{{end}}" data-assistant-message data-no-pe data-role="{{if .User}}user{{else if or .Note .Compact}}cockpit{{else if .Coder}}coder{{else}}assistant{{end}}" data-message-id="{{.ID}}" data-run-id="{{.RunID}}" data-state="{{.State}}"{{if .Auto}} data-assistant-auto{{end}}{{with .Compact}} data-assistant-compaction="{{.Mark}}"{{end}}>
   {{/* A note and a pushed answer are the two things the cockpit puts into a
        thread without being asked, and they read the same way. The header says
        who spoke and carries no switch: a badge that says where it came from,
@@ -38,7 +38,17 @@
        message that brought the reader here, and one line of half a sentence
        no longer stands for the report it introduces. */}}
   {{$note := .Note}}{{if not $note}}{{$note = .Origin}}{{end}}
-  {{if .Answered}}
+  {{if .Compact}}
+  <div class="d-flex align-items-center gap-2">
+    {{/* While it runs, the badge of the ended line keeps its box with the
+         glyph unseen, so the line does not move when it ends, and the
+         running light of a working coder stands centered over it. */}}
+    <span class="badge flex-shrink-0 {{if .Streaming}}bg-transparent position-relative overflow-visible{{else}}{{.Compact.Badge}}{{end}}" role="img" title="Compaction" aria-label="Compaction"><i class="ti ti-fold{{if .Streaming}} invisible{{end}}" aria-hidden="true"></i>{{if .Streaming}}<span class="dc-term-icon steered working position-absolute top-50 start-50 translate-middle" aria-hidden="true"><i class="ti ti-fold"></i></span>{{end}}</span>
+    <span class="fw-medium text-truncate min-w-0 flex-fill" data-assistant-compact-line>{{.Compact.Line}}</span>
+    {{if .Time}}<dc-time datetime="{{.Time}}" relative class="text-secondary small flex-shrink-0"></dc-time>{{end}}
+    {{template "chat_model" (dict "Model" .Model "Name" .ModelName "Class" "d-none d-md-block")}}
+  </div>
+  {{else if .Answered}}
   <div class="d-flex flex-wrap align-items-baseline gap-1 text-secondary small" data-assistant-answered>
     <span class="fw-medium">{{.Author}}</span>
     {{with .Time}}<span aria-hidden="true">·</span>
@@ -126,7 +136,7 @@
     {{end}}
   </div>
   {{end}}
-  {{if .Streaming}}<div class="text-secondary small mt-2 d-none" data-assistant-tool><i class="ti ti-tool me-1"></i>Working<span data-assistant-tool-name class="ms-1 font-monospace"></span></div>{{end}}
+  {{if and .Streaming (not .Compact)}}<div class="text-secondary small mt-2 d-none" data-assistant-tool><i class="ti ti-tool me-1"></i>Working<span data-assistant-tool-name class="ms-1 font-monospace"></span></div>{{end}}
   {{if .Error}}<div class="text-secondary small mt-2" data-assistant-error><i class="ti ti-alert-triangle me-1"></i>{{.Error}}</div>{{end}}
   {{if .CanRetry}}
   <div class="mt-2">

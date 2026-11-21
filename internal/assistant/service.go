@@ -349,12 +349,12 @@ func (s *Service) TurnProcesses() map[int]string {
 	return turns
 }
 
-// chatRunLocked is the user's own turn of one instance, if it is running. A
-// check of that instance is not one: it has a session of its own and never
-// blocks the chat.
+// chatRunLocked is the user's own turn of one instance, or the compaction of
+// its session, if it is running. A check of that instance is not one: it has
+// a session of its own and never blocks the chat.
 func (s *Service) chatRunLocked(instanceID string) *activeRun {
 	for _, a := range s.running {
-		if a.rec.Kind == RunChat && a.rec.Instance == instanceID {
+		if (a.rec.Kind == RunChat || a.rec.Kind == RunCompact) && a.rec.Instance == instanceID {
 			return a
 		}
 	}

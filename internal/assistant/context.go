@@ -28,10 +28,14 @@ type ContextUsage struct {
 	Tokens int `json:"tokens"`
 	// Window is how much that model's context holds, zero when unknown.
 	Window int `json:"window"`
+	// Pending marks a reading a compaction made stale without saying what the
+	// context holds now: claude reports the compacted messages alone, without
+	// the system prompt and the tools. The next turn reads it again.
+	Pending bool `json:"pending,omitempty"`
 }
 
 // Known reports whether this reading can be shown as a percentage.
-func (u ContextUsage) Known() bool { return u.Tokens > 0 && u.Window > 0 }
+func (u ContextUsage) Known() bool { return !u.Pending && u.Tokens > 0 && u.Window > 0 }
 
 // Percent is how full the window stands, 0 when the reading says nothing.
 // A window that is over full reads as 100: the provider is the one that knows

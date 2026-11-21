@@ -8,6 +8,7 @@ import { resolveHostlessLinks } from "@dc/docker";
 import { SwipeNav, isCurrentPage, swipeBlockedAt, watchSwipe } from "@dc/swipe";
 import { ChatStream, appendLive, showTool as showToolLine, writeLive } from "@dc/chat-stream";
 import { ChatFollow } from "@dc/chat-follow";
+import { compactConversation, compactReady, setContext, syncCompact } from "@dc/assistant-ring";
 
 const COARSE = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
@@ -176,6 +177,7 @@ class Assistant extends HTMLElement {
       this.follow.keep(event.detail);
     }, { signal });
     this.setupModels(signal);
+    this.querySelector("[data-assistant-compact]")?.addEventListener("click", () => void this.compact(), { signal });
     this.addEventListener("click", (event) => {
       const retry = event.target.closest("[data-assistant-retry]");
       if (retry) {
@@ -774,6 +776,7 @@ class Assistant extends HTMLElement {
     this.running = running;
     this.toggleAttribute("running", running);
     this.cancelButton?.classList.toggle("d-none", !running);
+    syncCompact(this, running);
     if (this.headIcon) markWorking(this.headIcon, running ? Number(since || this.headIcon.dataset.workingSince) || 0 : 0);
     this.onInput();
   }
@@ -792,6 +795,10 @@ class Assistant extends HTMLElement {
         // note's height above it after notes landed under the last answer
         // and let go of the end for them. A reader who scrolled away stays.
         this.follow?.pinIfNear(120);
+        if (frame.compact) {
+          void this.replaceMessage(frame.messageId, "streaming");
+          break;
+        }
         this.setText(frame.messageId, frame.html, frame.text);
         this.setModel(frame.messageId, frame.model);
         break;
@@ -822,7 +829,9 @@ class Assistant extends HTMLElement {
         this.pending = null;
         this.pendingMessageId = null;
         this.stopWatchdog();
-        this.setContext(frame.context);
+        setContext(this, frame.context, frame.contextPending);
+        if (!frame.compact) compactReady(this);
+        syncCompact(this, false);
         // The notes held back while the answer streamed go under it now, in
         // arrival order, before the finished answer is pulled: the bubble is
         // already in place, so what lands after it lands where the transcript
@@ -836,7 +845,7 @@ class Assistant extends HTMLElement {
         // Voice mode: a finished answer reads itself aloud. The play stands
         // on the unlock the push to talk press bought; a refused autoplay
         // stays quiet, the speaker on the answer is the way to it then.
-        if ((frame.state || "complete") === "complete" && this.hasAttribute("tts") && this.voiceModeOn()) {
+        if (!frame.compact && (frame.state || "complete") === "complete" && this.hasAttribute("tts") && this.voiceModeOn()) {
           void this.playSpeech(this.messageUrl + encodeURIComponent(frame.messageId) + "/audio");
         }
         break;
@@ -1005,24 +1014,6 @@ class Assistant extends HTMLElement {
     } finally {
       this.savingModels = false;
     }
-  }
-
-  setContext(percent) {
-    const ring = this.querySelector("[data-assistant-ring]");
-    const value = Number(percent);
-    if (!ring || !Number.isFinite(value) || value <= 0) return;
-    const capped = Math.min(100, Math.round(value));
-    for (const arc of ring.querySelectorAll("[data-assistant-ring-fill], [data-assistant-ring-halo]")) {
-      arc.setAttribute("stroke-dasharray", `${capped} 100`);
-    }
-    if (capped >= 95) ring.setAttribute("data-assistant-ring-level", "full");
-    else if (capped >= 85) ring.setAttribute("data-assistant-ring-level", "high");
-    else ring.removeAttribute("data-assistant-ring-level");
-    const button = this.querySelector("[data-assistant-new-label]");
-    if (!button) return;
-    const label = `${button.getAttribute("data-assistant-new-label")}. Context ${capped} percent`;
-    button.setAttribute("title", label);
-    button.setAttribute("aria-label", label);
   }
 
   // A pulled message keeps the place its frame gave it. The fetch takes a
@@ -2174,6 +2165,15 @@ class Assistant extends HTMLElement {
     this.ensureBubble(messageId);
     this.startWatchdog(messageId);
     this.stream?.check();
+  }
+
+  async compact() {
+    if (this.running) return;
+    const run = await compactConversation(this, this.postUrl);
+    if (!run?.messageId) return;
+    this.setRunning(true, run.since);
+    void this.replaceMessage(run.messageId, "streaming");
+    this.startWatchdog(run.messageId);
   }
 
   async cancel() {

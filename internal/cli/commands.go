@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/marein/dev-cockpit/internal/askpass"
+	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/detach"
 	"github.com/spf13/cobra"
@@ -149,6 +150,20 @@ func newRunDetachedCommand() *cobra.Command {
 		DisableFlagParsing: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			os.Exit(detach.Hold(args))
+		},
+	}
+}
+
+// newChildGuardCommand is the guard clirun.DiesWithParent starts beside a
+// child server where the kernel has no parent death signal.
+func newChildGuardCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    clirun.GuardCommand[0],
+		Short:  "End a child server's process group with its starter",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			os.Exit(clirun.Guard())
 		},
 	}
 }

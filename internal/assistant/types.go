@@ -200,6 +200,10 @@ type Message struct {
 	// shows the picks again after a reload. Content is the text the assistant
 	// reads.
 	Answers *Answers `json:"answers,omitempty"`
+	// Compact is set on the line a compaction of the coder's session writes,
+	// the cockpit's role and no note: what came before it stays for the next
+	// chat prompt, see notesSince.
+	Compact *Compaction `json:"compact,omitempty"`
 	// Wake is the shape a check's report was stored in before notes existed.
 	// It is read once, on load, and turned into a Note (see Store.load);
 	// nothing writes it any more. TODO(v2.0.0): drop the key and the type.
@@ -246,6 +250,18 @@ type Note struct {
 	// takes; Name then carries the command's label and Project the project.
 	Run string `json:"run,omitempty"`
 }
+
+// Compaction is how a compaction went: Outcome is one of the outcomes below
+// once it went through, empty while it runs and where the message's state
+// says it failed or was stopped.
+type Compaction struct {
+	Outcome string `json:"outcome,omitempty"`
+}
+
+const (
+	CompactApplied = "compacted"
+	CompactNothing = "nothing"
+)
 
 // The note sources.
 const (
@@ -355,6 +371,17 @@ func (c Instance) Last() (Message, bool) {
 	return c.Messages[len(c.Messages)-1], true
 }
 
+// HasTurn reports whether a chat turn ever ran in this instance's session. An
+// answer a trigger pushed ran in a session of its own and is none.
+func (c Instance) HasTurn() bool {
+	for _, m := range c.Messages {
+		if m.Role == RoleAssistant && !m.Auto {
+			return true
+		}
+	}
+	return false
+}
+
 // Idle reports whether the instance currently has no unfinished assistant turn.
 func (c Instance) Idle() bool {
 	last, ok := c.Last()
@@ -369,12 +396,15 @@ func (c *Instance) summarize() {
 	c.Unfinished = false
 	for i := len(c.Messages) - 1; i >= 0; i-- {
 		m := c.Messages[i]
+		if m.Compact != nil && !m.State.Settled() {
+			c.Running = true
+		}
 		if m.Role != RoleAssistant {
 			continue
 		}
 		c.Preview = preview(m.Content)
-		c.Running = !m.State.Settled()
-		c.Unfinished = m.State.Settled() && m.State != StateComplete
+		c.Running = c.Running || !m.State.Settled()
+		c.Unfinished = !c.Running && m.State != StateComplete
 		break
 	}
 	if last, ok := c.Last(); ok {

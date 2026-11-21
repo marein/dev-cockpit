@@ -116,6 +116,15 @@ func (r *runner) Command(req assistant.TurnRequest) (assistant.Command, error) {
 	return assistant.Command{Name: "copilot", Args: args}, nil
 }
 
+// compactCommand is what copilot compacts a session on. It is read as the
+// command only as the whole prompt, anything in front of it makes it words.
+const compactCommand = "/compact"
+
+func (r *runner) CompactCommand(req assistant.TurnRequest) (assistant.Command, error) {
+	req.Prompt = compactCommand
+	return r.Command(req)
+}
+
 // Parse reads copilot's JSONL output. It is called again when a turn is picked
 // up after a restart, so it carries no state from the start of the turn.
 func (r *runner) Parse(sessionID string, events chan<- assistant.Event) assistant.Parser {
@@ -161,6 +170,16 @@ type copilotDataRecord struct {
 	} `json:"data"`
 }
 
+// copilotCompactionRecord is how a compaction ended (GitHub Copilot CLI
+// 1.0.114): applied, nothing to compact, or the error that stopped it.
+type copilotCompactionRecord struct {
+	Data struct {
+		Success       bool   `json:"success"`
+		OutcomeReason string `json:"outcomeReason"`
+		Error         string `json:"error"`
+	} `json:"data"`
+}
+
 // copilotResultRecord is the record that closes a turn.
 type copilotResultRecord struct {
 	SessionID string `json:"sessionId"`
@@ -196,6 +215,20 @@ func (p *copilotParser) Line(line []byte) error {
 		case "tool.execution_start":
 			p.events <- assistant.Event{Kind: assistant.EventTool, Text: rec.Data.ToolName}
 		}
+	case "session.compaction_complete":
+		var rec copilotCompactionRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			p.skipUnreadable(line, err)
+			return nil
+		}
+		report := &assistant.CompactReport{Reason: rec.Data.Error}
+		switch {
+		case rec.Data.Success:
+			report.Outcome = assistant.CompactApplied
+		case rec.Data.OutcomeReason == "nothing_to_compact":
+			report.Outcome = assistant.CompactNothing
+		}
+		p.events <- assistant.Event{Kind: assistant.EventCompact, Compact: report}
 	case "result":
 		var rec copilotResultRecord
 		if err := json.Unmarshal(line, &rec); err != nil {

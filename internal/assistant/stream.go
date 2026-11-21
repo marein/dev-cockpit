@@ -84,6 +84,12 @@ type StreamEvent struct {
 	// Since rides the start frame and is the unix millisecond the turn
 	// started, the moment the page pins the assistant's working mark to.
 	Since int64 `json:"since,omitempty"`
+	// Compact marks the start and end frames of a compaction, whose line the
+	// page pulls instead of streaming an answer into it.
+	Compact bool `json:"compact,omitempty"`
+	// ContextPending rides the end frame of a compaction after which the
+	// context's size is unknown until the next turn reads it.
+	ContextPending bool `json:"contextPending,omitempty"`
 }
 
 // ModelPicks is what the models frame carries and what a save of the ring's
@@ -130,6 +136,7 @@ type live struct {
 	messageID string
 	model     string
 	since     int64
+	compact   bool
 	text      string
 	// html is the last rendered prefix and renderedLen how much of text it
 	// covers, so a page connecting mid answer gets the formatted part plus the
@@ -177,6 +184,7 @@ func (h *hub) subscribe(instanceID string) (StreamEvent, bool, <-chan StreamEven
 			HTML:      l.html,
 			State:     string(StateStreaming),
 			Since:     l.since,
+			Compact:   l.compact,
 		}
 	}
 	return snapshot, l.running, sub.ch, func() { h.unsubscribe(instanceID, sub) }
@@ -220,6 +228,7 @@ func (h *hub) publish(instanceID string, ev StreamEvent) {
 		l.messageID = ev.MessageID
 		l.model = ev.Model
 		l.since = ev.Since
+		l.compact = ev.Compact
 		l.text = ev.Text
 		l.html = ev.HTML
 		l.renderedLen = 0
@@ -233,6 +242,7 @@ func (h *hub) publish(instanceID string, ev StreamEvent) {
 		l.runID = ""
 		l.messageID = ""
 		l.since = 0
+		l.compact = false
 		l.text = ""
 		l.html = ""
 		l.renderedLen = 0

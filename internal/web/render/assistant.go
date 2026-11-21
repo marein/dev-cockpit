@@ -198,6 +198,12 @@ type AssistantData struct {
 	// as pushed with the end frame, so opening the panel shows the number
 	// without waiting for a turn.
 	ContextPercent int
+	// ContextPending says a compaction left the context's size unknown until
+	// the next turn reads it.
+	ContextPending bool
+	// Compact is the compact action in the same menu, nil for a coder that
+	// cannot compact and where the composer is off.
+	Compact *AssistantCompact
 	// Models is what that same button's menu offers: which models this
 	// assistant's chat turns and its checks run on. Nil where the composer is
 	// off, a blocked assistant has no coder to list models for.
@@ -205,6 +211,12 @@ type AssistantData struct {
 	// TabURL is where the surface pulls itself again when it stands as an
 	// editor tab, empty on its own page, which pulls its own address.
 	TabURL string
+}
+
+// AssistantCompact is the compact action: Ready once a turn ran, before that
+// there is nothing to compact.
+type AssistantCompact struct {
+	Ready bool
 }
 
 // InTab says the surface stands as an editor tab: its aside waits for the

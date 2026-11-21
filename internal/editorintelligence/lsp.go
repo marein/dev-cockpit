@@ -16,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/clirun"
 )
 
 var errConnClosed = errors.New("language server connection closed")
@@ -107,7 +109,6 @@ func startLSPConn(ctx context.Context, profile *Profile, argv, env []string, roo
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
-	setChildProcAttr(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -120,7 +121,9 @@ func startLSPConn(ctx context.Context, profile *Profile, argv, env []string, roo
 	if err != nil {
 		return nil, err
 	}
+	release := clirun.DiesWithParent(cmd)
 	if err := cmd.Start(); err != nil {
+		release()
 		return nil, fmt.Errorf("start %s: %w", argv[0], err)
 	}
 	c := &lspConn{
@@ -151,6 +154,7 @@ func startLSPConn(ctx context.Context, profile *Profile, argv, env []string, roo
 	// dead server.
 	go func() {
 		err := cmd.Wait()
+		release()
 		if ee, ok := err.(*exec.ExitError); ok {
 			c.exit = ee.ExitCode()
 		}

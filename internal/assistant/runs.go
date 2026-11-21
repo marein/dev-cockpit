@@ -36,6 +36,9 @@ const (
 	RunCheck RunKind = "check"
 	// RunReaction is a turn an event asked for, through a trigger.
 	RunReaction RunKind = "reaction"
+	// RunCompact compacts the chat's session. It holds the chat's place like a
+	// turn, so a message sent meanwhile queues behind it.
+	RunCompact RunKind = "compact"
 )
 
 // RunRecord is one turn as it exists outside this process.

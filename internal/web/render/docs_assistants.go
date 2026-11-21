@@ -99,6 +99,12 @@ func docsAssistantsTopic() DocsTopic {
 				Desc:     `A ring around the button beside the composer fills with how much of the coder's context window this assistant takes up, orange from 85 percent, red from 95. Its icon is the coder this assistant runs on. It moves once per answer and stays empty for a model whose window this cockpit does not know. Its menu picks this assistant's Chat, Checks and Triggers models. Empty Chat runs on the coder's start default, empty Checks and Triggers on the chat.`,
 			},
 			{
+				Title:    "Compact the conversation",
+				Tag:      "Context",
+				TagClass: "bg-blue-lt",
+				Desc:     `The ring's menu says how full the context is and holds <em>Compact conversation</em> <i class="ti ti-fold align-text-bottom" aria-hidden="true"></i>. After a confirm the assistant replaces the turns so far with its own summary of them, which costs about one answer and cannot be undone. OpenCode keeps its latest turns as they are, so a short conversation shrinks little. It is off before the first answer and while one runs. A line in the thread shows a dot running along its icon's edge while it compacts, then says the conversation was compacted, that there was nothing to compact, or why it was not. A message sent meanwhile waits and goes out after it, and a restart of the cockpit does not stop it. Copilot's ring shows the new size at once, Claude's and OpenCode's are dashed until the next answer reads it.`,
+			},
+			{
 				Title:    "What it may do",
 				Tag:      "Tools",
 				TagClass: "bg-blue-lt",

@@ -50,7 +50,7 @@ type activeRun struct {
 // and may take seconds (opencode's first turn creates its provider session
 // through a server it boots for it), see launchAndFollow.
 func (s *Service) launch(rec *RunRecord, runner Runner, req TurnRequest) (detach.Process, error) {
-	cmd, err := runner.Command(req)
+	cmd, err := commandFor(rec.Kind, runner, req)
 	if err != nil {
 		return detach.Process{}, err
 	}
@@ -86,7 +86,11 @@ func (s *Service) launchAndFollow(a *activeRun, runner Runner, req TurnRequest) 
 		// The placeholder becomes the failed turn, in the same shape as any
 		// other failure, so the page offers the same retry.
 		close(a.done)
-		s.settleChat(a, "", nil, err)
+		if a.rec.Kind == RunCompact {
+			s.settleCompact(a, "", nil, nil, err)
+		} else {
+			s.settleChat(a, "", nil, err)
+		}
 		return
 	}
 	s.mu.Lock()
@@ -105,12 +109,14 @@ func (s *Service) launchAndFollow(a *activeRun, runner Runner, req TurnRequest) 
 // point: a turn has no idea which process is watching it.
 func (s *Service) follow(a *activeRun, runner Runner) {
 	defer close(a.done)
-	text, usage, turnErr := s.read(a, runner)
+	text, usage, compact, turnErr := s.read(a, runner)
 	switch a.rec.Kind {
 	case RunCheck:
 		s.settleCheck(a, text, turnErr)
 	case RunReaction:
 		s.settleReaction(a, text, turnErr)
+	case RunCompact:
+		s.settleCompact(a, text, compact, usage, turnErr)
 	default:
 		// The context reading only travels with a chat turn. Every other kind
 		// runs in a provider session of its own that nothing continues, a
@@ -125,9 +131,9 @@ func (s *Service) follow(a *activeRun, runner Runner) {
 }
 
 // read turns the raw output of a turn into the instance's stream and
-// returns the answer, the context reading the turn reported, and whatever went
-// wrong.
-func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, error) {
+// returns the answer, the context reading the turn reported, the report of a
+// compaction, and whatever went wrong.
+func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, *CompactReport, error) {
 	events := make(chan Event, eventBuffer)
 	parser := runner.Parse(a.rec.SessionID, events)
 
@@ -145,6 +151,7 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 		buf       strings.Builder
 		turnErr   error
 		usage     *ContextUsage
+		compact   *CompactReport
 		renderAt  time.Time
 		renderLen int
 		expired   <-chan time.Time
@@ -222,6 +229,11 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 					reading := *ev.Usage
 					usage = &reading
 				}
+			case EventCompact:
+				if ev.Compact != nil {
+					report := *ev.Compact
+					compact = &report
+				}
 			case EventError:
 				if turnErr == nil && ev.Err != nil {
 					turnErr = ev.Err
@@ -260,7 +272,7 @@ func (s *Service) read(a *activeRun, runner Runner) (string, *ContextUsage, erro
 		// quotes the coder's last line behind the cockpit's sentence.
 		turnErr = failureOf(turnErr, a.rec, tail, !ownEnd)
 	}
-	return buf.String(), usage, turnErr
+	return buf.String(), usage, compact, turnErr
 }
 
 // progress records how far the output file was read. Every few seconds, because
@@ -534,7 +546,7 @@ func (s *Service) Recover() []AdoptedCheck {
 			// The page gets the whole answer again: the file is read from its
 			// first byte, so a browser that reconnects sees what was there
 			// before the restart and everything after it, without a reload.
-			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, Model: rec.Model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli()})
+			s.hub.publish(rec.Instance, StreamEvent{Kind: FrameStart, RunID: rec.ID, MessageID: rec.MessageID, Model: rec.Model, State: string(StateStreaming), Since: rec.StartedAt.UnixMilli(), Compact: rec.Kind == RunCompact})
 		}
 		if alive {
 			log.Printf("assistant: turn %s is still running as process %d, reading on", rec.ID, rec.PID)
@@ -572,6 +584,8 @@ func (s *Service) orphan(rec RunRecord, cause error) {
 		a.err = cause
 		s.runs.Delete(rec.ID)
 		s.events.conclude(a, wakeOutcome{}, cause)
+	case RunCompact:
+		s.settleCompact(a, "", nil, nil, cause)
 	default:
 		s.settleChat(a, "", nil, cause)
 	}
@@ -599,6 +613,9 @@ func (s *Service) markLostTurns(followed map[string]bool) {
 			}
 			c.Messages[i].State = StateInterrupted
 			c.Messages[i].Error = "This answer was interrupted when the server restarted."
+			if c.Messages[i].Compact != nil {
+				c.Messages[i].Error = compactInterrupted
+			}
 			changed = true
 		}
 		if changed {
