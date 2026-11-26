@@ -1332,6 +1332,14 @@ func TestTheInstructionsListEveryEventKind(t *testing.T) {
 		// writing such a task had to guess it, and guessed a blank answer.
 		"answers `NOTHING` on the first line when there is nothing to report",
 		"Make a trigger when the user asks for a standing reaction",
+		// A promised follow-up nobody wired never happens: a review whose push
+		// and draft MR were only promised waited until the user asked. A
+		// follow-up the user wanted is their word for a one-off trigger, and a
+		// promise of the assistant's own is no reason for a paid turn.
+		"and one with `--once` for a single follow-up they already wanted",
+		"that wish is their word",
+		"Promise only what you wire",
+		"A step the user did not ask for is no reason for a trigger: leave it to them and say so",
 		// A schedule is a wall clock somewhere: which verb says which of the
 		// two things, that neither a zone nor a name is ever derived, and
 		// that the zone and the tick are quoted and never computed. What one
@@ -1359,7 +1367,11 @@ func TestTheInstructionsListEveryEventKind(t *testing.T) {
 		"The relation is the trigger, the user does not have to ask for one",
 		"what `--then` needs and how its task has to read is in",
 		"coder-new --help",
-		"The sequel of one job you start is the same arrangement made in one call",
+		// A sequel that starts a coder without a criterion starts it unsteered,
+		// and its verdict never reaches the thread: a chain of coder, reviewer
+		// and MR ran its first stage only.
+		"A sequel that starts a coder gives it its own `--done-when`, and its own `--then` where another stage follows",
+		"a chain runs only as far as it is wired",
 	)
 	// A check is a narrow turn with a verdict: it never reads as something
 	// that waits for a job on its own or carries the work on. And what a flag

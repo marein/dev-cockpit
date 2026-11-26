@@ -61,8 +61,14 @@ func TestTheInstructionsEndTheTurnOnceWorkIsHandedOff(t *testing.T) {
 	pinned(t,
 		"Once a coder runs, a job is steered or a trigger stands, end your turn.",
 		"Never wait, sleep or poll in a turn for a coder, a job or a trigger",
-		"the cockpit wakes you with the check, the trigger or the note",
+		// Only the user's next message brings this conversation back, a check
+		// or a trigger is a session of its own: nothing wakes the turn that
+		// ended.
+		"the check or the trigger reports into this thread, the note lands there, and you read it with the user's next message",
 	)
+	if strings.Contains(instructionsText(t), "the cockpit wakes you") {
+		t.Fatal("the instructions still say the cockpit wakes the assistant")
+	}
 }
 
 // Everything the user asked for belongs into the criterion itself: a check
@@ -246,6 +252,14 @@ func TestTheInstructionsKeepLongRunsOutOfTheCriterion(t *testing.T) {
 func TestTheInstructionsExplainSeveralAssistants(t *testing.T) {
 	pinned(t,
 		"Several assistants run side by side",
+		// An assistant planned follow-ups as if it were still there afterwards.
+		// It exists only while it answers, so anything later is what it wires
+		// now or what the user does, and this is where it learns who it is.
+		"You exist only while you answer: once a turn ends, nothing of you runs, waits, watches or remembers to come back",
+		// A check or a trigger knows only its task, so it cannot carry on what
+		// this conversation promised.
+		"Only the user's next message brings you back with this conversation; a check or a trigger is a session of its own that knows only its task",
+		"Whatever you say will happen later happens only through what you wire now, a steered job, a `--then`, a trigger, or through the user",
 		"The other workspaces stand at",
 		"You may read another assistant whole, its messages and its files, and you write only your own",
 		// A prompt into a running assistant and a new assistant both go out

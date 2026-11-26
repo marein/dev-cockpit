@@ -213,6 +213,8 @@ func TestTheHelpCarriesWhatTheInstructionsDelegate(t *testing.T) {
 			"names what went and each failure with its reason", "With the question off each one prints its own outcome"}},
 		{"coder-new", []string{"prompt", "model", "done-when", "then"},
 			[]string{"--then is the sequel", "wired in this call", "self contained", "It needs --done-when",
+				// A sequel's coder is steered only by a criterion of its own.
+				"A sequel that starts a coder passes it its own --done-when", "the chain ends there",
 				// The sequel's expiry is the job's, so a chain cannot die of
 				// two defaults drifting apart in two files.
 				"it expires with that job"}},
