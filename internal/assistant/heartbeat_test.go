@@ -66,6 +66,50 @@ func TestAnExpiredJobReportsFromTheHeartbeat(t *testing.T) {
 	}
 }
 
+// A coder waiting on a long run of its own stands still with its turn over,
+// and every heartbeat check on it costs one of the job's checks. The window
+// after a check is ten minutes, so half an hour of waiting costs three checks.
+func TestTheHeartbeatLeavesAJobAloneForTenMinutesAfterACheck(t *testing.T) {
+	f := newJobFixture(t, "NOTHING")
+	_, job := f.steered(t)
+	f.sessions.activity = Activity{Text: "waiting on its own run", Finished: true}
+	job.LastWakeAt = time.Now().UTC().Add(-9*time.Minute - 50*time.Second)
+	f.jobs.Save(job)
+
+	f.watcher.Heartbeat()
+	if turns := f.runner.turns(); len(turns) != 0 {
+		t.Fatalf("want no check inside the ten minutes, got %d turn(s)", len(turns))
+	}
+
+	job, _ = f.jobs.Get("term-1")
+	job.LastWakeAt = time.Now().UTC().Add(-10*time.Minute - time.Second)
+	f.jobs.Save(job)
+	f.watcher.Heartbeat()
+	f.waitWakes(t, "term-1", 1)
+}
+
+// The budget is written into a job when it is made, so a job made before the
+// default grew keeps the count it was made with and ends at it.
+func TestAJobKeepsTheBudgetItWasMadeWith(t *testing.T) {
+	f := newJobFixture(t, "NOTHING")
+	_, job := f.steered(t)
+	job.MaxWakes = 10
+	job.Wakes = 10
+	f.jobs.Save(job)
+	f.sessions.activity = Activity{Text: "its turn is over", Finished: true}
+	f.watcher.quiet = 0
+
+	f.watcher.Heartbeat()
+
+	fresh, _ := f.jobs.Get("term-1")
+	if fresh.State != JobExpired || fresh.MaxWakes != 10 {
+		t.Fatalf("want the job ended at the 10 checks it was made with, got %q with %d", fresh.State, fresh.MaxWakes)
+	}
+	if turns := f.runner.turns(); len(turns) != 0 {
+		t.Fatalf("want no check past the job's own budget, got %d turn(s)", len(turns))
+	}
+}
+
 // The pass is free until it decides otherwise. A coder that is visibly working
 // is read and left alone, however often the heartbeat comes around.
 func TestAWorkingCoderCostsNoCheck(t *testing.T) {

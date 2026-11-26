@@ -114,7 +114,7 @@ func docsAssistantsTopic() DocsTopic {
 				Title:    "It hands work over and steers it",
 				Tag:      "Jobs",
 				TagClass: "bg-blue-lt",
-				Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, and steers it from the start. It also resumes, stops and deletes coders, and creates and deletes projects. A job is one coder, one task and one criterion that decides the task is done, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check; only done and blocked reach you, at ten checks and eight hours per job. Exactly one assistant steers a coder. A check the coder refuses to start, not logged in or an unknown model, closes the job as blocked and says why; any other failed check gets one more try.`,
+				Desc:     `Changes in your projects are not its job: it starts a coder for the task, briefs it, and steers it from the start. It also resumes, stops and deletes coders, and creates and deletes projects. A job is one coder, one task and one criterion that decides the task is done, and you can steer any coder yourself. A steered coder that finishes, asks something or stops moving buys a check; only done and blocked reach you, at fifty checks and eight hours per job. Exactly one assistant steers a coder. A check the coder refuses to start, not logged in or an unknown model, closes the job as blocked and says why; any other failed check gets one more try.`,
 			},
 			{
 				Title:    "Watching: projects, coders and triggers",

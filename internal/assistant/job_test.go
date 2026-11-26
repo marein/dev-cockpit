@@ -243,8 +243,8 @@ func TestSteerNeedsATerminalAndGetsItsBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("steer: %v", err)
 	}
-	if job.MaxWakes != defaultMaxWakes || job.ExpiresAt.IsZero() {
-		t.Fatalf("want a budget and an expiry, got %+v", job)
+	if job.MaxWakes != 50 || job.ExpiresAt.IsZero() {
+		t.Fatalf("want a budget of 50 checks and an expiry, got %+v", job)
 	}
 	if job.State != JobSteering {
 		t.Fatalf("want a steering job, got %q", job.State)
@@ -2270,6 +2270,35 @@ func TestTheWakePromptKeepsLongRunsWithTheCoder(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("the prompt misses %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// Every coder CLI can end its turn while work it started runs on in the
+// background, and the cockpit reads none of that, so the prompt alone keeps a
+// check from closing such a job: work that ends by itself and wakes the coder
+// is part of the job and waited on even when the criterion looks met, since a
+// DONE then lets whatever follows the job stop the coder with its run, and
+// what never ends is no such work. A check bought by the report and one
+// bought by the heartbeat both carry it.
+func TestTheWakePromptLetsACoderWaitOnItsOwnBackgroundWork(t *testing.T) {
+	job := Job{Terminal: "term-1", DoneWhen: "e2e PASS"}
+	for name, prompt := range map[string]string{
+		"reported": wakePrompt(job, Activity{Text: "x", Finished: true}),
+		"stalled":  wakePrompt(job, Activity{Text: "x"}),
+	} {
+		for _, want := range []string{
+			"A coder's turn can be over while work it started in the background still runs.",
+			"Work of its own that ends by itself and wakes it, a test suite, a build, a runner, is part of the job: while it runs, the coder is waiting, not stuck,",
+			"the job is not done before that work is through and the coder reported it, even when the criterion looks met already. Leave it be and answer NOTHING.",
+			"A server, a watcher or anything else that never ends by itself is not such work: a criterion that is met is DONE while it still runs, and one that is not met needs the next step like any coder that stopped.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("the %s prompt misses %q:\n%s", name, want, prompt)
+			}
+		}
+		if strings.Contains(prompt, "A criterion that is met is DONE, whatever still runs.") {
+			t.Fatalf("the %s prompt still calls a met criterion done while the coder's own run goes on:\n%s", name, prompt)
 		}
 	}
 }

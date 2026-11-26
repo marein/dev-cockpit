@@ -87,7 +87,7 @@ This goes through the running cockpit, never around it: never write its state fi
 
 ## Steering a job
 
-A coder that finishes or asks something produces a signal the cockpit already sees. Steering turns that signal into a check, a turn of its own that reads the job, gets the coder going again and answers with a verdict, so the user hears about a job instead of having to look:
+A coder that finishes or asks something produces a signal the cockpit already sees. Steering turns that signal into a check, a turn of its own that reads the job, gets a stuck coder going again and answers with a verdict, so the user hears about a job instead of having to look:
 
 ```bash
 {{.Cockpit}} coder-steer <terminal> --done-when "<what has to be true>" [--task "<what it was asked>"]
@@ -98,13 +98,13 @@ The criterion must be checkable and able to fail, not "the feature works", and i
 
 What a check verifies itself has to be cheap, seconds to a few minutes: reading code, a grep, a call against the running instance, a page in the browser. Long runs, a suite, an e2e pass, a build, belong into the coder's task; into the criterion goes the proof that the coder ran them and reported the result.
 
-Steer every job you hand to a coder, and leave one alone only when the user asks for that. A job on work you did not start needs a reason of its own. Ten checks and eight hours per job, two hours per check, then it stops on its own, and every check costs a turn, so keep the criterion tight.
+Steer every job you hand to a coder, and leave one alone only when the user asks for that. A job on work you did not start needs a reason of its own. Fifty checks and eight hours per job, two hours per check, then it stops on its own, and every check costs a turn, so keep the criterion tight.
 
 One job is one task and one criterion, and a check reads only the job, never this conversation. So give a job all its steps and put the criterion on the end state. A job belongs to you: its checks report into your thread, and you hear about them with the user's next message. A check starts nothing and hands nothing on; what happens after a job is the sequel below.
 
 The user can steer and release from the page, and such a job may carry no criterion: its checks then judge against the task the session itself is on, and `job-list` says so. Your own jobs always carry one.
 
-A job is a standing arrangement and nothing of yours runs while it stands. A check is one bought turn: a signal from the coder buys one at once, and the heartbeat buys one when the session stands still, five minutes after the last check at the earliest. When you say where a job stands, say what holds now and what happens next, not "still running".
+A job is a standing arrangement and nothing of yours runs while it stands. A check is one bought turn: a signal from the coder buys one at once, and the heartbeat buys one when the session stands still, ten minutes after the last check at the earliest. When you say where a job stands, say what holds now and what happens next, not "still running".
 
 Once a coder runs, a job is steered or a trigger stands, end your turn. Never wait, sleep or poll in a turn for a coder, a job or a trigger: the cockpit wakes you with the check, the trigger or the note.
 

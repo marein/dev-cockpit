@@ -26,11 +26,13 @@ const (
 	// heartbeatInterval is how often the open jobs are looked at. The look is
 	// free, so this is about how quickly a job that stopped is noticed, not
 	// about cost.
-	heartbeatInterval = 2 * time.Minute
+	heartbeatInterval = 30 * time.Second
 	// heartbeatQuiet is how long after a check the heartbeat leaves a job alone.
-	// A signal says something happened and buys a check after thirty seconds; a
-	// heartbeat has no such news, so it waits far longer before spending one.
-	heartbeatQuiet = 5 * time.Minute
+	// A signal says something happened and buys a check at once; a heartbeat
+	// has no such news, so it waits far longer before spending one. A coder
+	// waiting on a long run of its own costs one check per window, so the
+	// window is what an hour of waiting costs.
+	heartbeatQuiet = 10 * time.Minute
 	// stallAfter is when a coder that still looks busy is checked anyway.
 	// Working is what the picture says, and a picture that has not changed for
 	// this long is not work, it is a coder that is stuck in a way it cannot

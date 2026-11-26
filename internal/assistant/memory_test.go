@@ -48,7 +48,7 @@ func TestTheInstructionsSeparateAJobFromACheck(t *testing.T) {
 	pinned(t,
 		"A job is a standing arrangement and nothing of yours runs while it stands. A check is one bought turn",
 		"a signal from the coder buys one at once",
-		"five minutes after the last check at the earliest",
+		"ten minutes after the last check at the earliest",
 		"read it in the same turn as the answer, never from memory",
 		"not \"still running\"",
 	)
@@ -277,13 +277,13 @@ func TestTheInstructionsExplainSeveralAssistants(t *testing.T) {
 // What a check does with what it found lives in the check's own prompt, which
 // only a check pays for. What stayed in the file every turn, every check and
 // every reaction carries is the chat side of it: steering buys a turn that
-// gets the coder going again and answers with a verdict, and a steered coder
+// gets a stuck coder going again and answers with a verdict, and a steered coder
 // is the assistant's to write into only until its job closes. Both hung on
 // the section this file no longer carries, so they are pinned here together
 // with its absence.
 func TestTheInstructionsKeepOnlyTheChatSideOfACheck(t *testing.T) {
 	pinned(t,
-		"a turn of its own that reads the job, gets the coder going again and answers with a verdict",
+		"a turn of its own that reads the job, gets a stuck coder going again and answers with a verdict",
 		"a coder you steer is yours to write into while its job is open, and the user's again once it closes",
 	)
 	for _, gone := range []string{

@@ -358,7 +358,7 @@ func newSteerCommand(opts *inspectOptions) *cobra.Command {
 			"the job stands, and the user hears once it is done or stuck. The job is yours, " +
 			"its reports land in your own thread. A coder another assistant already steers is " +
 			"refused, and the refusal names them. The criterion is required and has to be " +
-			"checkable, because that is what decides done. Ten checks and eight hours per job, " +
+			"checkable, because that is what decides done. Fifty checks and eight hours per job, " +
 			"then it stops on its own.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

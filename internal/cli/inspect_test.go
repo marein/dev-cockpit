@@ -156,14 +156,14 @@ func TestJobsOutputCarriesEveryFieldADecisionNeeds(t *testing.T) {
 			{
 				Terminal: "aaa", Name: "readme-task", Project: "cockpit",
 				State: "steering", Open: true,
-				Wakes: 2, MaxWakes: 10, ExpiresAt: at.Add(2*time.Hour + 51*time.Minute),
+				Wakes: 2, MaxWakes: 50, ExpiresAt: at.Add(2*time.Hour + 51*time.Minute),
 				DoneWhen: "README.md exists and names the project",
 				Note:     "still writing the file",
 			},
 			{
 				Terminal: "bbb", Name: "tests", Project: "cockpit",
 				State: "blocked",
-				Wakes: 4, MaxWakes: 10, ExpiresAt: at.Add(-time.Hour),
+				Wakes: 4, MaxWakes: 50, ExpiresAt: at.Add(-time.Hour),
 				DoneWhen: "go test ./... passes",
 			},
 		},
@@ -172,10 +172,10 @@ func TestJobsOutputCarriesEveryFieldADecisionNeeds(t *testing.T) {
 	out := formatJobs(report)
 	for _, want := range []string{
 		"Steering (1)", "Closed (1)",
-		"steering", "readme-task", "cockpit", "checks 2/10", "2h 51m left", "id aaa",
+		"steering", "readme-task", "cockpit", "checks 2/50", "2h 51m left", "id aaa",
 		"done when: README.md exists and names the project",
 		"last check: still writing the file",
-		"blocked", "checks 4/10", "closed", "id bbb",
+		"blocked", "checks 4/50", "closed", "id bbb",
 		// The rule itself, at the place it is read.
 		"you hold that terminal",
 		"belongs to the user or to another assistant",
@@ -207,13 +207,13 @@ func TestJobsOutputCarriesEveryFieldADecisionNeeds(t *testing.T) {
 func TestJobsOutputCapsTheClosedTailAndTheLongNotes(t *testing.T) {
 	report := jobsReport{Now: time.Now()}
 	report.Jobs = append(report.Jobs, jobLine{
-		Terminal: "open", Name: "running", State: "steering", Open: true, MaxWakes: 10,
+		Terminal: "open", Name: "running", State: "steering", Open: true, MaxWakes: 50,
 		DoneWhen: "the tests pass",
 		Note:     strings.Repeat("a very long report ", 40),
 	})
 	for i := 0; i < maxClosedJobsShown+6; i++ {
 		report.Jobs = append(report.Jobs, jobLine{
-			Terminal: "x", Name: "old", State: "stopped", MaxWakes: 10,
+			Terminal: "x", Name: "old", State: "stopped", MaxWakes: 50,
 			DoneWhen: "the tests pass",
 			Note:     strings.Repeat("a very long report ", 40),
 		})
@@ -257,7 +257,7 @@ func TestJobsOutputCutsTheCriterionAndSaysSo(t *testing.T) {
 		Now: time.Now(),
 		Jobs: []jobLine{{
 			Terminal: "aaa", Name: "long-job", State: "steering",
-			Open: true, MaxWakes: 10, ExpiresAt: time.Now().Add(time.Hour),
+			Open: true, MaxWakes: 50, ExpiresAt: time.Now().Add(time.Hour),
 			DoneWhen: doneWhen,
 		}},
 	}
@@ -287,7 +287,7 @@ func TestFullPrintsTheCriteriaWhole(t *testing.T) {
 		Filter: jobsFilter{Contains: "runner", Full: true},
 		Jobs: []jobLine{{
 			Terminal: "aaa", Name: "long-job", State: "steering",
-			Open: true, MaxWakes: 10, ExpiresAt: time.Now().Add(time.Hour),
+			Open: true, MaxWakes: 50, ExpiresAt: time.Now().Add(time.Hour),
 			DoneWhen: doneWhen,
 		}},
 	}
@@ -438,7 +438,7 @@ func TestFullGivesAClosedJobItsTwoLinesBack(t *testing.T) {
 		Now:    time.Now(),
 		Filter: jobsFilter{Full: true},
 		Jobs: []jobLine{{
-			Terminal: "aaa", Name: "old", State: "done", MaxWakes: 10,
+			Terminal: "aaa", Name: "old", State: "done", MaxWakes: 50,
 			DoneWhen: "the tests pass", Note: "everything was green",
 		}},
 	}
@@ -506,14 +506,14 @@ func TestJobOutputCarriesTheWholeJob(t *testing.T) {
 	out := formatJob(at, jobLine{
 		Terminal: "aaa", Name: "readme-task", Project: "cockpit", Coder: "claude",
 		State: "steering", Open: true,
-		Wakes: 2, MaxWakes: 10, ExpiresAt: at.Add(2*time.Hour + 51*time.Minute),
+		Wakes: 2, MaxWakes: 50, ExpiresAt: at.Add(2*time.Hour + 51*time.Minute),
 		Task:     "Write the README",
 		DoneWhen: "README.md exists and names the project",
 		Note:     longNote, NoteAt: at,
 	})
 	for _, want := range []string{
 		`Job "readme-task"`, "terminal  aaa", "coder     claude", "project   cockpit",
-		"state     steering", "checks    2/10 used", "2h 51m left",
+		"state     steering", "checks    2/50 used", "2h 51m left",
 		"task: Write the README",
 		"done when: README.md exists and names the project",
 		"last check", longNote,
@@ -535,7 +535,7 @@ func TestRunJobReadsTheStoreAndRefusesUnknownTerminals(t *testing.T) {
 	testJobStore(t, stateDir).Save(assistant.Job{
 		Terminal: "aaa", Name: "readme-task", CoderID: "claude",
 		DoneWhen: "README.md exists", State: assistant.JobSteering,
-		MaxWakes: 10, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
+		MaxWakes: 50, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
 		Note: strings.Repeat("what the check saw ", 30),
 	})
 
@@ -568,11 +568,11 @@ func TestRunJobShowsTheOpenJobWhoeverStandsFirstInTheIndex(t *testing.T) {
 	jobs := assistant.NewJobs(store)
 	jobs.Of(first).Save(assistant.Job{
 		Terminal: "aaa", Name: "old-task", CoderID: "claude", DoneWhen: "the old criterion",
-		State: assistant.JobDone, MaxWakes: 10, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(3 * time.Hour),
+		State: assistant.JobDone, MaxWakes: 50, CreatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(3 * time.Hour),
 	})
 	jobs.Of(second).Save(assistant.Job{
 		Terminal: "aaa", Name: "new-task", CoderID: "claude", DoneWhen: "the new criterion",
-		State: assistant.JobSteering, MaxWakes: 10, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
+		State: assistant.JobSteering, MaxWakes: 50, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
 	})
 	if all := jobs.All(); len(all) != 2 || all[0].Owner != first || all[0].State != assistant.JobDone {
 		t.Fatalf("this test proves nothing unless the closed job's owner stands first in the index, got %+v", all)
@@ -601,7 +601,7 @@ func TestAMultilineDoneWhenFoldsInTheListAndStandsInTheJob(t *testing.T) {
 	doneWhen := "the tests pass\nthe report is written\nnothing was committed"
 	job := jobLine{
 		Terminal: "aaa", Name: "readme-task", State: "steering",
-		Open: true, MaxWakes: 10,
+		Open: true, MaxWakes: 50,
 		ExpiresAt: time.Now().Add(time.Hour), DoneWhen: doneWhen,
 	}
 
@@ -632,12 +632,12 @@ func TestRunJobsReadsTheStore(t *testing.T) {
 	store.Save(assistant.Job{
 		Terminal: "aaa", Name: "readme-task", Project: "cockpit", CoderID: "claude",
 		DoneWhen: "README.md exists", State: assistant.JobSteering,
-		MaxWakes: 10, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
+		MaxWakes: 50, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
 	})
 	store.Save(assistant.Job{
 		Terminal: "bbb", Name: "tests", CoderID: "claude",
 		DoneWhen: "the tests pass", State: assistant.JobSteering,
-		MaxWakes: 10, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
+		MaxWakes: 50, CreatedAt: now, ExpiresAt: now.Add(4 * time.Hour),
 	})
 
 	var out strings.Builder
@@ -903,7 +903,7 @@ func TestCommandsPrintAssistantNamesVisible(t *testing.T) {
 	if err := runAssistantShow(&show, inspectOptions{stateDir: dir}, "conv-1", "", 0, false); err != nil {
 		t.Fatalf("assistant-show: %v", err)
 	}
-	job := jobLine{Terminal: "aaa", Name: "readme-task", State: "steering", Open: true, MaxWakes: 10, DoneWhen: "x", OwnerName: raw}
+	job := jobLine{Terminal: "aaa", Name: "readme-task", State: "steering", Open: true, MaxWakes: 50, DoneWhen: "x", OwnerName: raw}
 	for command, out := range map[string]string{
 		"assistant-list": list.String(),
 		"assistant-show": show.String(),
@@ -1054,7 +1054,7 @@ func testJobStore(t *testing.T, stateDir string) *assistant.JobStore {
 // A listing that spans several assistants names who steers each job, and a
 // listing of your own does not: in your own list the answer is always you.
 func TestJobsOutputNamesTheOwnerOnlyAcrossAssistants(t *testing.T) {
-	mine := jobLine{Terminal: "aaa", Name: "readme-task", State: "steering", Open: true, MaxWakes: 10, DoneWhen: "x"}
+	mine := jobLine{Terminal: "aaa", Name: "readme-task", State: "steering", Open: true, MaxWakes: 50, DoneWhen: "x"}
 	theirs := mine
 	theirs.OwnerName = "Side quest"
 

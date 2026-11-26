@@ -186,7 +186,7 @@ func TestNewCoderSteersInTheSameRequest(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		form, _ = url.ParseQuery(string(body))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":10}`))
+		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":50}`))
 	})
 
 	var out strings.Builder
@@ -200,7 +200,7 @@ func TestNewCoderSteersInTheSameRequest(t *testing.T) {
 	if form.Get("done_when") != "README.md exists" {
 		t.Fatalf("the criterion did not travel with the create request: %q", form.Get("done_when"))
 	}
-	if !strings.Contains(out.String(), "steering it, 10 checks at most") {
+	if !strings.Contains(out.String(), "steering it, 50 checks at most") {
 		t.Fatalf("the output has to say the coder is steered, got %q", out.String())
 	}
 }
@@ -217,7 +217,7 @@ func TestNewCoderWiresTheSequelInTheSameRequest(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		form, _ = url.ParseQuery(string(body))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":10,"trigger":"9f2c0a1b7d3e4f50"}`))
+		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":50,"trigger":"9f2c0a1b7d3e4f50"}`))
 	})
 
 	var out strings.Builder
@@ -241,7 +241,7 @@ func TestNewCoderWiresTheSequelInTheSameRequest(t *testing.T) {
 func TestNewCoderReportsASequelThatCouldNotBeWired(t *testing.T) {
 	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":10,"thenError":"This assistant already holds 50 standing triggers. Remove one first."}`))
+		_, _ = w.Write([]byte(`{"id":"cid-1","project":"demo","url":"/coders/cid-1","maxWakes":50,"thenError":"This assistant already holds 50 standing triggers. Remove one first."}`))
 	})
 
 	var out strings.Builder
@@ -326,7 +326,7 @@ func TestSteerPostsToTheJobsRoute(t *testing.T) {
 		path = r.URL.Path
 		form, _ = url.ParseQuery(string(body))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"terminal":"term-1","name":"readme-task","maxWakes":10}`))
+		_, _ = w.Write([]byte(`{"terminal":"term-1","name":"readme-task","maxWakes":50}`))
 	})
 
 	var out strings.Builder
@@ -350,7 +350,7 @@ func TestSteerPostsToTheJobsRoute(t *testing.T) {
 func TestSteerAndNewCoderHandOnTheTaskCutNotice(t *testing.T) {
 	dir := cockpit(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"cid-1","terminal":"term-1","name":"readme-task","url":"/coders/cid-1","maxWakes":10,"notice":"task was cut at 16000 runes"}`))
+		_, _ = w.Write([]byte(`{"id":"cid-1","terminal":"term-1","name":"readme-task","url":"/coders/cid-1","maxWakes":50,"notice":"task was cut at 16000 runes"}`))
 	})
 
 	var out strings.Builder

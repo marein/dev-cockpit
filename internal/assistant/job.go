@@ -46,11 +46,13 @@ const (
 // Open reports whether this state still wakes the assistant.
 func (s JobState) Open() bool { return s == JobSteering }
 
-// A job's budget is what it may cost before it stops on its own: ten wakes
+// A job's budget is what it may cost before it stops on its own: fifty wakes
 // and eight hours. Both are hard, because a coder that keeps reporting would
-// otherwise keep paying for turns nobody asked for.
+// otherwise keep paying for turns nobody asked for. Fifty is about eight hours
+// of heartbeat checks on a coder that waits, so the count is there for a coder
+// and its checks that keep answering each other.
 const (
-	defaultMaxWakes = 10
+	defaultMaxWakes = 50
 	defaultJobTTL   = 8 * time.Hour
 )
 
