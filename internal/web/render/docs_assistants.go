@@ -102,7 +102,7 @@ func docsAssistantsTopic() DocsTopic {
 				Title:    "Compact the conversation",
 				Tag:      "Context",
 				TagClass: "bg-blue-lt",
-				Desc:     `The ring's menu says how full the context is and holds <em>Compact conversation</em> <i class="ti ti-fold align-text-bottom" aria-hidden="true"></i>. After a confirm the assistant replaces the turns so far with its own summary of them, which costs about one answer and cannot be undone. OpenCode keeps its latest turns as they are, so a short conversation shrinks little. It is off before the first answer and while one runs. A line in the thread shows a dot running along its icon's edge while it compacts, then says the conversation was compacted, that there was nothing to compact, or why it was not. A message sent meanwhile waits and goes out after it, and a restart of the cockpit does not stop it. Copilot's ring shows the new size at once, Claude's and OpenCode's are dashed until the next answer reads it.`,
+				Desc:     `The ring's menu says how full the context is and holds <em>Compact conversation</em> <i class="ti ti-fold align-text-bottom" aria-hidden="true"></i>. After a confirm the assistant replaces the turns so far with its own summary of them, which costs about one answer and cannot be undone. OpenCode keeps its latest turns as they are, Codex your messages, so a short conversation shrinks little. It is off before the first answer and while one runs. A line in the thread shows a dot running along its icon's edge while it compacts, then says the conversation was compacted, that there was nothing to compact, or why it was not. A message sent meanwhile waits and goes out after it, and a restart of the cockpit does not stop it. Copilot's ring shows the new size at once, the others stay dashed until the next answer reads it.`,
 			},
 			{
 				Title:    "What it may do",
@@ -174,7 +174,7 @@ func docsAssistantsTopic() DocsTopic {
 				Title:    "Tool approvals",
 				Tag:      "Approval",
 				TagClass: "bg-blue-lt",
-				Desc:     `A Claude assistant's call of a tool that needs approval, like a Slack connector, waits for you in the same dialog, which shows the tool and its input as it will run. <em>Approve</em> runs it; <em>Deny</em>, 5 minutes without an answer or a restart deny it, and the turn goes on. <em>Always allow this tool</em> lets that tool run without asking for every Claude assistant, its <em>Remove</em> under Settings &rsaquo; Assistants &rsaquo; Approvals makes it ask again.`,
+				Desc:     `A Claude or Codex assistant's call of a tool that needs approval, like a Slack connector, waits for you in the same dialog, which shows the tool and its input as it will run. For Codex that is every MCP and connector tool. <em>Approve</em> runs it; <em>Deny</em>, 5 minutes without an answer or a restart deny it, and the turn goes on. <em>Always allow this tool</em> lets that tool run without asking for every assistant, its <em>Remove</em> under Settings &rsaquo; Assistants &rsaquo; Approvals makes it ask again.`,
 			},
 			{
 				Title:    "Steer and release where the coder is",

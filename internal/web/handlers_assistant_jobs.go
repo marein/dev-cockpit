@@ -283,7 +283,7 @@ func (s *Server) steerOwner(c *gin.Context) (string, error) {
 // assistant only its own: taking somebody else's coder away is the user's
 // decision, and the refusal names who holds it.
 func (s *Server) assistantRelease(c *gin.Context) {
-	terminal := strings.TrimSpace(c.PostForm("terminal"))
+	terminal := s.coderID(c.PostForm("terminal"))
 	// Who is calling decides what they may call off. A browser is the user and
 	// may call off any job; a call over the socket is a turn and may call off
 	// only its own, so one that cannot say which assistant it is gets no say at
@@ -331,7 +331,7 @@ type steerTarget struct {
 // coder can be steered: a shell produces no report worth a turn, and a coder
 // that is not running has nothing to say yet.
 func (s *Server) assistantSteerTarget(raw string) (steerTarget, error) {
-	id := strings.TrimSpace(raw)
+	id := s.coderID(raw)
 	if id == "" {
 		return steerTarget{}, errors.New("A job needs the terminal it steers.")
 	}

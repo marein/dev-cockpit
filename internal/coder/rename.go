@@ -63,6 +63,15 @@ func (s *Manager) Rename(rawID, rawName string) (string, error) {
 	if name == "" {
 		return "", errors.New("Coder name is required.")
 	}
+	// A session whose record is still to come takes the pane's name into it
+	// once it appears (nameLateSessions), and the rename may be what writes
+	// it. The pane carries the new name first, so the late naming writes
+	// that one and never undoes the rename.
+	if _, late := s.coder.SessionRepository().(SessionNamer); late && r.TmuxSession == r.Identifier {
+		if err := s.tmux.SetOption(r.TmuxSession, coderNameOption, name); err != nil {
+			return "", err
+		}
+	}
 	if err := s.Send(r.Identifier, renamer.RenameInput(name)); err != nil {
 		return "", err
 	}

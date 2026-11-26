@@ -101,6 +101,7 @@ func (s *Server) handleCoderNew(c *gin.Context) {
 			ID:           co.ID(),
 			Agents:       co.Coder().AgentRepository().Options(),
 			DefaultAgent: defaultAgent,
+			AgentNote:    coder.NoAgentStartNote(co.Coder()),
 			Model:        modelPick("model", "", modelDefaultLabel(s.modelDefaults(co.ID()).Start), repo),
 			ModelNote:    repo.Note(),
 			ModelWarning: s.modelWarning(co.Coder()),
@@ -217,7 +218,7 @@ func (s *Server) handleCoderCreate(c *gin.Context) {
 	// A name typed under Other… is remembered by the coder's repository once
 	// the session really started on it, so it stands in every later list.
 	s.rememberModel(co.ID(), form.Model)
-	s.styleSessionPane(res.Identifier)
+	s.styleCoderPane(co, res.Identifier)
 	joinErr := s.joinSplit(res.Identifier, splitTargetFromRequest(c))
 	s.invalidateTerminals()
 	s.publishTerminals(s.projects.ProjectNameFor(res.Workdir))
@@ -622,7 +623,7 @@ func (s *Server) handleCoderResume(c *gin.Context) {
 		s.redirectWithFlash(c, "/projects", "", err.Error())
 		return
 	}
-	s.styleSessionPane(stored.SessionID)
+	s.styleCoderPane(co, stored.SessionID)
 	s.publishTerminals(s.projects.ProjectNameFor(stored.CWD))
 	if s.coderJSON(c, stored.SessionID, stored.Name, stored.CWD, "/coders/"+stored.SessionID, "") {
 		return

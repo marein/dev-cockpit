@@ -10,7 +10,7 @@ __Table of contents__
 ## Overview
 
 This is a web cockpit for a development machine, usable from a desktop browser and a phone.
-It runs coders (Claude Code, GitHub Copilot CLI, OpenCode) and shells in tmux on the host,
+It runs coders (Claude Code, GitHub Copilot CLI, OpenCode, Codex) and shells in tmux on the host,
 and adds an editor with git, Docker Compose control, and assistants that hand work to coders and follow it through.
 
 > This is a personal productivity tool and it is **100% vibe coded**. Coding agents write the code, test every
@@ -146,7 +146,7 @@ Each area of the cockpit is described below.
 
 * Linux or macOS.
 * `tmux` on the host.
-* At least one coder CLI installed and logged in: `claude`, `copilot` or `opencode`. `claude` has to be 2.1.152 or newer, the first release that knows every hook the cockpit registers.
+* At least one coder CLI installed and logged in: `claude`, `copilot`, `opencode` or `codex`. `claude` has to be 2.1.152 or newer, the first release that knows every hook the cockpit registers.
 * Optional: `git` for the git features, Docker for compose stacks, code navigation and voice.
 
 The server refuses to start without tmux or without any coder CLI. A coder whose CLI is missing is skipped.
@@ -157,6 +157,7 @@ The UI edits each coder's config under the home directory:
 | `claude`   | `~/.claude/CLAUDE.md`                | `~/.claude/agents`         | `~/.claude/skills`          |
 | `copilot`  | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents`        | `~/.copilot/skills`         |
 | `opencode` | `~/.config/opencode/AGENTS.md`       | `~/.config/opencode/agent` | `~/.config/opencode/skills` |
+| `codex`    | `~/.codex/AGENTS.md`                 | `~/.codex/agents`          | `~/.codex/skills`           |
 
 Claude coders and assistants can run on models served by Ollama through `ollama launch`.
 Pick `ollama/<name>` as the model. Needs ollama installed, and `ollama signin` for cloud models.

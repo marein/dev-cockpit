@@ -130,6 +130,16 @@ func InboxTurnSignal(ev HookEvent) TurnSignal {
 	return TurnSignalNone
 }
 
+// BellReader is the optional capability of a coder whose CLI rings the
+// terminal's bell when it has news, to say what a bell of one of its sessions
+// means: TurnSignalOver for a turn that ended, TurnSignalWaiting for a coder
+// that stands at a question. A bell carries nothing but itself, so the coder
+// reads the answer from the session's own record, the one sessionID names. A
+// coder's bell is only heard when it implements this.
+type BellReader interface {
+	BellSignal(sessionID string) TurnSignal
+}
+
 // ActivityBudget is how many runes a whole activity reading may cost by
 // default. Callers pass it as the budget; zero lifts the cap, for the one
 // answer that needs a message whole.
@@ -227,6 +237,12 @@ func (s *Manager) Activity(rawID string, entries, budget int) (Activity, error) 
 	if reporter, ok := s.coder.(ActivityReporter); ok {
 		activity, err := reporter.SessionActivity(id, entries, budget)
 		if err == nil {
+			if !activity.Finished {
+				running, err := s.ResolveRunning(id)
+				if err != nil || leftOpen(activity, running.StartedAt) {
+					activity.Finished, activity.InToolCall, activity.AwaitingApproval = true, false, false
+				}
+			}
 			return activity, nil
 		}
 		// A session that is running but has recorded nothing yet is starting,
@@ -252,6 +268,18 @@ func (s *Manager) Activity(rawID string, entries, budget int) (Activity, error) 
 	return screenActivity(func() (string, error) {
 		return s.tmux.CapturePane(running.TmuxSession, activityLines)
 	}, s.screenGap)
+}
+
+// leftOpen says an open turn was left behind by a previous life of the
+// session. A turn does not survive its process: a coder that was stopped or
+// died in the middle of one may leave a record that ends open, and read alone
+// it would call the session working for good, stopped or resumed. So a
+// session nobody runs has no open turn, and a running one has none whose
+// newest message is older than its terminal, the rule the record watcher
+// judges by too, see openTurn. A reader that cannot date its messages is
+// taken at its word.
+func leftOpen(activity Activity, startedAt time.Time) bool {
+	return !activity.LastMessageAt.IsZero() && activity.LastMessageAt.Before(startedAt)
 }
 
 // screenActivity reads the terminal screenSettleReads times over and calls a

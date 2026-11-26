@@ -23,9 +23,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/backup"
 	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
-	coderclaude "github.com/marein/dev-cockpit/internal/coder/claude"
 	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
-	coderopencode "github.com/marein/dev-cockpit/internal/coder/opencode"
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/cost"
 	"github.com/marein/dev-cockpit/internal/cost/price"
@@ -177,7 +175,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	cmd.SetVersionTemplate(versionTemplate(repoURL, updateFeedFormat, updateFeedURL))
-	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newDockerCommand(), newClaudeCommand(), newOpencodeCommand(), newRunDetachedCommand(), newChildGuardCommand(), newAskpassCommand())
+	cmd.AddCommand(newServeCommand(), newHashPasswordCommand(), newGitCommand(), newAssistantCommand(), newDockerCommand(), newClaudeCommand(), newCodexCommand(), newOpencodeCommand(), newRunDetachedCommand(), newChildGuardCommand(), newAskpassCommand())
 	return cmd
 }
 
@@ -302,7 +300,7 @@ func runServe(opts serveOptions) error {
 	}
 	launcher := ollama.New(settingsStore, catalog, cfg.StateDir)
 	go launcher.Run()
-	registry := coder.NewRegistry(codercopilot.New(settingsStore), coderclaude.New(cfg.StateDir, notify.InboxDir(cfg.StateDir, "claude"), settingsStore, launcher), coderopencode.New(notify.InboxDir(cfg.StateDir, "opencode"), settingsStore))
+	registry := coder.NewRegistry(knownCoders(cfg.StateDir, settingsStore, launcher)...)
 	selected, err := selectProviders(registry)
 	if err != nil {
 		return err
@@ -565,6 +563,12 @@ func runServe(opts serveOptions) error {
 		job, ok := jobs.Find(targetID)
 		return ok && job.State.Open()
 	})
+	// A codex coder started without a prompt takes codex's own id with its
+	// first message and keeps its terminal. Its signals carry that id from
+	// then on, so what was steered under the key follows it there.
+	for _, m := range coders {
+		m.OnMoved(watcher.TerminalMoved)
+	}
 
 	// Everything a turn needs exists from here on, so from here on a turn may
 	// run. The order below is the whole rule: serve the local API, pick up what
@@ -688,18 +692,12 @@ func runServe(opts serveOptions) error {
 	// reads it there.
 	onRenamed := func(id, name, cwd string) { srv.PublishTerminals(projectRepo.ProjectNameFor(cwd)) }
 	for _, m := range coders {
-		var onBell func(targetID string)
 		if m.ID() == "copilot" {
 			if err := codercopilot.EnsureBeepSetting(); err != nil {
 				log.Printf("copilot beep setting: %v", err)
 			}
-			// A bell has no hook name; it rings for a turn that ended and
-			// for a question alike, and it is read as the former.
-			onBell = func(targetID string) {
-				notifier.Event(targetID, "Bell")
-			}
 		}
-		watchWorkingMarks(m, tracker, onRenamed, onBell)
+		watchWorkingMarks(m, tracker, onRenamed, notifier.Event)
 	}
 
 	return serveHTTP(&http.Server{Handler: srv.Handler()}, listener, cfg.TLSCertFile, cfg.TLSKeyFile)

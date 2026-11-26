@@ -4,23 +4,29 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // Compacting an assistant's conversation from the ring's menu (POST
 // /assistants/:id with form=compact), on a phone first: Compact conversation
 // stands under the models with how full the context is, off before the first
-// answer and while one runs with its reason under it, on Claude, Copilot and
-// OpenCode alike. A tap asks first, Cancel compacts nothing. The compaction
+// answer and while one runs with its reason under it, on Claude, Codex,
+// Copilot and OpenCode alike. A tap asks first, Cancel compacts nothing. The compaction
 // runs like a turn: its line in the thread, Compacting the conversation in the
 // running light of a working coder while it runs, then in the same place
 // Conversation compacted, Nothing to compact, or The conversation was not
 // compacted with the coder's words, never an answer bubble. A message sent
-// meanwhile waits and goes out after it. Claude's and OpenCode's ring turn
-// dashed until the next answer reads it, Copilot's shows the compacted size
-// at once. A restart of the cockpit while it compacts leaves one line that
+// meanwhile waits and goes out after it. Claude's, Codex's and OpenCode's ring
+// turn dashed until the next answer reads it, Copilot's shows the compacted
+// size at once. A restart of the cockpit while it compacts leaves one line that
 // ends normally on the open page, and OpenCode's server is gone once it
 // ended. A guest reads the line and gets no control.
 //
 // Instance: the assistant shape of the README (tests/e2e/fakes ahead of the
 // real CLIs on PATH, a scratch HOME). The claude and copilot fakes compact on
 // a prompt that is exactly /compact, the opencode fake on the summarize of its
-// server, and all of them read the prompt of the turn before: COMPACT_LONG,
-// COMPACT_RESTART, COMPACT_EMPTY (claude, copilot) and COMPACT_REFUSE.
+// server, the codex fake on thread/compact/start of its app server, and all of
+// them read the prompt of the turn before: COMPACT_LONG, COMPACT_RESTART,
+// COMPACT_EMPTY (claude, copilot) and COMPACT_REFUSE. codex itself compacts
+// whatever it is given, so the cockpit finds nothing to compact where its
+// record holds no answer since the last compaction, and asks codex nothing;
+// the codex fake's COMPACTIONS says how many compactions reached it on which
+// model, whether its record holds a summary and how many of its app servers
+// still run.
 // SERVE_LEFT makes the opencode fake count its servers still running. A
 // compaction OpenCode did not finish, refused or stopped, must not cost the
 // next message: the fake finishes it in place of the answer, as opencode
@@ -180,6 +186,7 @@ L.runFeature("assistant-compact", async ({ browser, run, mobilePage }) => {
   const made = [];
   let claude = "";
   let opencode = "";
+  let codex = "";
   let linkId = "";
   try {
     await checks();
@@ -499,6 +506,89 @@ L.runFeature("assistant-compact", async ({ browser, run, mobilePage }) => {
       const last = (await page.locator('[data-role="assistant"]').last().innerText()).trim();
       assert(last.includes("AIRPORT Servers left: 0.") && !last.includes("Summary"), `after the kill and the restart: ${last}`);
       return `${killed.line} ${last.slice(-26)}`;
+    });
+
+    await run("codex compacts through its app server on the chat's model, its ring waits and the next turn goes on from the summary", async () => {
+      codex = await newAssistant(page, "codex").catch(() => "");
+      assert(codex, "this instance runs no codex, put tests/e2e/fakes on the PATH");
+      made.push(codex);
+      assert((await post(page, `/assistants/${codex}`, { form: "model", model: "gpt-fake-luna" })) === 200, "the chat model was refused");
+      await open(page, codex);
+      await openRing(page);
+      const first = await control(page);
+      assert(first.shown && first.disabled && first.hint === "Possible after the first answer.", `codex's control before an answer reads ${JSON.stringify(first)}`);
+      await closeRing(page);
+      await send(page, "MAGIC");
+      assert((await ring(page)).fill === "68 100", `codex's ring before reads ${JSON.stringify(await ring(page))}`);
+      const answers = await page.locator('[data-role="assistant"]').count();
+      await compact(page);
+      const running = await waitLine(page, 1, "streaming", 8000);
+      assert(running.line === "Compacting the conversation…" && running.light, `while codex compacts the line reads ${JSON.stringify(running)}`);
+      const done = await waitLine(page, 1, "compacted");
+      await idle(page);
+      const gauge = await ring(page);
+      assert(done.line === "Conversation compacted." && !done.error && gauge.pending && gauge.fill === "0 100" && gauge.label.endsWith(PENDING), `after codex's compaction: ${JSON.stringify(done)} ${JSON.stringify(gauge)}`);
+      assert((await page.locator('[data-role="assistant"]').count()) === answers, "codex's compaction wrote an answer bubble");
+      await send(page, "COMPACTIONS");
+      const last = (await page.locator('[data-role="assistant"]').last().innerText()).trim();
+      const after = await ring(page);
+      assert(last.includes("compactions: 1 (gpt-fake-luna), summary: yes, app servers: 0"), `the turn after codex's compaction answered ${last}`);
+      assert(!after.pending && after.fill === "68 100", `the next answer did not read codex's ring again: ${JSON.stringify(after)}`);
+      return `${done.line} ${last}`;
+    });
+
+    await run("codex has nothing to compact right after a compaction and shows a refusal in its words", async () => {
+      await compact(page);
+      const again = await waitLine(page, 2, "compacted");
+      await idle(page);
+      await compact(page);
+      const nothing = await waitLine(page, 3, "nothing");
+      await idle(page);
+      assert(again.line === "Conversation compacted." && nothing.line === "Nothing to compact." && !nothing.error, `back to back codex reads ${JSON.stringify([again, nothing])}`);
+      await send(page, "COMPACTIONS after nothing");
+      const asked = (await page.locator('[data-role="assistant"]').last().innerText()).trim();
+      assert(asked.includes("compactions: 2 (gpt-fake-luna gpt-fake-luna)"), `nothing to compact still asked codex: ${asked}`);
+      await send(page, "MAGIC COMPACT_REFUSE");
+      await compact(page);
+      const refused = await waitLine(page, 4, "failed");
+      await idle(page);
+      assert(refused.line === "The conversation was not compacted." && refused.error.includes("The coder said: Compaction failed: the summary was too long."), `codex's refusal reads ${JSON.stringify(refused)}`);
+      assert(!(await ring(page)).pending, "a refused codex compaction left the ring waiting");
+      await send(page, "MAGIC after the refusal");
+      const next = (await page.locator('[data-role="assistant"]').last().innerText()).trim();
+      assert(next.includes("AIRPORT"), `the turn after codex's refusal answered ${next}`);
+      return `${nothing.line} / ${refused.error}`;
+    });
+
+    await run("a stopped codex compaction leaves no app server, and one survives a restart of the cockpit", async () => {
+      await send(page, "MAGIC COMPACT_LONG");
+      let count = (await lines(page)).length;
+      await compact(page);
+      await waitLine(page, count + 1, "streaming", 8000);
+      await sleep(2000);
+      await page.locator("[data-assistant-cancel]").tap();
+      const stopped = await waitLine(page, count + 1, "cancelled", 20000);
+      await idle(page);
+      assert(stopped.line === "You stopped the compaction." && !(await ring(page)).pending, `codex's stop reads ${JSON.stringify(stopped)} ${JSON.stringify(await ring(page))}`);
+      await send(page, "COMPACTIONS after the stop");
+      const left = (await page.locator('[data-role="assistant"]').last().innerText()).trim();
+      assert(left.includes("app servers: 0"), `after the stop: ${left}`);
+
+      await send(page, "MAGIC COMPACT_RESTART");
+      count = (await lines(page)).length;
+      await page.evaluate(() => { window.__dcSamePage = true; });
+      await compact(page);
+      const done = await waitLine(page, count + 1, "compacted", 60000);
+      await idle(page, 30000);
+      assert(await page.evaluate(() => window.__dcSamePage === true), "the page reloaded, this says nothing about the open stream");
+      assert(done.line === "Conversation compacted.", `after the restart codex's line reads ${JSON.stringify(done)}`);
+      await open(page, codex);
+      const all = await lines(page);
+      assert(all.length === count + 1 && all[count].mark === "compacted" && !(await working(page)), `after a reload codex's lines read ${JSON.stringify(all)}`);
+      await send(page, "COMPACTIONS after the restart");
+      const last = (await page.locator('[data-role="assistant"]').last().innerText()).trim();
+      assert(last.includes("summary: yes, app servers: 0"), `after the restart: ${last}`);
+      return `${stopped.line} / ${done.line}`;
     });
 
     await run("a guest reads the line and gets no control, and cannot post one", async () => {

@@ -22,10 +22,10 @@
 </form>
 <dc-allowed-tools class="d-block">
 <div class="d-flex align-items-center gap-2 mt-5 mb-2">
-  <h3 class="card-title mb-0">Always allowed Claude tools</h3>
+  <h3 class="card-title mb-0">Always allowed tools</h3>
   <span class="badge bg-secondary-lt" data-allowed-tools-count{{if not .AllowedTools}} hidden{{end}}>{{len .AllowedTools}}</span>
 </div>
-<div class="text-secondary small mb-3" data-allowed-tools-hint>When a Claude assistant wants a tool that needs approval, like a Slack connector, it asks you first. The tools below run without asking. OpenCode and Copilot assistants never ask.</div>
+<div class="text-secondary small mb-3" data-allowed-tools-hint>When a Claude or Codex assistant wants a tool that needs approval, like a Slack connector, it asks you first. The tools below run without asking. OpenCode and Copilot assistants never ask.</div>
 <div class="card mb-3" data-allowed-tools>
   <div class="list-group list-group-flush" data-allowed-tools-list{{if not .AllowedTools}} hidden{{end}}>
     {{range .AllowedTools}}

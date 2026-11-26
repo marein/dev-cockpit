@@ -221,10 +221,10 @@ async function newConversation(page) {
 }
 
 // SVG_CODER_VIEWBOX names the coders whose ring glyph is an svg, each with
-// the viewBox coder_icon.gohtml draws it in; every other coder (copilot
-// today) is a font icon, wrapped in a span the ring icon template centers
-// the same way.
+// the viewBox coder_icon.gohtml draws it in; FONT_CODER_GLYPH names the font
+// icon of the others, in a span the ring icon template centers the same way.
 const SVG_CODER_VIEWBOX = { claude: "0 0 24 24", opencode: "0 0 256 320" };
+const FONT_CODER_GLYPH = { copilot: "ti-brand-github-copilot", codex: "ti-brand-openai" };
 
 // coderIDs reads which coders this host actually offers, out of the New
 // assistant button's own entries in the list column, so a check that must
@@ -606,7 +606,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
   // runs once per coder this host installs, plus a shape check that it is
   // really that coder's own glyph: an svg with that coder's own viewBox
   // where the glyph is an svg (claude, opencode), a span wrapping the
-  // webfont glyph otherwise (copilot). Rest state only: the geometry itself
+  // webfont glyph otherwise (copilot, codex). Rest state only: the geometry itself
   // does not change with the coder, only what is drawn inside it, so
   // light/dark and hover/open stay the check above's job. An assistant per
   // coder is the honest way to render each icon, and the cheap one too: a
@@ -637,7 +637,7 @@ L.runFeature("assistant", async ({ engine, browser, ctx, page, run, mobilePage, 
         assert(shape.tag === "svg" && shape.viewBox === wantViewBox,
           `${where}: ${coderID} did not draw its own svg: ${JSON.stringify(shape)}`);
       } else {
-        assert(coderID === "copilot" && shape.tag === "span" && shape.glyph.includes("ti-brand-github-copilot"),
+        assert(FONT_CODER_GLYPH[coderID] && shape.tag === "span" && shape.glyph.includes(FONT_CODER_GLYPH[coderID]),
           `${where}: ${coderID} did not wrap its font glyph: ${JSON.stringify(shape)}`);
       }
     };

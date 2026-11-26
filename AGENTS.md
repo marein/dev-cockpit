@@ -250,7 +250,7 @@ The layers are listed top down, a layer imports only the layers below it.
    `web` (commit drafts, search drafts), new state goes into a service.
 3. **Domain Services**: One package per subject, `assistant`, `approval`,
    `coder` (one subpackage per coder CLI: `claude`, `copilot`,
-   `opencode`), `shell`, `terminal`, `share`, `project`, `docker`, `git`,
+   `opencode`, `codex`), `shell`, `terminal`, `share`, `project`, `docker`, `git`,
    `editorintelligence`, `voice`, `backup`, `notify`, `push`, `restore`,
    `linecomment` (the editor's line comments, a forge's review notes among
    them), `browser` (the picker, console catch and drawing the extension
@@ -284,7 +284,10 @@ The layers are listed top down, a layer imports only the layers below it.
   names, time parsing). Two implementations of one rule drift apart.
 - `internal/git` is the only package that runs the git binary, and all
   calls go through its single helper. `gitfacts` reads `.git` files and
-  starts no process. The same applies to tmux (`internal/tmux`).
+  starts no process. The same applies to tmux (`internal/tmux`). There a
+  command tmux reports to every control client (a session made, killed or
+  renamed, a paste buffer) runs through `announced`, apart from any
+  control client's attach, see `controlGate`: tmux 3.4 crashes otherwise.
 - `internal/docker` holds the one daemon connection and an event driven
   cache that every docker surface reads. `editorintelligence` and
   `voice` build and run their own containers through the docker CLI.
@@ -459,7 +462,8 @@ templates plus ES modules.
   CLI in the assistant's workspace and acts only through the cockpit's
   own commands over the local API (the `./cockpit` wrapper). A tool call
   its coder would ask about is an approval the turn waits for
-  (`tool-approval-serve`, `approval.Service.Await`), with no note in the
+  (`tool-approval-serve`, for a coder that asks through a hook
+  `tool-approval-ask`, `approval.Service.Await`), with no note in the
   thread. Jobs, triggers and approvals belong to one assistant.
 - **Code Navigation and Voice**: `internal/editorintelligence` and
   `internal/voice` run fixed server profiles in Docker containers that
@@ -474,8 +478,9 @@ templates plus ES modules.
   swallowed unless the resolver marks them urgent or a failure follows
   news that did not fail, which it then replaces.
 - Signals are coder native, never parsed from pane content: claude hooks,
-  copilot's bell, an opencode plugin, OSC 133 marks for shells. Everything
-  enters through the notify inbox under the state directory.
+  copilot's bell, an opencode plugin, codex's bell read against its
+  rollout (`coder.BellReader`), OSC 133 marks for shells. Hooks and plugin
+  events enter through the notify inbox under the state directory.
 - The title says what happened in one fixed sentence per kind, at most
   32 runes. The detail line names the target and carries any text. All
   wording lives next to `notifyResolver` in `internal/cli`.

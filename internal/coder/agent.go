@@ -23,6 +23,22 @@ type AgentRepository interface {
 	Delete(rawID string) (Agent, error)
 }
 
+// NoAgentStart is an AgentRepository whose coder never starts a session as
+// one of its agents. NoAgentStart says so with the reason in one short
+// sentence, which the new coder form shows instead of an agent to pick.
+type NoAgentStart interface {
+	NoAgentStart() string
+}
+
+// NoAgentStartNote answers why c starts no session as one of its agents,
+// empty when it does.
+func NoAgentStartNote(c Coder) string {
+	if n, ok := c.AgentRepository().(NoAgentStart); ok {
+		return n.NoAgentStart()
+	}
+	return ""
+}
+
 // Agent is a stored coder-specific agent definition.
 type Agent struct {
 	ID           string

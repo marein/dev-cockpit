@@ -63,7 +63,7 @@ func slackCall(id string) map[string]any {
 // A turn's tool call stands as an approval naming the assistant, the tool and
 // its input, with the box that allows the tool for good and its short wait.
 // Approving with the box ticked lets it run and stores the tool, and from then
-// on that tool runs at once, for every Claude assistant, without a question.
+// on that tool runs at once, for every assistant, without a question.
 // Nothing of it lands in the thread.
 func TestAToolCallWaitsForTheUserAndCanBeAllowedForGood(t *testing.T) {
 	f := newComposeFixture(t)

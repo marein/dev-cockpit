@@ -126,3 +126,46 @@ func TestAnInboxWithoutAReaderSpeaksTheInboxWords(t *testing.T) {
 		t.Fatal("TurnStart opens the turn of a coder without a reader")
 	}
 }
+
+type bellReading struct {
+	asked  string
+	signal coder.TurnSignal
+}
+
+func (b *bellReading) BellSignal(sessionID string) coder.TurnSignal {
+	b.asked = sessionID
+	return b.signal
+}
+
+// A bell is news under the name its coder reads into it: a turn that ended
+// closes the working mark, a question sets the turn waiting and goes by the
+// name the hooks use for one, which the assistants' triggers hear as a coder
+// that asks.
+func TestABellIsTheNewsItsCoderReadsIntoIt(t *testing.T) {
+	tracker := activity.NewTracker()
+	var heard []string
+	reader := &bellReading{signal: coder.TurnSignalOver}
+	ring := bellNews(reader, tracker, func(targetID, kind string) { heard = append(heard, targetID+" "+kind) })
+
+	tracker.SetTurn("t1", true, false, time.Now().Add(-time.Second))
+	if _, working := tracker.Working()["t1"]; !working {
+		t.Fatal("an open turn is not working")
+	}
+	ring("t1")
+	if _, working := tracker.Working()["t1"]; working {
+		t.Fatal("the bell of a turn that ended left the mark up")
+	}
+	if reader.asked != "t1" {
+		t.Fatalf("the coder was asked about %q", reader.asked)
+	}
+
+	tracker.SetTurn("t1", true, true, time.Now())
+	reader.signal = coder.TurnSignalWaiting
+	ring("t1")
+	if _, working := tracker.Working()["t1"]; working {
+		t.Fatal("a coder standing at a question is marked as working")
+	}
+	if len(heard) != 2 || heard[0] != "t1 Bell" || heard[1] != "t1 Notification" {
+		t.Fatalf("the news went out as %q", heard)
+	}
+}

@@ -17,9 +17,9 @@ const { assert, BASE, sleep, dismissUpdate } = L;
 // tells the turn with the cockpit's sentence, no note lands in the thread
 // either way. The assistant cannot answer it over the local socket. Stopping
 // the turn and deleting the assistant take the question along. The box stores
-// the tool for every Claude assistant, its next call runs without a question,
+// the tool for every assistant, its next call runs without a question,
 // and the Approvals tab (/settings/assistant/approvals) lists it under Always
-// allowed Claude tools by its own name, its MCP server and its full name, with
+// allowed tools by its own name, its MCP server and its full name, with
 // a Remove that makes it ask again. On the phone Remove takes the row out in
 // place, without a navigation, counts down, toasts "Tool removed." and ends in
 // the empty state, which a reload keeps. The fake's INPUT:<kind> picks the
@@ -299,8 +299,8 @@ L.runFeature("TOOL APPROVALS", async ({ page, run, mobilePage }) => {
         remove: el.querySelector('button[type="submit"]').getAttribute("aria-label"),
       };
     }, row);
-    assert(named.heading === "Always allowed Claude tools", `the heading reads "${named.heading}"`);
-    const hint = "When a Claude assistant wants a tool that needs approval, like a Slack connector, it asks you first. The tools below run without asking. OpenCode and Copilot assistants never ask.";
+    assert(named.heading === "Always allowed tools", `the heading reads "${named.heading}"`);
+    const hint = "When a Claude or Codex assistant wants a tool that needs approval, like a Slack connector, it asks you first. The tools below run without asking. OpenCode and Copilot assistants never ask.";
     assert(named.hint === hint, `the description reads "${named.hint}"`);
     assert(named.name === "slack_search_channels" && named.server === "claude_ai_Slack" && named.full === TOOL, `the row reads ${JSON.stringify(named)}`);
     assert(named.count === "1" && named.remove === `Remove ${TOOL}`, `the count and the Remove read ${JSON.stringify(named)}`);

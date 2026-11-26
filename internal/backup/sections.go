@@ -122,6 +122,15 @@ func buildSections(stateDir, projectsDir, home string) []Section {
 				{Name: "session-store.db-wal", Path: hm(".copilot/session-store.db-wal")},
 				{Name: "session-store.db-shm", Path: hm(".copilot/session-store.db-shm")},
 				{Name: "command-history-state.json", Path: hm(".copilot/command-history-state.json")}}},
+		// codex's login stays out: a restored copy that refreshes its token
+		// signs the login it was copied from out.
+		{ID: "codex", Group: "Coders", Label: "Codex config",
+			Description: "Instructions, agents, skills and config.toml. The login stays out, codex asks for it again on the new host.",
+			Sources: []Source{
+				{Name: "AGENTS.md", Path: hm(".codex/AGENTS.md")},
+				{Name: "config.toml", Path: hm(".codex/config.toml")},
+				{Name: "agents", Path: hm(".codex/agents")},
+				{Name: "skills", Path: hm(".codex/skills")}}},
 		{ID: "ollama", Group: "Coders", Label: "Ollama",
 			Description: "The launcher's config.json, what ollama launch writes for the coders it wraps.",
 			Sources:     []Source{{Name: "config.json", Path: hm(".ollama/config.json")}}},

@@ -4,13 +4,20 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
 	"github.com/marein/dev-cockpit/internal/clirun"
 	"github.com/marein/dev-cockpit/internal/coder"
+	coderclaude "github.com/marein/dev-cockpit/internal/coder/claude"
+	codercodex "github.com/marein/dev-cockpit/internal/coder/codex"
+	codercopilot "github.com/marein/dev-cockpit/internal/coder/copilot"
+	coderopencode "github.com/marein/dev-cockpit/internal/coder/opencode"
 	"github.com/marein/dev-cockpit/internal/localapi"
+	"github.com/marein/dev-cockpit/internal/notify"
+	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/settings"
 	"github.com/marein/dev-cockpit/internal/tmux"
 	"github.com/marein/dev-cockpit/internal/web/render"
@@ -52,6 +59,37 @@ func cockpitServesFrom(stateDir string) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+// knownCoders builds every coder the cockpit knows, installed or not, wired
+// with what serve holds. A reading of what a coder can do takes them bare.
+func knownCoders(stateDir string, store *settings.Store, launcher *ollama.Client) []coder.Coder {
+	return []coder.Coder{
+		codercopilot.New(store),
+		coderclaude.New(stateDir, notify.InboxDir(stateDir, "claude"), store, launcher),
+		coderopencode.New(notify.InboxDir(stateDir, "opencode"), store),
+		codercodex.New(store),
+	}
+}
+
+// agentUsage is the --agent line of coder-new, naming the coders that start
+// a session as one of their agents by what the new coder form reads too.
+func agentUsage(coders []coder.Coder) string {
+	var ids []string
+	for _, c := range coders {
+		if coder.NoAgentStartNote(c) == "" {
+			ids = append(ids, c.ID())
+		}
+	}
+	sort.Strings(ids)
+	usage := "agent the session starts with"
+	switch n := len(ids); {
+	case n > 1:
+		return usage + ", for " + strings.Join(ids[:n-1], ", ") + " and " + ids[n-1]
+	case n == 1:
+		return usage + ", for " + ids[0]
+	}
+	return usage
 }
 
 // selectProviders resolves which coders this instance serves: every registered

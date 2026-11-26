@@ -71,7 +71,9 @@ func StartControl(name string) (*Control, error) {
 	}
 	stderr := &bytes.Buffer{}
 	cmd.Stderr = stderr
+	controlGate.RLock()
 	if err := cmd.Start(); err != nil {
+		controlGate.RUnlock()
 		return nil, err
 	}
 	c := &Control{
@@ -86,7 +88,9 @@ func StartControl(name string) (*Control, error) {
 
 	select {
 	case <-c.ready:
+		controlGate.RUnlock()
 	case <-time.After(controlCmdTimeout):
+		controlGate.RUnlock()
 		c.Close()
 		return nil, errors.New("Timed out attaching to terminal.")
 	}
@@ -537,6 +541,8 @@ func (c *Control) PaneForeground(name string) (PaneForeground, error) {
 
 // Close detaches the control client; the tmux session itself is untouched.
 func (c *Control) Close() error {
+	controlGate.Lock()
+	defer controlGate.Unlock()
 	c.sendMu.Lock()
 	_ = c.stdin.Close()
 	c.sendMu.Unlock()

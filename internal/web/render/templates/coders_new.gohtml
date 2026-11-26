@@ -64,10 +64,15 @@
       {{end}}
       {{range $co := .Coders}}
       <div class="mb-3" data-coder-agents="{{$co.ID}}" {{if ne $co.ID $.SelectedCoder}}hidden{{end}}>
+        {{if $co.AgentNote}}
+        <div class="form-label">Agent</div>
+        <div class="form-control-plaintext text-secondary" data-agent-note>{{$co.AgentNote}}</div>
+        {{else}}
         <label class="form-label" for="agent-{{$co.ID}}">Agent</label>
         <select class="form-select" id="agent-{{$co.ID}}" name="agent" {{if ne $co.ID $.SelectedCoder}}disabled{{end}}>
           {{range $co.Agents}}<option value="{{.Value}}" {{if eq .Value $co.DefaultAgent}}selected{{end}}>{{.Label}}</option>{{end}}
         </select>
+        {{end}}
       </div>
       {{end}}
     </dc-coder-select>

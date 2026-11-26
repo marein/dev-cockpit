@@ -13,20 +13,24 @@ const turnReadBudget = 200
 // TurnWatch is what RunTurnWatch reports to and asks. OnSeen(id) fires once
 // when a session enters the running set, which is where the tracker learns
 // the coder's chosen policy; OnGone(id) when it leaves, so a mark cannot
-// outlive its terminal. For a coder whose ActivityProfile chose WatchRecord,
-// OnTurn reports the record's own account whenever it moved: whether a turn
-// is open, whether it stands inside a tool call, and when its newest message
-// was written as the word's own time (wordTime). RecordOf answers under which
-// id the record of a session is kept now, the session's own id unless the
-// coder moved it: claude starts a new transcript on /clear and /resume while
-// the terminal stays.
+// outlive its terminal. A new pane under an id already seen, a stop and
+// resume between two ticks, leaves and enters the same way, so nothing its
+// previous life left open carries over. For a coder whose ActivityProfile
+// chose WatchRecord, OnTurn reports the record's own account whenever it
+// moved: whether a turn is open, whether it stands inside a tool call, and
+// when its newest message was written as the word's own time (wordTime).
+// RecordOf answers under which id the record of a session is kept now, the
+// session's own id unless the coder moved it: claude starts a new transcript
+// on /clear and /resume while the terminal stays.
 //
 // OnRenamed reports a session whose display name moved since the last tick.
 // A coder names its own sessions, so a rename happens inside the CLI and
 // reaches no handler that could announce it; the name is in the snapshot this
 // loop reads anyway, so it costs one string compare. It is compared above the
 // record section on purpose: a coder without WatchRecord leaves there, and its
-// sessions get renamed like everybody else's.
+// sessions get renamed like everybody else's. A session whose record appeared
+// late (LateSessionRecords) is announced the same way: its pane stays and its
+// id moves, which every list has to hear exactly like a new name.
 type TurnWatch struct {
 	OnSeen    func(id string, startedAt time.Time)
 	OnTurn    func(id string, open, inTool bool, at time.Time)
@@ -51,6 +55,8 @@ func (s *Manager) RunTurnWatch(interval time.Duration, w TurnWatch) {
 	reporter, _ := s.coder.(ActivityReporter)
 	stamps := map[string]time.Time{}
 	names := map[string]string{}
+	lives := map[string]string{}
+	panes := map[string]string{}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -59,9 +65,10 @@ func (s *Manager) RunTurnWatch(interval time.Duration, w TurnWatch) {
 			running[r.Identifier] = r
 		}
 		for id := range stamps {
-			if _, ok := running[id]; !ok {
+			if r, ok := running[id]; !ok || r.PID != lives[id] {
 				delete(stamps, id)
 				delete(names, id)
+				delete(lives, id)
 				w.OnGone(id)
 			}
 		}
@@ -69,6 +76,7 @@ func (s *Manager) RunTurnWatch(interval time.Duration, w TurnWatch) {
 			if _, ok := stamps[id]; !ok {
 				stamps[id] = time.Time{}
 				names[id] = r.Name
+				lives[id] = r.PID
 				w.OnSeen(id, r.StartedAt)
 				continue
 			}
@@ -79,6 +87,11 @@ func (s *Manager) RunTurnWatch(interval time.Duration, w TurnWatch) {
 				names[id] = r.Name
 				w.OnRenamed(id, r.Name, r.CWD)
 			}
+		}
+		var moved []Running
+		moved, panes = movedPanes(panes, running)
+		for _, r := range moved {
+			w.OnRenamed(r.Identifier, r.Name, r.CWD)
 		}
 		if !watchRecord || stamper == nil || reporter == nil {
 			continue

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marein/dev-cockpit/internal/coder"
 	"github.com/marein/dev-cockpit/internal/ollama"
 	"github.com/marein/dev-cockpit/internal/tmux"
 )
@@ -74,6 +75,20 @@ func (s *Server) styleSessionPane(name string) {
 	_ = tmux.New().SetPaneStyle(name, paneStyle(s.termTheme.bg, s.termTheme.fg))
 }
 
+// styleCoderPane is styleSessionPane for a coder's session. A coder that
+// keeps one style gets it before any theme is known too.
+func (s *Server) styleCoderPane(co *coder.Manager, name string) {
+	s.termTheme.mu.Lock()
+	defer s.termTheme.mu.Unlock()
+	themed := ""
+	if s.termTheme.bg != "" {
+		themed = paneStyle(s.termTheme.bg, s.termTheme.fg)
+	}
+	if style := coder.PaneStyleFor(co.Coder(), themed); style != "" {
+		_ = tmux.New().SetPaneStyle(name, style)
+	}
+}
+
 // applyTerminalThemeLocked restyles every running session and additionally
 // sends the mode 2031 color scheme report (CSI ? 997 ; 1/2 n) to the TUIs
 // that subscribe to it, so a running coder switches its theme live. The
@@ -98,7 +113,7 @@ func (s *Server) applyTerminalThemeLocked() {
 	for i := range s.coders {
 		notify := schemeReportCoder(s.coders[i].ID())
 		for _, r := range s.coders[i].Snapshot().Running {
-			t := tmux.PaneTheme{Name: r.Identifier, Style: style}
+			t := tmux.PaneTheme{Name: r.TmuxSession, Style: coder.PaneStyleFor(s.coders[i].Coder(), style)}
 			if notify {
 				t.Report = report
 			}
@@ -123,8 +138,9 @@ func (s *Server) applyTerminalThemeLocked() {
 // foreground command because the ids match the binaries. claude reads the
 // reported value itself; opencode answers a report by re-querying OSC 10/11,
 // which tmux serves from the pane style the same batched apply just set
-// (verified on opencode 1.18.23). copilot never enables the mode and themes
-// itself over the ANSI palette instead.
+// (verified on opencode 1.18.23). copilot and codex never enable the mode
+// and paint with the ANSI palette instead, codex because it runs at 16
+// colors on a pane that stays dark (internal/coder/codex).
 func schemeReportCoder(id string) bool { return id == "claude" || id == "opencode" }
 
 func shellSchemeReport(fg tmux.PaneForeground) bool {

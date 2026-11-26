@@ -1,8 +1,12 @@
 package coder
 
 import (
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/config"
+	"github.com/marein/dev-cockpit/internal/tmux"
 )
 
 // An open turn needs a word from the running terminal's life. A message
@@ -64,5 +68,54 @@ func TestARecordWordIsDatedByItsMessage(t *testing.T) {
 	}
 	if got := wordTime(Activity{}, stamp); !got.Equal(stamp) {
 		t.Fatalf("wordTime = %v, want the stamp without message dates", got)
+	}
+}
+
+type lifeCoder struct{ Coder }
+
+func (lifeCoder) ActivityProfile() ActivityProfile { return ActivityProfile{} }
+
+// A coder stopped and resumed between two ticks of the watch is back under
+// its id on a new pane before the watch could see it leave. That pane is a
+// new life: it leaves and enters again, under its own start, so the tracker
+// forgets the turn the previous life left open, exactly as after a slower
+// resume. The same pane seen again is no new life.
+func TestANewPaneUnderTheSameIDIsANewLife(t *testing.T) {
+	m := NewManager(config.Config{SnapshotCacheTTL: time.Hour}, tmux.New(), lifeCoder{}, nil)
+	first := time.Date(2026, 11, 25, 11, 50, 30, 0, time.UTC)
+	resumed := time.Date(2026, 11, 25, 11, 50, 42, 695e6, time.UTC)
+	life := func(pid string, at time.Time) {
+		m.snapshots.put(Snapshot{Running: []Running{{Identifier: "work", TmuxSession: "work", PID: pid, Name: "work", StartedAt: at}}})
+	}
+	events := make(chan string, 16)
+	life("100", first)
+	go m.RunTurnWatch(5*time.Millisecond, TurnWatch{
+		OnSeen:    func(id string, at time.Time) { events <- fmt.Sprintf("seen %s %s", id, at.Format(time.StampMilli)) },
+		OnGone:    func(id string) { events <- "gone " + id },
+		OnRenamed: func(id, name, cwd string) { events <- "renamed " + id },
+		RecordOf:  func(id string) string { return id },
+	})
+	next := func() string {
+		select {
+		case e := <-events:
+			return e
+		case <-time.After(2 * time.Second):
+			return "nothing"
+		}
+	}
+	if got := next(); got != "seen work "+first.Format(time.StampMilli) {
+		t.Fatalf("the first life reads %q", got)
+	}
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case e := <-events:
+		t.Fatalf("the same pane seen again reads %q", e)
+	default:
+	}
+	life("200", resumed)
+	for _, want := range []string{"gone work", "seen work " + resumed.Format(time.StampMilli)} {
+		if got := next(); got != want {
+			t.Fatalf("the new pane reads %q, want %q", got, want)
+		}
 	}
 }

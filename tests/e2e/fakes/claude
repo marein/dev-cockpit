@@ -83,7 +83,7 @@ json() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.st
 # fake that lies about its shape would test nothing.
 record() {
   printf '{"type":"%s","sessionId":"%s","cwd":"%s","timestamp":"%s","message":{"role":"%s","content":%s}}\n' \
-    "$1" "$session" "$PWD" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >> "$transcript"
+    "$1" "$session" "$PWD" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$1" "$2" >> "$transcript"
 }
 record_user() { record user "$(json "$1")"; }
 # claude records the name a session was started with, and the cockpit reads it
@@ -121,7 +121,7 @@ for line in open(sys.argv[1]):
   case "$prompt" in
     *LEAVE_WORKING*)
       printf '{"type":"assistant","sessionId":"%s","cwd":"%s","timestamp":"%s","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{}}]}}\n' \
-        "$session" "$PWD" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$transcript"
+        "$session" "$PWD" "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$transcript"
       ;;
     *) record_assistant "fake claude worked on it." ;;
   esac
@@ -536,6 +536,16 @@ case "$prompt" in
       *WAKE_LONG*)    answer="DONE: the job is finished, every file it was about is written and the tests it left running came back green, which is more than the one line over a folded report can hold." ;;
       *WAKE_BLOCKED*) answer="BLOCKED: it needs a decision from you." ;;
       *WAKE_NOTHING*) answer="NOTHING" ;;
+      # The check reads the screen with the command the prompt spells out for
+      # the job's terminal, and its verdict says whether that worked.
+      *WAKE_SCREEN*)
+        screen=$(printf '%s' "$prompt" | grep -o '`[^`]*terminal-screen [^`]*`' | head -1 | tr -d '`')
+        if [ -n "$screen" ] && eval "$screen" >/dev/null 2>&1; then
+          answer="DONE: its screen reads."
+        else
+          answer="BLOCKED: its screen could not be read."
+        fi
+        ;;
       # The check survives a restart of the cockpit as well: it is killed
       # halfway through and its verdict still reaches the job.
       *WAKE_RESTART*)

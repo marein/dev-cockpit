@@ -38,7 +38,7 @@ type Coder struct {
 	runner         *runner
 	// modelCache is what `opencode models` printed, cached, and models the
 	// repository over it, see models.go.
-	modelCache *modelList
+	modelCache *coder.ModelList[modelEntry]
 	models     coder.ModelRepository
 }
 
@@ -66,7 +66,7 @@ func New(notifyInbox string, store *settings.Store) *Coder {
 			ensureConfig: ensureSessionConfig,
 		},
 		controls:   terminal.DefaultControlMapper(),
-		modelCache: newModelList(listModels),
+		modelCache: coder.NewModelList(modelListTTL, listModels),
 	}
 	c.models = coder.NewModelRepository(store, "opencode", opencodeModelsNote, c.cliModels)
 	c.assistantProbe = coder.NewCapabilityProbe(c.probeAssistant, 10*time.Second)

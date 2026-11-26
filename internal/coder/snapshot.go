@@ -56,7 +56,11 @@ func scanRunning(panes []tmux.Pane, resumable []Session, prov Coder) (running []
 			if p.Coder != prov.ID() {
 				continue
 			}
-			if match, ok := resumableByID[p.Name]; ok {
+			match, ok := resumableByID[p.Name]
+			if !ok {
+				match, ok = lateRecord(p, prov, resumableByID)
+			}
+			if ok {
 				running = append(running, Running{
 					Identifier:   match.SessionID,
 					TmuxSession:  p.Name,

@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/marein/dev-cockpit/internal/assistant"
@@ -22,10 +24,12 @@ var ErrNotRunning = errors.New("No active coder")
 // shells.go, so one list-panes call attributes every pane without a process
 // scan. The display name and directory are launch-time values; for panes with a
 // store record the store stays the source of truth (it also carries renames).
+// The launch moment is a time of its own, see tmux.Pane.StartTime.
 const (
 	coderOption     = "@dc_coder"
 	coderNameOption = "@dc_coder_name"
 	coderDirOption  = "@dc_coder_dir"
+	coderAtOption   = "@dc_coder_at"
 )
 
 // Manager orchestrates the session lifecycle.
@@ -56,6 +60,17 @@ type Manager struct {
 	// agent is the environment that points a session at the coders' socket
 	// of the cockpit's ssh agent, nil where the cockpit serves none.
 	agent map[string]string
+	// naming holds the panes whose late session is being named right now,
+	// see nameLateSessions.
+	naming sync.Map
+	// changed tells the session watch that the set of sessions may have
+	// moved, see RunSessionWatch.
+	changed chan struct{}
+	// moved and moves are the announcement of a session that took its
+	// record's id while its pane stayed, see OnMoved.
+	moved   func(from, to string)
+	movesMu sync.Mutex
+	moves   map[string]string
 }
 
 // NewManager wires up a coder Manager with its dependencies.
@@ -75,6 +90,7 @@ func NewManager(
 		screenGap: screenSettleGap,
 		now:       time.Now,
 		sleep:     time.Sleep,
+		changed:   make(chan struct{}, 1),
 	}
 }
 
@@ -133,7 +149,13 @@ func (s *Manager) Coder() Coder { return s.coder }
 func (s *Manager) ID() string { return s.coder.ID() }
 
 // Invalidate flushes the snapshot cache.
-func (s *Manager) Invalidate() { s.snapshots.invalidate() }
+func (s *Manager) Invalidate() {
+	s.snapshots.invalidate()
+	select {
+	case s.changed <- struct{}{}:
+	default:
+	}
+}
 
 // StopIdleStreams clears inherited tmux pipes left by a previous process.
 func (s *Manager) StopIdleStreams() error {
@@ -151,6 +173,8 @@ func (s *Manager) compute() Snapshot {
 	panes, _ := s.tmux.ListPanes()
 	resumable := s.visibleSessions()
 	running, inactive := scanRunning(panes, resumable, s.coder)
+	s.nameLateSessions(panes, running)
+	s.announceMoves(running)
 	return Snapshot{Running: running, Inactive: inactive, Resumable: resumable}
 }
 
@@ -165,6 +189,9 @@ func (s *Manager) ResolveRunning(rawID string) (Running, error) {
 		if r.Identifier == id {
 			return r, nil
 		}
+	}
+	if r, ok := startedAs(snap.Running, id); ok {
+		return r, nil
 	}
 	// Distinguish "no tmux session" from "tmux session is not a coder session".
 	for _, p := range s.listPanesBestEffort() {
@@ -259,6 +286,7 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 	shellCmd := s.coder.SessionRuntime().StartCommand(start)
 	s.trustWorkdir(workdir)
 	env := terminal.WithAgent(s.coder.SessionRuntime().Env(), s.agent)
+	launched := time.Now()
 	if err := s.tmux.NewSession(sessionKey, workdir, shellCmd, env); err != nil {
 		return StartResult{}, err
 	}
@@ -268,12 +296,19 @@ func (s *Manager) Start(rawName, rawProject, rawAgent string, opts StartOptions)
 	if err := s.configureTerminal(sessionKey); err != nil {
 		return StartResult{}, err
 	}
-	if err := s.tagCoderPane(sessionKey, name, workdir); err != nil {
+	if err := s.tagCoderPane(sessionKey, name, workdir, launched); err != nil {
 		return StartResult{}, err
 	}
+	// The pane is a coder's from here on, so it is announced before the wait
+	// for its record below: a short task is over while that wait still runs.
+	s.Invalidate()
 	identifier := sessionKey
-	if !s.coder.SessionRuntime().UsesProvidedSessionID() {
+	_, late := s.coder.SessionRepository().(LateSessionRecords)
+	if !s.coder.SessionRuntime().UsesProvidedSessionID() && !(late && start.Task == "") {
 		identifier = s.promoteSessionKey(sessionKey, before, workdir, name)
+	}
+	if identifier != sessionKey {
+		s.nameSession(identifier, name)
 	}
 	s.Invalidate()
 	return StartResult{Identifier: identifier, Name: name, Workdir: workdir, AgentID: agentID, Model: model}, nil
@@ -311,16 +346,22 @@ func (s *Manager) resume(stored Session, checked bool) (Session, error) {
 			return Session{}, fmt.Errorf(`Coder "%s" already exists.`, stored.SessionID)
 		}
 	}
+	for _, r := range s.Snapshot().Running {
+		if r.Identifier == stored.SessionID {
+			return Session{}, fmt.Errorf(`Coder "%s" already exists.`, stored.SessionID)
+		}
+	}
 	cmd := s.coder.SessionRuntime().ResumeCommand(stored.SessionID, stored.CWD, true)
 	s.trustWorkdir(stored.CWD)
 	env := terminal.WithAgent(s.coder.SessionRuntime().Env(), s.agent)
+	launched := time.Now()
 	if err := s.tmux.NewSession(stored.SessionID, stored.CWD, cmd, env); err != nil {
 		return Session{}, err
 	}
 	if err := s.configureTerminal(stored.SessionID); err != nil {
 		return Session{}, err
 	}
-	if err := s.tagCoderPane(stored.SessionID, stored.Name, stored.CWD); err != nil {
+	if err := s.tagCoderPane(stored.SessionID, stored.Name, stored.CWD, launched); err != nil {
 		return Session{}, err
 	}
 	s.Invalidate()
@@ -517,6 +558,9 @@ func (s *Manager) resolveInput(rawID string) (string, terminal.Target, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	if ctl := s.streams.Control(r.TmuxSession); ctl != nil {
+		return r.TmuxSession, terminal.ControlInput{Ctl: ctl, CLI: s.tmux, Gone: ErrNotRunning}, nil
+	}
 	return r.TmuxSession, s.tmux, nil
 }
 
@@ -574,8 +618,14 @@ func (s *Manager) configureTerminal(name string) error {
 }
 
 // tagCoderPane marks a freshly created tmux session as a pane of this coder so
-// the snapshot can attribute it from list-panes alone.
-func (s *Manager) tagCoderPane(name, displayName, workdir string) error {
+// the snapshot can attribute it from list-panes alone. launched is taken
+// before the session exists, after the life it may resume has ended, so it
+// stands between the words of both. It is set first: a pane read as a coder's
+// already carries it.
+func (s *Manager) tagCoderPane(name, displayName, workdir string, launched time.Time) error {
+	if err := s.tmux.SetOption(name, coderAtOption, strconv.FormatInt(launched.UnixMilli(), 10)); err != nil {
+		return err
+	}
 	if err := s.tmux.SetOption(name, coderOption, s.coder.ID()); err != nil {
 		return err
 	}
@@ -616,9 +666,24 @@ func (s *Manager) promoteSessionKey(tempKey string, before []Session, workdir, d
 	for _, r := range before {
 		beforeIDs[r.SessionID] = true
 	}
+	late, _ := s.coder.SessionRepository().(LateSessionRecords)
+	pid := 0
+	if late != nil {
+		for _, p := range s.listPanesBestEffort() {
+			if p.Name == tempKey {
+				pid, _ = strconv.Atoi(p.PID)
+			}
+		}
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		target, found, ambiguous := promoteTarget(s.sessionCandidates(), beforeIDs, workdir, displayName, named)
+		var target Session
+		var found, ambiguous bool
+		if late != nil {
+			target, found = lateTarget(s.sessionCandidates(), beforeIDs, late, pid)
+		} else {
+			target, found, ambiguous = promoteTarget(s.sessionCandidates(), beforeIDs, workdir, displayName, named)
+		}
 		if ambiguous {
 			return tempKey
 		}

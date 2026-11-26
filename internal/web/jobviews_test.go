@@ -147,7 +147,7 @@ func TestAStoppedCodersJobRowResumesIt(t *testing.T) {
 	dir := t.TempDir()
 	bin := t.TempDir()
 	script := "#!/bin/sh\n" +
-		"[ \"$1\" = list-panes ] && printf '" + running + "\\t123\\t1700000000\\t0\\t0\\t\\t\\tclaude\\trunner\\t" + dir + "\\t\\t\\t\\t\\t\\n'\n" +
+		"[ \"$1\" = list-panes ] && printf '" + running + "\\t123\\t1700000000\\t0\\t0\\t\\t\\tclaude\\trunner\\t" + dir + "\\t\\t\\t\\t\\t\\t\\n'\n" +
 		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)

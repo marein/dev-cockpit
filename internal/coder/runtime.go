@@ -43,6 +43,23 @@ type SessionNaming interface {
 	NamesSessions() bool
 }
 
+// FixedPaneStyle is the optional answer of a runtime whose pane keeps one
+// style, whatever the terminal's theme is. tmux answers a program's question
+// for the background from the pane style, so this is what the CLI finds at
+// its start. A runtime without it gets the terminal's own colors.
+type FixedPaneStyle interface {
+	PaneStyle() string
+}
+
+// PaneStyleFor is the style a coder's pane wears under a terminal that has
+// the themed one.
+func PaneStyleFor(c Coder, themed string) string {
+	if fixed, ok := c.SessionRuntime().(FixedPaneStyle); ok {
+		return fixed.PaneStyle()
+	}
+	return themed
+}
+
 type SessionStarter interface {
 	SessionStarted(start SessionStart)
 }

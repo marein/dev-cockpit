@@ -16,36 +16,6 @@ import (
 // when the step is over, and its finish reason says whether the turn went on
 // into a tool call.
 
-// activityEntries is how many recorded messages an activity reading carries
-// by default; what the whole reading may cost is the caller's budget
-// (coder.ActivityBudget in the default reading, zero lifts the cap), the same
-// bounds the claude and copilot readers use so a check pays the same for
-// every coder. The newest message gets the whole budget first, only the older
-// lines carry the per-line cut, see spendBudget; fewer entries leave more
-// room per older line, up to one entry, which is only the newest message.
-const (
-	activityEntries = 30
-	activityLine    = 600
-)
-
-// activityBounds resolves how many entries a reading keeps and how long one
-// line may be. A budget of zero lifts the cap, and a line bound of zero means
-// uncut.
-func activityBounds(entries, budget int) (keep, line int) {
-	keep = activityEntries
-	if entries > 0 {
-		keep = entries
-	}
-	if budget <= 0 {
-		return keep, 0
-	}
-	line = activityLine
-	if entries > 0 && budget/entries > line {
-		line = budget / entries
-	}
-	return keep, line
-}
-
 // activityQuery reads the tail of one session's conversation: the newest
 // messages, each with its parts, projected down to what a reading needs. The
 // projection is the bound that matters, a tool part carries its whole output
@@ -98,7 +68,7 @@ func (r *sessionRepository) activity(sessionID string, entries, budget int) (cod
 	if err != nil {
 		return coder.Activity{}, err
 	}
-	keep, line := activityBounds(entries, budget)
+	keep, line := coder.ActivityBounds(entries, budget)
 	out, err := r.query(fmt.Sprintf(activityQuery, native, keep, native))
 	if err != nil {
 		return coder.Activity{}, fmt.Errorf("This session's record could not be read.")
@@ -151,7 +121,7 @@ func renderActivity(rows []activityRow, keep, line, budget int) coder.Activity {
 				continue
 			}
 			if text := strings.TrimSpace(row.Text); text != "" {
-				messages[current].lines = append(messages[current].lines, speaker+": "+oneLine(text))
+				messages[current].lines = append(messages[current].lines, speaker+": "+coder.OneLine(text))
 			}
 		case "tool":
 			if name := strings.TrimSpace(row.Tool); name != "" {
@@ -169,51 +139,5 @@ func renderActivity(rows []activityRow, keep, line, budget int) coder.Activity {
 			lines = append(lines, "coder ran "+strings.Join(m.tools, ", "))
 		}
 	}
-	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished, Empty: len(messages) == 0}
-}
-
-// spendBudget spends the budget asymmetrically on the rendered lines, the
-// same rule the claude and copilot readers apply: the newest line is the one
-// a check judges against, so it gets the whole budget first and is cut only
-// when it alone exceeds it; the older lines keep the per-line cut and share
-// what is left, newest first, and whatever no longer fits falls off the top,
-// oldest first. A budget of zero or less keeps every line whole.
-func spendBudget(lines []string, lineRunes, budget int) string {
-	if len(lines) == 0 {
-		return ""
-	}
-	if budget <= 0 {
-		return strings.Join(lines, "\n")
-	}
-	newest := truncate(lines[len(lines)-1], budget)
-	budget -= len([]rune(newest))
-	kept := []string{newest}
-	for i := len(lines) - 2; i >= 0; i-- {
-		cut := truncate(lines[i], lineRunes)
-		cost := len([]rune(cut)) + 1
-		if cost > budget {
-			break
-		}
-		kept = append(kept, cut)
-		budget -= cost
-	}
-	for left, right := 0, len(kept)-1; left < right; left, right = left+1, right-1 {
-		kept[left], kept[right] = kept[right], kept[left]
-	}
-	return strings.Join(kept, "\n")
-}
-
-func oneLine(text string) string {
-	return strings.Join(strings.Fields(text), " ")
-}
-
-// truncate cuts a line to max runes, visibly: a cut line says how much of the
-// message is shown and how the rest is reached, never a bare ellipsis. A max
-// of zero or less keeps the line whole.
-func truncate(text string, max int) string {
-	runes := []rune(text)
-	if max <= 0 || len(runes) <= max {
-		return text
-	}
-	return fmt.Sprintf("%s… [cut: %d of %d runes shown, use --full for the whole message]", string(runes[:max]), max, len(runes))
+	return coder.Activity{Text: coder.SpendActivityBudget(lines, line, budget), Finished: finished, Empty: len(messages) == 0}
 }

@@ -3,6 +3,7 @@ package coder
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/marein/dev-cockpit/internal/config"
 	"github.com/marein/dev-cockpit/internal/tmux"
@@ -90,12 +91,13 @@ func TestScreenActivityHandlesATerminalThatGoesAway(t *testing.T) {
 // needs to build a snapshot.
 type stubCoder struct {
 	Coder
-	err error
+	activity Activity
+	err      error
 }
 
 func (c stubCoder) ID() string                                         { return "stub" }
 func (c stubCoder) SessionRepository() SessionRepository               { return emptySessions{} }
-func (c stubCoder) SessionActivity(string, int, int) (Activity, error) { return Activity{}, c.err }
+func (c stubCoder) SessionActivity(string, int, int) (Activity, error) { return c.activity, c.err }
 
 type emptySessions struct{ SessionRepository }
 
@@ -113,5 +115,35 @@ func TestAManagerPassesOnWhatACoderCannotAnswer(t *testing.T) {
 	m := NewManager(config.Config{}, tmux.New(), stubCoder{err: errors.New("This session has no transcript to read.")}, nil)
 	if _, err := m.Activity("11111111-1111-4111-8111-111111111111", 0, ActivityBudget); err == nil {
 		t.Fatal("want the coder's own error for a session nobody is running")
+	}
+}
+
+// A coder stopped in the middle of a turn may leave a record that ends open.
+// A turn does not survive its process, so for a session nobody runs the
+// reading says the turn is over and keeps what was recorded. Resumed, the
+// same record is older than the terminal and still no open turn, while a
+// message written in this life is one.
+func TestASessionNobodyRunsHasNoOpenTurn(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	left := Activity{Text: "user: build it", InToolCall: true, AwaitingApproval: true}
+	m := NewManager(config.Config{}, tmux.New(), stubCoder{activity: left}, nil)
+	got, err := m.Activity("11111111-1111-4111-8111-111111111111", 0, ActivityBudget)
+	if err != nil {
+		t.Fatalf("activity: %v", err)
+	}
+	if !got.Finished || got.InToolCall || got.AwaitingApproval || got.Text != left.Text {
+		t.Fatalf("a stopped session reads %+v", got)
+	}
+
+	started := time.Now()
+	if !leftOpen(Activity{LastMessageAt: started.Add(-time.Minute)}, started) {
+		t.Fatal("a turn older than its terminal counts as open")
+	}
+	if leftOpen(Activity{LastMessageAt: started.Add(time.Second)}, started) {
+		t.Fatal("a turn of this life counts as left behind")
+	}
+	if leftOpen(Activity{}, started) {
+		t.Fatal("a reading without a date is not taken at its word")
 	}
 }

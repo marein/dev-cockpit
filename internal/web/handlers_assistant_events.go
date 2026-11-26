@@ -423,7 +423,7 @@ func (s *Server) assistantTriggerSpec(c *gin.Context, stood assistant.Trigger) (
 	if raw, ok := c.GetPostFormArray("terminal"); ok {
 		spec.TargetsSet = true
 		for _, one := range raw {
-			terminal := strings.TrimSpace(one)
+			terminal := s.coderID(one)
 			if terminal == "" {
 				continue
 			}

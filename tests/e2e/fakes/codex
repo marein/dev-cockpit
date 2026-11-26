@@ -1,0 +1,725 @@
+#!/usr/bin/env python3
+# Fake codex for coder-codex.js: an interactive session the way codex 0.172.0
+# keeps one, without a model. It mints its own session id, writes the rollout
+# under $CODEX_HOME/sessions/<y>/<m>/<d>/rollout-<time>-<id>.jsonl with the
+# first message and never before, holds that file open from then on, keeps
+# names in session_index.jsonl, and answers `resume`, `delete --force`, the
+# `thread/start`, `thread/name/set`, `thread/resume` and `thread/compact/start`
+# calls of `app-server` over stdio (see compact_thread) and `debug models`
+# with a catalog of codex's shape: two listed models and a hidden one.
+# `exec resume --json` is one turn of an assistant, see turn().
+#
+# The pane says what the cockpit has to pin: ARGV (the arguments as JSON),
+# CWD, TRUST (whether the -c projects override trusts the working directory),
+# MODE (yolo with --dangerously-bypass-approvals-and-sandbox, else ask),
+# COLORS (TERM and COLORTERM, unset when absent), THEME (the syntax theme
+# of the -c tui.theme override, none without one) and BELL (on with the three
+# -c tui.notification overrides that make codex ring the plain bell on every
+# turn end and question, else off).
+#
+# A line typed into it is a message, and a message is a turn in the rollout
+# the way codex records one: task_started, the user's words and the answer as
+# item_completed events beside the response items the model was sent, then
+# task_complete, and with BELL on the bell. /rename <name> writes the
+# session's record like codex does, also before the first message, and names
+# it, BG asks the terminal for its background the way codex does at its start
+# and says BACKGROUND with the answer, without writing a record. ASK records
+# a tool call, and in ask mode rings, asks `Allow command? (y/n)` and answers
+# APPROVED or DENIED once the call has its output. WORK says WORKING and keeps
+# its turn open inside a tool call, painting and setting the terminal's title
+# like codex's spinner does, until Enter ends it with FINISHED or Escape
+# aborts it with INTERRUPTED (turn_aborted, no bell). LS lists the working
+# directory, HOME what codex's home holds (HOMEFILES, no record), FORGET drops
+# the session's own record, every other line is answered with ANSWER pong.
+import base64
+import datetime
+import glob
+import json
+import os
+import re
+import select
+import subprocess
+import sys
+import termios
+import threading
+import time
+import tomllib
+import tty
+import uuid
+
+HOME = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+INDEX = os.path.join(HOME, "session_index.jsonl")
+
+
+def say(text):
+    sys.stdout.write(text + "\r\n")
+    sys.stdout.flush()
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def stamp():
+    return now().isoformat().replace("+00:00", "Z")
+
+
+def find_rollout(session):
+    found = glob.glob(os.path.join(HOME, "sessions", "*", "*", "*", "rollout-*-%s.jsonl" % session))
+    return found[0] if found else None
+
+
+def name_session(session, name):
+    os.makedirs(HOME, exist_ok=True)
+    with open(INDEX, "a") as f:
+        f.write(json.dumps({"id": session, "thread_name": name, "updated_at": stamp()}) + "\n")
+
+
+def forget_names(session):
+    if not os.path.exists(INDEX):
+        return
+    with open(INDEX) as f:
+        kept = [line for line in f if json.loads(line).get("id") != session]
+    with open(INDEX, "w") as f:
+        f.writelines(kept)
+
+
+def delete(args):
+    session = args[-1]
+    path = find_rollout(session)
+    if "--force" not in args or not path:
+        sys.stderr.write("Error: failed to delete session\n")
+        return 1
+    os.remove(path)
+    forget_names(session)
+    print("Deleted session %s." % session)
+    return 0
+
+
+CATALOG = [
+    {"slug": "gpt-fake-sol", "display_name": "GPT-Fake-Sol", "visibility": "list", "priority": 1},
+    {"slug": "gpt-fake-hidden", "display_name": "GPT-Fake-Hidden", "visibility": "hide", "priority": 2},
+    {"slug": "gpt-fake-luna", "display_name": "GPT-Fake-Luna", "visibility": "list", "priority": 3},
+]
+
+
+def debug_models():
+    print(json.dumps({"models": CATALOG}))
+    return 0
+
+
+def app_server():
+    loaded, model = "", "default"
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if "id" not in msg:
+            continue
+        if msg.get("method") == "thread/start":
+            params = msg.get("params") or {}
+            session = Session(str(uuid.uuid4()), params.get("cwd", os.getcwd()))
+            session.source = params.get("threadSource") or "user"
+            session.record({"timestamp": stamp(), "type": "thread_started"})
+            answer = {"id": msg["id"], "result": {"thread": {"id": session.id, "path": find_rollout(session.id), "threadSource": session.source}}}
+        elif msg.get("method") == "thread/name/set":
+            params = msg.get("params") or {}
+            if not find_rollout(params.get("threadId", "")):
+                answer = {"id": msg["id"], "error": {"code": -32600, "message": "thread not found"}}
+            else:
+                name_session(params["threadId"], params.get("name", ""))
+                answer = {"id": msg["id"], "result": {}}
+        elif msg.get("method") == "thread/resume":
+            params = msg.get("params") or {}
+            loaded = params.get("threadId", "")
+            model = params.get("model") or "default"
+            if not find_rollout(loaded):
+                answer = {"id": msg["id"], "error": {"code": -32600, "message": "no rollout found for thread id %s" % loaded}}
+            else:
+                answer = {"id": msg["id"], "result": {"thread": {"id": loaded}, "model": model}}
+        elif msg.get("method") == "thread/compact/start":
+            params = msg.get("params") or {}
+            if params.get("threadId") != loaded:
+                answer = {"id": msg["id"], "error": {"code": -32600, "message": "thread not found: %s" % params.get("threadId")}}
+            else:
+                emit({"id": msg["id"], "result": {}})
+                compact_thread(loaded, model)
+                continue
+        else:
+            answer = {"id": msg["id"], "result": {"codexHome": HOME}}
+        emit(answer)
+    return 0
+
+
+def compact_thread(session_id, model):
+    """thread/compact/start the way 0.172.0 runs it: a turn of its own in the
+    rollout with the compacted record and a token count that takes in
+    nothing, reported as turn/started, an item of type contextCompaction and
+    turn/completed. Each one notes the model it ran on in compactions-<id>.
+    The prompt of the turn before steers it: COMPACT_LONG takes 6 seconds,
+    COMPACT_RESTART restarts the cockpit meanwhile and COMPACT_REFUSE fails the
+    turn in codex's words. Every other one takes a second and a half, codex
+    takes seconds."""
+    with open(find_rollout(session_id)) as f:
+        asked = [json.loads(line)["payload"]["item"]["content"][0]["text"] for line in f if '"UserMessage"' in line]
+    with open(os.path.join(HOME, "compactions-" + session_id), "a") as f:
+        f.write(model + "\n")
+    session = Session(session_id, os.getcwd())
+    turn = str(uuid.uuid4())
+    event(session, "task_started", turn, started_at=int(now().timestamp()))
+    emit({"method": "turn/started", "params": {"threadId": session_id, "turn": {"id": turn, "status": "inProgress", "error": None}}})
+    emit({"method": "item/started", "params": {"threadId": session_id, "turnId": turn, "item": {"type": "contextCompaction", "id": "c-" + turn}}})
+    time.sleep(6 if "COMPACT_LONG" in asked[-1] else 1.5)
+    if "COMPACT_RESTART" in asked[-1]:
+        restart_server()
+        time.sleep(3)
+    if "COMPACT_REFUSE" in asked[-1]:
+        words = "Compaction failed: the summary was too long."
+        event(session, "error", turn, message=words)
+        event(session, "task_complete", turn, last_agent_message=None)
+        emit({"method": "turn/completed", "params": {"threadId": session_id, "turn": {"id": turn, "status": "failed", "error": {"message": words}}}})
+        return
+    session.record({"timestamp": stamp(), "ordinal": 1, "type": "compacted", "payload": {"message": "", "replacement_history": [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]} for text in asked] + [
+        {"type": "compaction", "encrypted_content": "summary of %d turns" % len(asked)}]}})
+    event(session, "token_count", turn, info={"last_token_usage": {"input_tokens": 0, "total_tokens": 21000}, "model_context_window": 100000})
+    item(session, turn, {"type": "ContextCompaction", "id": "c-" + turn})
+    event(session, "task_complete", turn, last_agent_message=None)
+    emit({"method": "item/completed", "params": {"threadId": session_id, "turnId": turn, "item": {"type": "contextCompaction", "id": "c-" + turn}}})
+    emit({"method": "turn/completed", "params": {"threadId": session_id, "turn": {"id": turn, "status": "completed", "error": None}}})
+
+
+class Session:
+    def __init__(self, session, cwd, bell=False):
+        self.id = session
+        self.cwd = cwd
+        self.bell = bell
+        self.file = None
+        self.source = "user"
+
+    def record(self, entry):
+        if self.file is None:
+            path = find_rollout(self.id)
+            if path is None:
+                day = now()
+                folder = os.path.join(HOME, "sessions", day.strftime("%Y"), day.strftime("%m"), day.strftime("%d"))
+                os.makedirs(folder, exist_ok=True)
+                path = os.path.join(folder, "rollout-%s-%s.jsonl" % (day.strftime("%Y-%m-%dT%H-%M-%S"), self.id))
+                self.file = open(path, "a")
+                self.write({"timestamp": stamp(), "type": "session_meta", "payload": {
+                    "id": self.id, "session_id": self.id, "cwd": self.cwd, "originator": "codex-tui",
+                    "cli_version": "0.172.0", "source": "cli", "thread_source": self.source}})
+            else:
+                self.file = open(path, "a")
+        self.write(entry)
+
+    def write(self, entry):
+        self.file.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        self.file.flush()
+
+    def forget(self):
+        path = find_rollout(self.id)
+        if path:
+            os.remove(path)
+        forget_names(self.id)
+
+
+def background():
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    answer = b""
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write("\x1b]11;?\x1b\\")
+        sys.stdout.flush()
+        while not answer.endswith((b"\x1b\\", b"\x07")) and select.select([fd], [], [], 2)[0]:
+            answer += os.read(fd, 64)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    found = re.search(rb"\]11;([^\x07\x1b]*)", answer)
+    return found.group(1).decode() if found else "none"
+
+
+def ring(session):
+    if session.bell:
+        sys.stdout.write("\x07")
+        sys.stdout.flush()
+
+
+def event(session, kind, turn, **rest):
+    session.record({"timestamp": stamp(), "type": "event_msg", "payload": dict({"type": kind, "turn_id": turn}, **rest)})
+
+
+def item(session, turn, body):
+    event(session, "item_completed", turn, thread_id=session.id, item=body)
+
+
+def begin(session, text):
+    turn = str(uuid.uuid4())
+    event(session, "task_started", turn, started_at=int(now().timestamp()))
+    session.record({"timestamp": stamp(), "type": "response_item", "payload": {
+        "type": "message", "role": "user", "content": [{"type": "input_text", "text": "# AGENTS.md instructions nobody typed"}]}})
+    session.record({"timestamp": stamp(), "type": "response_item", "payload": {
+        "type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}})
+    item(session, turn, {"type": "UserMessage", "id": str(uuid.uuid4()), "content": [{"type": "text", "text": text, "text_elements": []}]})
+    return turn
+
+
+def answer(session, turn, text):
+    item(session, turn, {"type": "AgentMessage", "id": "msg_" + uuid.uuid4().hex,
+                         "content": [{"type": "Text", "text": text}], "phase": "final_answer"})
+    event(session, "task_complete", turn, last_agent_message=text)
+    ring(session)
+
+
+def call(session, command):
+    call_id = "call_" + uuid.uuid4().hex
+    session.record({"timestamp": stamp(), "type": "response_item", "payload": {
+        "type": "custom_tool_call", "call_id": call_id, "name": "exec",
+        "input": "text(await tools.exec_command({cmd:%s}))" % json.dumps(command)}})
+    return call_id
+
+
+def ran(session, turn, call_id, command):
+    item(session, turn, {"type": "CommandExecution", "id": "exec-" + str(uuid.uuid4()),
+                         "command": ["/bin/bash", "-lc", command], "cwd": "file://" + session.cwd,
+                         "status": "completed", "aggregated_output": "", "exit_code": 0})
+    session.record({"timestamp": stamp(), "type": "response_item", "payload": {
+        "type": "custom_tool_call_output", "call_id": call_id, "output": [{"type": "input_text", "text": "Script completed"}]}})
+
+
+def work(session, turn):
+    """Keeps the turn open until Enter (True) or Escape (False)."""
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        beat = 0
+        while True:
+            if not select.select([fd], [], [], 0.4)[0]:
+                beat += 1
+                sys.stdout.write("\x1b]0;%d working\x07." % beat)
+                sys.stdout.flush()
+                continue
+            data = os.read(fd, 64)
+            if data.startswith(b"\x1b") and not data.startswith(b"\x1b["):
+                return False
+            if b"\n" in data or b"\r" in data:
+                return True
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        say("")
+
+
+def message(session, mode, text):
+    if text == "BG":
+        say("BACKGROUND " + background())
+        return
+    if text == "HOME":
+        say("HOMEFILES " + json.dumps(sorted(os.listdir(HOME))))
+        return
+    if text.startswith("/rename "):
+        session.record({"timestamp": stamp(), "type": "renamed"})
+        name_session(session.id, text[len("/rename "):].strip())
+        say("RENAMED " + text[len("/rename "):].strip())
+        return
+    turn = begin(session, text)
+    say("USER " + json.dumps(text))
+    if text == "FORGET":
+        session.forget()
+        say("FORGOTTEN")
+        return
+    if text == "LS":
+        say("FILES " + json.dumps(sorted(os.listdir(session.cwd))))
+        answer(session, turn, "listed")
+        return
+    if text == "ASK":
+        call_id = call(session, "touch /outside")
+        if mode == "ask":
+            ring(session)
+            say("Allow command? (y/n)")
+            approved = sys.stdin.readline().strip().lower() == "y"
+            ran(session, turn, call_id, "touch /outside")
+            say("APPROVED" if approved else "DENIED")
+            answer(session, turn, "approved" if approved else "denied")
+        else:
+            ran(session, turn, call_id, "touch /outside")
+            say("RAN without asking")
+            answer(session, turn, "ran")
+        return
+    if text == "WORK":
+        call_id = call(session, "make all")
+        say("WORKING")
+        if work(session, turn):
+            ran(session, turn, call_id, "make all")
+            say("FINISHED")
+            answer(session, turn, "The work is finished.")
+        else:
+            event(session, "turn_aborted", turn, reason="interrupted")
+            say("INTERRUPTED")
+        return
+    say("ANSWER pong")
+    answer(session, turn, "pong")
+
+
+def interactive(args):
+    argv = list(args)
+    resume = bool(args) and args[0] == "resume"
+    if resume:
+        args = args[1:]
+    mode, trust, theme, positional = "ask", "", "none", []
+    bells = set()
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            positional = args[i + 1:]
+            break
+        if arg == "-c" and i + 1 < len(args):
+            if args[i + 1].startswith("projects="):
+                trust = args[i + 1]
+            elif args[i + 1].startswith("tui.theme="):
+                theme = args[i + 1][len("tui.theme="):]
+            elif args[i + 1].startswith("tui.notification"):
+                bells.add(args[i + 1])
+            i += 2
+            continue
+        if arg == "--dangerously-bypass-approvals-and-sandbox":
+            mode = "yolo"
+        elif not arg.startswith("-"):
+            positional.append(arg)
+        i += 1
+    cwd = os.getcwd()
+    trusted = (json.dumps(cwd) + '={trust_level="trusted"}') in trust
+    say("FAKE CODEX")
+    say("ARGV " + json.dumps(argv))
+    say("CWD " + cwd)
+    say("TRUST " + ("yes" if trusted else "no"))
+    say("MODE " + mode)
+    say("COLORS %s %s" % (os.environ.get("TERM", ""), os.environ.get("COLORTERM", "unset")))
+    say("THEME " + theme)
+    bell = bells == {"tui.notifications=true", 'tui.notification_method="bel"', 'tui.notification_condition="always"'}
+    say("BELL " + ("on" if bell else "off"))
+    if not trusted:
+        say("Trust this folder?")
+        sys.stdin.readline()
+    prompt = ""
+    if resume:
+        if not positional or not find_rollout(positional[0]):
+            say("ERROR: No saved session found with ID %s." % (positional[0] if positional else ""))
+            return 1
+        session = Session(positional[0], cwd, bell)
+        say("RESUMED " + session.id)
+        with open(find_rollout(session.id)) as f:
+            for line in f:
+                body = (json.loads(line).get("payload") or {}).get("item") or {}
+                if body.get("type") == "UserMessage":
+                    say("HISTORY " + json.dumps(body["content"][0]["text"]))
+        session.record({"timestamp": stamp(), "type": "resumed"})
+    else:
+        session = Session(str(uuid.uuid4()), cwd, bell)
+        prompt = positional[0] if positional else ""
+    if prompt:
+        message(session, mode, prompt)
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return 0
+        text = re.sub(r"\x1b\[20[01]~", "", line).strip()
+        if text:
+            message(session, mode, text)
+
+
+EXEC_HELP = """Resume a previous session by id or pick the most recent with --last
+
+Usage: codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
+
+Options:
+  -c, --config <key=value>
+  -m, --model <MODEL>
+      --dangerously-bypass-approvals-and-sandbox
+      --dangerously-bypass-hook-trust
+      --skip-git-repo-check
+      --json
+"""
+
+
+# A 40 by 30 pixel PNG, one color.
+PNG = "iVBORw0KGgoAAAANSUhEUgAAACgAAAAeCAIAAADRv8uKAAAAK0lEQVR4nO3NMQ0AAAgDsElBKlKRggw4mvRvqudExGKxWCwWi8VisVj8N14t5QhqO324RgAAAABJRU5ErkJggg=="
+
+
+def emit(record):
+    sys.stdout.write(json.dumps(record) + "\n")
+    sys.stdout.flush()
+
+
+def app_servers():
+    me = os.path.realpath(__file__)
+    count = 0
+    for pid in os.listdir("/proc"):
+        try:
+            with open("/proc/%s/cmdline" % pid, "rb") as f:
+                argv = [a.decode() for a in f.read().split(b"\0") if a]
+        except (OSError, ValueError):
+            continue
+        if "app-server" in argv and any(os.path.realpath(a) == me for a in argv if a.endswith("codex")):
+            count += 1
+    return count
+
+
+def restart_server():
+    """Kills the cockpit that started this turn and starts it again the way it
+    was, like the fake claude's restart_server: the turn is detached and keeps
+    writing. The new server inherits none of this turn's descriptors, its lock
+    among them."""
+    pid, serve = os.getppid(), 0
+    while pid > 1:
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as f:
+                argv = [a.decode() for a in f.read().split(b"\0") if a]
+            with open("/proc/%d/stat" % pid) as f:
+                parent = int(f.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return
+        if "serve" in argv:
+            serve = pid
+            break
+        pid = parent
+    if not serve:
+        return
+    cwd = os.readlink("/proc/%d/cwd" % serve)
+    os.kill(serve, 15)
+    for _ in range(100):
+        if not os.path.exists("/proc/%d" % serve):
+            break
+        time.sleep(0.1)
+    log = open(os.environ.get("DC_RESTART_LOG", "/tmp/dc-e2e-restart.log"), "ab")
+    subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, close_fds=True)
+
+
+def permit(hooks, tool, session):
+    """Asks the turn's PreToolUse hook about one call of an MCP tool, the way
+    codex does before it runs one, and answers what came of it."""
+    if not tool.startswith("mcp__"):
+        return "ran unasked"
+    for group in hooks:
+        if not re.search(group.get("matcher", ""), tool):
+            continue
+        for hook in group.get("hooks", []):
+            call = {"session_id": session.id, "cwd": session.cwd, "hook_event_name": "PreToolUse", "permission_mode": "bypassPermissions",
+                    "tool_name": tool, "tool_input": {"query": "general", "limit": 5}, "tool_use_id": "exec-" + str(uuid.uuid4())}
+            done = subprocess.run(hook["command"], shell=True, input=json.dumps(call), capture_output=True, text=True, timeout=hook.get("timeout", 60))
+            try:
+                decision = json.loads(done.stdout)["hookSpecificOutput"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            if decision.get("permissionDecision") == "deny":
+                return "denied: " + decision.get("permissionDecisionReason", "")
+        return "allowed"
+    return "no hook asked"
+
+
+def turn(args):
+    """One turn of an assistant, `codex exec resume --json ... -- <id> <prompt>`,
+    in the events codex 0.172.0 writes: thread.started, the two warnings of the
+    hook trust flag, turn.started, every agent message as one item, a tool as
+    an item that starts and completes, and turn.completed or turn.failed. Its
+    argv is noted under $CODEX_HOME/argv, one file per turn. The rollout gets the turn the way a session records one, with the model and
+    what the context holds, 68 of 100 thousand tokens, 96 with CONTEXT_HIGH
+    and 95 for a check. Prompts steer it like the other fakes: MAGIC, TURNS
+    (which turn of the session this is), TOOL, SLOW, FAIL (once per session),
+    MODEL, RESTART_CHAT, ECHO_ANSWER (the answer is the rest of the prompt),
+    FILELINK (writes assistant-files/proof.txt into the workspace and links it),
+    IMAGE (writes assistant-files/pic.png, 40 by 30 pixels, and shows it),
+    COCKPIT:<words> (runs `./cockpit <words>` and answers what it printed),
+    OWNER (`./cockpit assistant-list`), UNKNOWN (records no version knows,
+    around the answer), PERMIT:<tool> (asks the PreToolUse hook about that
+    tool, with RESTART_WAIT the cockpit restarts while it waits), COMPACTIONS
+    (how many compactions reached codex with the model of each, whether the
+    rollout holds a summary and how many app servers of this fake still run)
+    and the WAKE_ and EVENT_ words of a check and a reaction."""
+    if "--help" in args:
+        print(EXEC_HELP)
+        return 0
+    notes = os.path.join(HOME, "argv")
+    os.makedirs(notes, exist_ok=True)
+    with open(os.path.join(notes, "%d.json" % time.time_ns()), "w") as f:
+        json.dump(["exec", "resume"] + args, f)
+    model, hooks, trust_bypassed, positional = "", [], False, []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            positional = args[i + 1:]
+            break
+        if arg == "-c" and i + 1 < len(args):
+            if args[i + 1].startswith("hooks.PreToolUse="):
+                hooks = tomllib.loads("v = " + args[i + 1].split("=", 1)[1])["v"]
+            i += 2
+            continue
+        if arg.startswith("--model="):
+            model = arg[len("--model="):]
+        elif arg == "--dangerously-bypass-hook-trust":
+            trust_bypassed = True
+        i += 1
+    if "--json" not in args or len(positional) != 2:
+        sys.stderr.write("error: unexpected argument\n")
+        return 2
+    session_id, prompt = positional
+    if not find_rollout(session_id):
+        sys.stderr.write("Error: no rollout found for thread id %s\n" % session_id)
+        return 1
+    session = Session(session_id, os.getcwd())
+    emit({"type": "thread.started", "thread_id": session.id})
+    if trust_bypassed:
+        for n in range(2):
+            emit({"type": "item.completed", "item": {"id": "item_%d" % n, "type": "error",
+                  "message": "`--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation."}})
+    emit({"type": "turn.started"})
+    if model == "no-such-model":
+        words = "The 'no-such-model' model is not supported when using Codex with a ChatGPT account."
+        emit({"type": "error", "message": words})
+        emit({"type": "turn.failed", "error": {"message": words}})
+        return 1
+
+    rollout_turn = begin(session, prompt)
+    session.record({"timestamp": stamp(), "type": "turn_context", "payload": {"turn_id": rollout_turn, "cwd": session.cwd, "model": model or "gpt-fake-sol"}})
+    items = [10]
+
+    def say_block(text):
+        items[0] += 1
+        emit({"type": "item.completed", "item": {"id": "item_%d" % items[0], "type": "agent_message", "text": text}})
+        item(session, rollout_turn, {"type": "AgentMessage", "id": "msg_" + uuid.uuid4().hex, "content": [{"type": "Text", "text": text}]})
+
+    def tool(command):
+        items[0] += 1
+        body = {"id": "item_%d" % items[0], "type": "command_execution", "command": "/bin/bash -lc " + json.dumps(command),
+                "aggregated_output": "", "exit_code": None, "status": "in_progress"}
+        emit({"type": "item.started", "item": body})
+        return body
+
+    def tool_done(body):
+        emit({"type": "item.completed", "item": dict(body, exit_code=0, status="completed")})
+
+    steering = "you are steering" in prompt
+    answer_text = "Fake codex answer."
+    if prompt.startswith("ECHO_ANSWER"):
+        answer_text = prompt.split("\n", 1)[1] if "\n" in prompt else ""
+    elif "SLOW" in prompt:
+        if not steering:
+            say_block("## Working\n\nstill working")
+        if "TOOL" in prompt:
+            tool("make all")
+        time.sleep(120)
+    elif "FAIL" in prompt:
+        marker = os.path.join(HOME, "failed-" + session.id)
+        if not os.path.exists(marker):
+            open(marker, "w").close()
+            emit({"type": "turn.failed", "error": {"message": "stream disconnected before completion"}})
+            return 1
+        answer_text = "Recovered after the retry."
+    elif "RESTART_CHAT" in prompt:
+        say_block("before the restart")
+        restart_server()
+        time.sleep(3)
+        answer_text = "and after it"
+    elif "PERMIT:" in prompt:
+        name = re.search(r"PERMIT:(\S+)", prompt).group(1)
+        items[0] += 1
+        emit({"type": "item.started", "item": {"id": "item_%d" % items[0], "type": "mcp_tool_call", "server": "slack", "tool": name.rsplit("__", 1)[-1],
+              "arguments": {}, "result": None, "error": None, "status": "in_progress"}})
+        if "RESTART_WAIT" in prompt:
+            verdict = []
+            asking = threading.Thread(target=lambda: verdict.append(permit(hooks, name, session)))
+            asking.start()
+            time.sleep(6)
+            restart_server()
+            asking.join()
+            answer_text = "Tool %s: %s" % (name, verdict[0])
+        else:
+            answer_text = "Tool %s: %s" % (name, permit(hooks, name, session))
+    elif "UNKNOWN" in prompt:
+        sys.stdout.write("this line is no record at all\n")
+        emit({"type": "future.event", "payload": [1, 2, 3]})
+        emit({"type": "item.completed", "item": {"id": "item_9", "type": "future_item", "text": "nothing a turn says"}})
+        emit({"type": "item.completed", "item": "a string where an object stood"})
+        emit({"type": "error", "message": "Reconnecting... 1/5 (stream disconnected)"})
+        answer_text = "Read past what nobody knows."
+    elif "TOOL" in prompt:
+        say_block("Looking at the project.")
+        running = tool("ls")
+        time.sleep(0.3)
+        tool_done(running)
+        answer_text = "I looked at the project."
+    elif "TURNS" in prompt:
+        with open(find_rollout(session.id)) as f:
+            asked = sum(1 for line in f if '"UserMessage"' in line)
+        answer_text = "turn %d of session %s" % (asked, session.id)
+    elif "FILELINK" in prompt:
+        os.makedirs(os.path.join(session.cwd, "assistant-files"), exist_ok=True)
+        with open(os.path.join(session.cwd, "assistant-files", "proof.txt"), "w") as f:
+            f.write("proof from %s\n" % session.cwd)
+        answer_text = "Here it is: [the proof](assistant-files/proof.txt)"
+    elif "IMAGE" in prompt:
+        os.makedirs(os.path.join(session.cwd, "assistant-files"), exist_ok=True)
+        with open(os.path.join(session.cwd, "assistant-files", "pic.png"), "wb") as f:
+            f.write(base64.b64decode(PNG))
+        answer_text = "Here it is:\n\n![the picture](assistant-files/pic.png)"
+    elif "COCKPIT:" in prompt:
+        words = prompt.split("COCKPIT:", 1)[1].split()
+        done = subprocess.run([os.path.join(session.cwd, "cockpit")] + words, capture_output=True, text=True)
+        answer_text = "```\n%s\n```" % (done.stdout + done.stderr).strip()
+    elif "OWNER" in prompt:
+        listed = subprocess.run([os.path.join(session.cwd, "cockpit"), "assistant-list"], capture_output=True, text=True)
+        answer_text = "```\n%s\n```" % (listed.stdout + listed.stderr).strip()
+    elif "MODEL" in prompt:
+        answer_text = "model: " + (model or "default")
+    elif "COMPACTIONS" in prompt:
+        notes = os.path.join(HOME, "compactions-" + session.id)
+        models = open(notes).read().split() if os.path.exists(notes) else []
+        with open(find_rollout(session.id)) as f:
+            summary = "yes" if any('"type":"compacted"' in line for line in f) else "no"
+        answer_text = "compactions: %d (%s), summary: %s, app servers: %d" % (len(models), " ".join(models), summary, app_servers())
+    elif "MAGIC" in prompt:
+        answer_text = "AIRPORT"
+    elif "EVENT_NOTHING" in prompt:
+        answer_text = "NOTHING"
+    if steering:
+        if "WAKE_DONE" in prompt:
+            answer_text = "DONE: the job is finished, the file is there."
+        elif "WAKE_BLOCKED" in prompt:
+            answer_text = "BLOCKED: it needs a decision from you."
+        elif "WAKE_NOTHING" in prompt:
+            answer_text = "NOTHING"
+        else:
+            answer_text = "WORKING: still going."
+
+    say_block(answer_text)
+    tokens = 95000 if steering else 96000 if "CONTEXT_HIGH" in prompt else 68000
+    event(session, "token_count", rollout_turn, info={
+        "total_token_usage": {"input_tokens": 3 * tokens}, "last_token_usage": {"input_tokens": tokens, "cached_input_tokens": tokens - 100},
+        "model_context_window": 100000})
+    event(session, "task_complete", rollout_turn, last_agent_message=answer_text)
+    emit({"type": "turn.completed", "usage": {"input_tokens": 3 * tokens, "cached_input_tokens": 2 * tokens, "output_tokens": 5}})
+    return 0
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] == ["--version"]:
+        print("codex-cli 0.172.0")
+        return 0
+    if args[:1] == ["delete"]:
+        return delete(args[1:])
+    if args[:1] == ["app-server"]:
+        return app_server()
+    if args[:2] == ["debug", "models"]:
+        return debug_models()
+    if args[:2] == ["exec", "resume"]:
+        return turn(args[2:])
+    return interactive(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

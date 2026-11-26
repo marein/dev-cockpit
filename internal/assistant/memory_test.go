@@ -54,6 +54,17 @@ func TestTheInstructionsSeparateAJobFromACheck(t *testing.T) {
 	)
 }
 
+// Some models read "nothing of yours runs" as a description, not a rule: an
+// assistant kept its turn open after starting a steered coder and polled
+// job-list every minute. Ending the turn is stated outright and pinned.
+func TestTheInstructionsEndTheTurnOnceWorkIsHandedOff(t *testing.T) {
+	pinned(t,
+		"Once a coder runs, a job is steered or a trigger stands, end your turn.",
+		"Never wait, sleep or poll in a turn for a coder, a job or a trigger",
+		"the cockpit wakes you with the check, the trigger or the note",
+	)
+}
+
 // Everything the user asked for belongs into the criterion itself: a check
 // judges nothing else, so a wish kept beside it would be reported done while
 // it still stands open.

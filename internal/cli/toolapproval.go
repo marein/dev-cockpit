@@ -34,6 +34,55 @@ func newToolApprovalServeCommand(opts *inspectOptions) *cobra.Command {
 	}
 }
 
+// newToolApprovalAskCommand is the hook a turn's coder runs in front of a
+// tool call, started by the coder behind the turn's wrapper, see
+// assistant.ToolApprovalHook. Like the server it is nobody's command to type.
+func newToolApprovalAskCommand(opts *inspectOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:    assistant.ToolApprovalHookCommand,
+		Short:  "Ask the user about one tool call of a turn, as its hook",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ask := func(call toolCall) toolVerdict { return askToolApproval(*opts, call) }
+			return answerToolHook(cmd.InOrStdin(), cmd.OutOrStdout(), ask)
+		},
+	}
+}
+
+// toolHookCall is one tool call as a coder hands it to a PreToolUse hook.
+type toolHookCall struct {
+	Name  string          `json:"tool_name"`
+	Input json.RawMessage `json:"tool_input"`
+	ID    string          `json:"tool_use_id"`
+}
+
+const toolHookUnread = "The cockpit could not read this tool call, so it was denied. Do not call it again in this turn; tell the user it needs their approval."
+
+// answerToolHook asks about the one call on in and answers the way a
+// PreToolUse hook does: nothing lets the call run, a deny with the sentence
+// the model reads keeps it from running. Whatever keeps the call from being
+// read or asked denies it.
+func answerToolHook(in io.Reader, out io.Writer, ask func(toolCall) toolVerdict) error {
+	deny := func(message string) error {
+		return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+			"hookEventName":            "PreToolUse",
+			"permissionDecision":       "deny",
+			"permissionDecisionReason": message,
+		}})
+	}
+	data, err := io.ReadAll(io.LimitReader(in, maxRPCLine+1))
+	var call toolHookCall
+	if err != nil || len(data) > maxRPCLine || json.Unmarshal(data, &call) != nil || call.Name == "" {
+		return deny(toolHookUnread)
+	}
+	verdict := ask(toolCall{Name: call.Name, Input: call.Input, ID: call.ID})
+	if verdict.Behavior == "allow" {
+		return nil
+	}
+	return deny(verdict.Message)
+}
+
 // toolCall is one permission prompt as the coder hands it to the tool.
 type toolCall struct {
 	Name  string          `json:"tool_name"`

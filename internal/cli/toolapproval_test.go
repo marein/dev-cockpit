@@ -228,3 +228,47 @@ func TestAToolQuestionRingsWithoutItsInput(t *testing.T) {
 		t.Fatalf("the news reads %q %q", info.Title, info.Detail)
 	}
 }
+
+// The hook answers one call the way a PreToolUse hook does: nothing for a
+// call that may run, a deny with the sentence the model reads otherwise, and
+// a deny for whatever it could not read.
+func TestTheToolApprovalHookAnswersOneCall(t *testing.T) {
+	var asked []toolCall
+	verdict := toolVerdict{Behavior: "allow"}
+	ask := func(call toolCall) toolVerdict { asked = append(asked, call); return verdict }
+	input := `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"mcp__probe__lookup","tool_input":{"word":"apple"},"tool_use_id":"exec-10d0e158"}`
+
+	var out strings.Builder
+	if err := answerToolHook(strings.NewReader(input), &out, ask); err != nil || out.Len() != 0 {
+		t.Fatalf("an allowed call prints nothing: %q, %v", out.String(), err)
+	}
+	if len(asked) != 1 || asked[0].Name != "mcp__probe__lookup" || string(asked[0].Input) != `{"word":"apple"}` || asked[0].ID != "exec-10d0e158" {
+		t.Fatalf("asked = %+v", asked)
+	}
+
+	verdict = toolVerdict{Behavior: "deny", Message: "The user said <no>."}
+	if err := answerToolHook(strings.NewReader(input), &out, ask); err != nil {
+		t.Fatal(err)
+	}
+	var answer struct {
+		Output struct {
+			Event    string `json:"hookEventName"`
+			Decision string `json:"permissionDecision"`
+			Reason   string `json:"permissionDecisionReason"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &answer); err != nil {
+		t.Fatalf("%v in %q", err, out.String())
+	}
+	if answer.Output.Event != "PreToolUse" || answer.Output.Decision != "deny" || answer.Output.Reason != "The user said <no>." {
+		t.Fatalf("answer = %+v", answer)
+	}
+
+	for _, unreadable := range []string{"", "not json", `{"tool_input":{}}`} {
+		out.Reset()
+		asked = nil
+		if err := answerToolHook(strings.NewReader(unreadable), &out, ask); err != nil || !strings.Contains(out.String(), `"deny"`) || len(asked) != 0 {
+			t.Fatalf("%q must be denied unasked: %q, %v", unreadable, out.String(), err)
+		}
+	}
+}

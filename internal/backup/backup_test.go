@@ -526,6 +526,24 @@ func TestTheAssistantSectionDependsOnTheSessions(t *testing.T) {
 	}
 }
 
+// codex's instructions, agents and skills travel like claude's, its login
+// does not: a restored copy that refreshes its token signs the original out.
+func TestTheCodexSectionCarriesItsConfigWithoutTheLogin(t *testing.T) {
+	sections := buildSections("/state", "/projects", "/home/user")
+	i := slices.IndexFunc(sections, func(sec Section) bool { return sec.ID == "codex" })
+	if i < 0 {
+		t.Fatal("there is no codex section")
+	}
+	for _, want := range []string{"AGENTS.md", "config.toml", "agents", "skills"} {
+		if !slices.ContainsFunc(sections[i].Sources, func(src Source) bool { return src.Path == "/home/user/.codex/"+want }) {
+			t.Fatalf("%s is not in the codex section: %+v", want, sections[i].Sources)
+		}
+	}
+	if slices.ContainsFunc(sections[i].Sources, func(src Source) bool { return strings.Contains(src.Path, "auth") || src.Path == "/home/user/.codex" }) {
+		t.Fatalf("the codex section carries the login: %+v", sections[i].Sources)
+	}
+}
+
 func seedAssistant(t *testing.T, dirs testDirs) {
 	t.Helper()
 	files := map[string]string{

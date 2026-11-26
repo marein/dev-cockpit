@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,14 @@ func (s *Server) quicknav(c *gin.Context) render.QuickNav {
 func (s *Server) buildQuickNav(currentID, nameParam, currentPath, focus string) render.QuickNav {
 	qn := render.QuickNav{CurrentID: currentID, Focus: focus}
 	qn.Active = s.terminalTabs()
+	// A page opened under the key a coder was started with stays on that
+	// address while the coder's record appears late; its tab is the one
+	// under the record's id.
+	if currentID != "" && strings.Contains(currentPath, "/coders/") && !slices.ContainsFunc(qn.Active, func(t render.TerminalTab) bool { return t.ID == currentID }) {
+		if _, running, err := s.resolveRunning(currentID); err == nil {
+			qn.CurrentID = running.Identifier
+		}
+	}
 	qn.Strip = foldStripTabs(qn.Active)
 	qn.TerminalNews = s.anyTerminalNews()
 	qn.CurrentProject = currentProject(nameParam, qn, focus)

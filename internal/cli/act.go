@@ -244,7 +244,7 @@ func newCoderCommand(opts *inspectOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&coderID, "coder", "", "which coder answers (default: the cockpit's first installed one)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent the session starts with")
+	cmd.Flags().StringVar(&agent, "agent", "", agentUsage(knownCoders("", nil, nil)))
 	cmd.Flags().StringVar(&model, "model", "", "model the session starts on (default: the coder's own default)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "task the coder starts working on")
 	cmd.Flags().StringVar(&doneWhen, "done-when", "", "steer the coder until this is true, then report")

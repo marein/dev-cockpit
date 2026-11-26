@@ -395,13 +395,15 @@ func (s *Server) registerShareRoutes(r *gin.Engine) {
 	editor.read(http.MethodPost, "/watch", editorPoll, s.handleEditorWatch)
 
 	coder := s.guestTerminal("coder")
-	g.read(http.MethodGet, "/coders/:id", coder, s.handleCoderAttach)
-	g.read(http.MethodGet, "/coders/:id/name", coder, s.handleCoderName)
-	g.read(http.MethodGet, "/coders/:id/steered", coder, s.handleCoderSteeredMark)
-	g.read(http.MethodGet, "/coders/:id/stream", coder, s.handleShareStream)
-	g.read(http.MethodGet, "/coders/:id/copy", coder, s.handleTerminalCopy)
-	g.read(http.MethodGet, "/coders/:id/conversation", coder, s.handleCoderConversation)
-	g.read(http.MethodPost, "/coders/:id/file-links", coder, s.handleFileLinks)
+	g.read(http.MethodGet, "/coders/:id", s.coderPageAddress, coder, s.handleCoderAttach)
+	const coderPath = "/coders/:id"
+	coders := guestRoutes{s: s, group: g.group.Group(coderPath, s.coderAddress), prefix: coderPath}
+	coders.read(http.MethodGet, "/name", coder, s.handleCoderName)
+	coders.read(http.MethodGet, "/steered", coder, s.handleCoderSteeredMark)
+	coders.read(http.MethodGet, "/stream", coder, s.handleShareStream)
+	coders.read(http.MethodGet, "/copy", coder, s.handleTerminalCopy)
+	coders.read(http.MethodGet, "/conversation", coder, s.handleCoderConversation)
+	coders.read(http.MethodPost, "/file-links", coder, s.handleFileLinks)
 	g.read(http.MethodGet, "/assistants", s.handleShareAssistantsEntry)
 	g.read(http.MethodGet, assistantProjectsPath, s.guestAssistant, s.handleShareAssistantProjects)
 	g.read(http.MethodPost, assistantProjectsWatchPath, s.guestAssistant, s.handleShareAssistantProjectsWatch)

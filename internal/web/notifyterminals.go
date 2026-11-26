@@ -1,6 +1,10 @@
 package web
 
-import "github.com/marein/dev-cockpit/internal/notify"
+import (
+	"maps"
+
+	"github.com/marein/dev-cockpit/internal/notify"
+)
 
 // The Terminals button of the rail and the tabbar says that a terminal has
 // news, and a terminal is a coder or a shell. What only runs in one is not one
@@ -96,6 +100,10 @@ type notifyPayload struct {
 	// particular one is. Naming a single assistant on the mark is what made it
 	// stay dark for news in every other one.
 	Assistants []string `json:"assistants"`
+	// Moved maps the key a coder with news was started under to the id it
+	// took since, see startedAs. A page opened before still holds the key and
+	// looks at the coder all the same, so it reads the news under the id.
+	Moved map[string]string `json:"moved"`
 }
 
 func (s *Server) notifyPayload(ev notify.Event) notifyPayload {
@@ -103,7 +111,19 @@ func (s *Server) notifyPayload(ev notify.Event) notifyPayload {
 		Event:      ev,
 		Terminals:  s.terminalTargets(ev.Targets),
 		Assistants: s.assistantTargets(ev.Targets),
+		Moved:      s.movedTargets(ev.Targets),
 	}
+}
+
+func (s *Server) movedTargets(ids []string) map[string]string {
+	moved := map[string]string{}
+	if len(ids) == 0 {
+		return moved
+	}
+	for _, m := range s.coders {
+		maps.Copy(moved, m.StartKeys(ids))
+	}
+	return moved
 }
 
 // assistantTargets keeps the targets an assistant answers to, in the order they

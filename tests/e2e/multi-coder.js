@@ -3,7 +3,7 @@ const { assert, sleep, submitBtn, BASE, createProject, deleteProject } = L;
 
 // Multi-coder: every instance serves all installed coders (--provider is
 // deprecated and ignored). The UI adapts: /coders/new grows a coder select
-// with one agent select per coder (dc-coder-select toggles them), the coder
+// with one agent field per coder (dc-coder-select toggles them), the coder
 // pages are settings of one coder and live at canonical
 // /settings/coders/<coder>/{instructions,agents,skills} URLs: the settings
 // sidebar ([data-settings-nav]) picks the coder ([data-settings-coder] rows,
@@ -61,7 +61,7 @@ L.runFeature(`MULTI-CODER (${MODE})`, async ({ page, run }) => {
     const coders = await page.$$eval('select[name="coder"] option', (os) => os.map((o) => o.value));
     assert(coders.includes("copilot") && coders.includes("claude"), `coder options wrong: ${coders}`);
     const state = () => page.evaluate(() => [...document.querySelectorAll("[data-coder-agents]")].map((g) => ({
-      coder: g.dataset.coderAgents, hidden: g.hidden, disabled: g.querySelector("select").disabled,
+      coder: g.dataset.coderAgents, hidden: g.hidden, disabled: g.querySelector("select")?.disabled ?? false,
     })));
     let groups = await state();
     assert(groups.length === coders.length, `expected ${coders.length} agent groups, got ${groups.length}`);

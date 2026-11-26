@@ -37,13 +37,13 @@ func shellMarkEnv() map[string]string {
 // commands stay silent), or the shell rang a terminal bell.
 // Blocks; run it in a goroutine.
 func (s *Shells) RunCommandWatch(interval time.Duration, onNews func(shellID string)) {
-	terminal.RunWatch(interval, func() map[string]string {
+	terminal.RunWatch(interval, nil, func() map[string]string {
 		alive := map[string]string{}
 		for _, sh := range s.List() {
 			alive[sh.TmuxSession] = sh.Identifier
 		}
 		return alive
-	}, func(tmuxName, id string) (chan struct{}, error) {
+	}, func(tmuxName, id string) (*terminal.Watch, error) {
 		var commandStart time.Time
 		var lastBell time.Time
 		return terminal.WatchOutput(tmuxName, func(out []byte, marks []string) {

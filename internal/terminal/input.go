@@ -200,7 +200,7 @@ type ForegroundReporter interface {
 // extendedKeysCommands are the foreground programs whose interactive TUIs
 // enable the kitty keyboard protocol, verified by watching their startup
 // sequences in the pane stream. Kept in sync with the coder CLIs by hand.
-var extendedKeysCommands = map[string]bool{"claude": true, "copilot": true}
+var extendedKeysCommands = map[string]bool{"claude": true, "copilot": true, "codex": true}
 
 // kittyShiftEnter is Shift+Enter in the kitty extended keys encoding,
 // CSI 13;2u, where 13 is Enter and 2 the Shift modifier.

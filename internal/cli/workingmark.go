@@ -73,14 +73,16 @@ func turnReaders(coders []*coder.Manager) map[string]coder.TurnSignaler {
 // keeps it now and is the account the tracker trusts first; its gone reports
 // are what drop a dead session's mark. The session watch delivers the raw
 // screen output the fallback shelf reads, for a coder whose profile chose it,
-// and the bell, for a coder that rings one at its turn's end: a bell has no
-// time of its own and closes the turn as of now.
+// and the bell, for a coder that rings one and reads it (coder.BellReader).
+// A bell has no time of its own and counts as of now: it is news under the
+// name the coder reads into it, a question under the name the hooks use for
+// one, and it closes the turn or sets it waiting.
 //
 // The turn watch carries one thing that is not about working marks: it
 // reads the snapshot every second, and the snapshot holds the session names
 // the CLIs write themselves, so a rename inside a coder is handed to
 // onRenamed from there.
-func watchWorkingMarks(m *coder.Manager, tracker *activity.Tracker, onRenamed func(id, name, cwd string), bell func(targetID string)) {
+func watchWorkingMarks(m *coder.Manager, tracker *activity.Tracker, onRenamed func(id, name, cwd string), news func(targetID, kind string)) {
 	// A session entering the running set brings its coder's chosen policy
 	// along, so the tracker never guesses what applies to it.
 	profile := m.Coder().ActivityProfile()
@@ -99,13 +101,31 @@ func watchWorkingMarks(m *coder.Manager, tracker *activity.Tracker, onRenamed fu
 	if profile.WatchScreen {
 		onOutput = tracker.Output
 	}
-	if bell != nil {
-		onBell = func(targetID string) {
-			bell(targetID)
-			tracker.SetTurn(targetID, false, false, time.Now())
-		}
+	if reader, ok := m.Coder().(coder.BellReader); ok {
+		onBell = bellNews(reader, tracker, news)
 	}
 	if onOutput != nil || onBell != nil {
 		go m.RunSessionWatch(3*time.Second, onOutput, onBell)
 	}
 }
+
+// bellNews is what a bell of a coder that reads its bells does.
+func bellNews(reader coder.BellReader, tracker *activity.Tracker, news func(targetID, kind string)) func(targetID string) {
+	return func(targetID string) {
+		if reader.BellSignal(tracker.Record(targetID)) == coder.TurnSignalWaiting {
+			news(targetID, bellAsks)
+			tracker.SetWaiting(targetID, time.Now())
+			return
+		}
+		news(targetID, bellEnded)
+		tracker.SetTurn(targetID, false, false, time.Now())
+	}
+}
+
+// A bell has no hook name. One that rings for a turn's end goes by a name of
+// its own, one that rings for a question by the name the coders' hooks use
+// for theirs, which is the one the assistants' triggers listen for.
+const (
+	bellEnded = "Bell"
+	bellAsks  = "Notification"
+)

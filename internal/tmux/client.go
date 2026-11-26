@@ -25,6 +25,7 @@ type Pane struct {
 	Coder     string // @dc_coder option; non-empty marks a coder pane and names its coder
 	CoderName string // @dc_coder_name option; the coder's display name at launch
 	CoderDir  string // @dc_coder_dir option; the coder's start directory
+	CoderAt   string // @dc_coder_at option; when the cockpit launched the coder, unix milliseconds, raw
 	TabPos    string // @dc_tab_pos option; the session's tab strip position, raw
 	TabGroup  string // @dc_tab_group option; non-empty puts the session into a split view group
 	TabGPos   string // @dc_tab_gpos option; the session's position inside its group, raw
@@ -62,8 +63,14 @@ func (p Pane) TabGroupColumn() int {
 	return v
 }
 
-// StartTime parses the pane's raw session_created stamp; zero when invalid.
+// StartTime answers when the pane started: the moment the cockpit launched
+// its coder where it noted one, else the raw session_created stamp; zero when
+// invalid. tmux keeps whole seconds, too coarse to tell the last word of a
+// coder's previous life from the first of a resume in the same second.
 func (p Pane) StartTime() time.Time {
+	if v, err := strconv.ParseInt(strings.TrimSpace(p.CoderAt), 10, 64); err == nil && v > 0 {
+		return time.UnixMilli(v).UTC()
+	}
 	v, err := strconv.ParseInt(strings.TrimSpace(p.StartedAt), 10, 64)
 	if err != nil {
 		return time.Time{}
@@ -128,7 +135,7 @@ func (c *Client) NewSession(name, workdir, shellCmd string, env map[string]strin
 	} else {
 		args = append(args, "bash", "-ilc", shellCmd)
 	}
-	return clirun.Check("tmux", args...)
+	return announced(args)
 }
 
 func sortedEnv(env map[string]string) []string {
@@ -418,12 +425,12 @@ func (c *Client) Rename(oldName, newName string) error {
 	if oldName == newName {
 		return nil
 	}
-	return clirun.Check("tmux", renameArgs(oldName, newName)...)
+	return announced(renameArgs(oldName, newName))
 }
 
 // Kill terminates a session.
 func (c *Client) Kill(name string) error {
-	return clirun.Check("tmux", "kill-session", "-t", name)
+	return announced([]string{"kill-session", "-t", name})
 }
 
 // SendKey sends one named key (e.g. "Enter", "Up").
@@ -471,16 +478,13 @@ func (c *Client) PasteLiteral(name, text string) error {
 		return nil
 	}
 	buffer := fmt.Sprintf("dev-cockpit-%d", time.Now().UnixNano())
-	if err := clirun.Check("tmux", setBufferArgs(buffer, text)...); err != nil {
-		return err
-	}
-	return clirun.Check("tmux", "paste-buffer", "-t", Target(name), "-b", buffer, "-d", "-p", "-r")
+	return announced(setBufferArgs(buffer, text), []string{"paste-buffer", "-t", Target(name), "-b", buffer, "-d", "-p", "-r"})
 }
 
 // ListPanes returns the unique first-pane entries for every session.
 func (c *Client) ListPanes() ([]Pane, error) {
 	r := clirun.Run("tmux", "list-panes", "-a", "-F",
-		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}\t#{@dc_tab_pos}\t#{@dc_tab_group}\t#{@dc_tab_gpos}\t#{@dc_tab_gname}\t#{@dc_tab_gcol}")
+		"#{session_name}\t#{pane_pid}\t#{session_created}\t#{window_index}\t#{pane_index}\t#{@dc_shell_name}\t#{@dc_shell_dir}\t#{@dc_coder}\t#{@dc_coder_name}\t#{@dc_coder_dir}\t#{@dc_tab_pos}\t#{@dc_tab_group}\t#{@dc_tab_gpos}\t#{@dc_tab_gname}\t#{@dc_tab_gcol}\t#{@dc_coder_at}")
 	if r.Err != nil && r.ExitCode != 0 {
 		if isNoServerError(r.Stderr) {
 			return nil, nil
@@ -510,12 +514,12 @@ func parsePanes(out string) []Pane {
 	var panes []Pane
 	for _, raw := range strings.Split(out, "\n") {
 		parts := strings.Split(strings.TrimRight(raw, "\n"), "\t")
-		if len(parts) != 15 {
+		if len(parts) != 16 {
 			continue
 		}
 		name, pid, created, win, pane, shellName, workdir := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
 		coder, coderName, coderDir, tabPos := parts[7], parts[8], parts[9], parts[10]
-		tabGroup, tabGPos, tabGName, tabGCol := parts[11], parts[12], parts[13], parts[14]
+		tabGroup, tabGPos, tabGName, tabGCol, coderAt := parts[11], parts[12], parts[13], parts[14], parts[15]
 		if win != "0" || pane != "0" || seen[name] {
 			continue
 		}
@@ -526,7 +530,7 @@ func parsePanes(out string) []Pane {
 		panes = append(panes, Pane{
 			Name: name, PID: pid, StartedAt: created,
 			ShellName: shellName, Workdir: workdir,
-			Coder: coder, CoderName: coderName, CoderDir: coderDir,
+			Coder: coder, CoderName: coderName, CoderDir: coderDir, CoderAt: coderAt,
 			TabPos: tabPos, TabGroup: tabGroup, TabGPos: tabGPos, TabGName: tabGName, TabGCol: tabGCol,
 		})
 	}

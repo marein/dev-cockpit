@@ -28,6 +28,9 @@ const channel = {
   // news dot reads its own list.
   terminals: [],
   assistants: [],
+  // moved maps the key a coder was started under to the id its news carries
+  // since, see notifyterminals.go: a page opened before holds the key.
+  moved: new Map(),
   held: new Map(),
   listeners: new Set(),
   readUrl: "/notifications/read",
@@ -47,6 +50,7 @@ const channel = {
     this.targets = payload.targets || [];
     this.terminals = payload.terminals || [];
     this.assistants = payload.assistants || [];
+    this.moved = new Map(Object.entries(payload.moved || {}));
     // A toast already on screen and the own visible page act on the real
     // server state right away, independent of the grace window below.
     dismissReadToast(this.targets);
@@ -277,7 +281,8 @@ navigator.serviceWorker?.addEventListener("message", (event) => {
 // but unfocused window (the browser behind another app on the desktop) counts
 // as away, its news rings and pushes. What an inactive split pane keeps is
 // the device-local changed dot (markChanged) until it is activated. The
-// pathname match stays as the fallback for pages without islands.
+// pathname match stays as the fallback for pages without islands. A page that
+// still holds the key a coder was started under shows the id it took since.
 function shownTargets() {
   if (!windowSeen()) return [];
   const shown = [...document.querySelectorAll("terminal-attach[terminal-id]")]
@@ -291,9 +296,11 @@ function shownTargets() {
     .filter((el) => el.offsetParent !== null)
     .map((el) => el.getAttribute("assistant-id"))
     .filter(Boolean));
-  if (shown.length) return shown;
-  const match = window.location.pathname.match(/^\/(?:coders|shells)\/([^/]+)$/);
-  return match ? [decodeURIComponent(match[1])] : [];
+  if (!shown.length) {
+    const match = window.location.pathname.match(/^\/(?:coders|shells)\/([^/]+)$/);
+    if (match) shown.push(decodeURIComponent(match[1]));
+  }
+  return shown.flatMap((id) => channel.moved.has(id) ? [id, channel.moved.get(id)] : [id]);
 }
 
 // Unread news for a target whose page is visibly open is news the user is

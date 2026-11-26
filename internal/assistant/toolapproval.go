@@ -18,7 +18,9 @@ import (
 // cockpit's own command behind the turn's wrapper, which puts the question
 // before the user as an approval and answers the decision. The wrapper carries
 // the cockpit's directories and the assistant's id, so the question is asked
-// as the assistant whose turn it is.
+// as the assistant whose turn it is. A coder whose CLI runs a hook in front of
+// a tool call instead starts ToolApprovalHook there, the same question asked
+// once per call.
 const (
 	// ToolApprovalServerName and ToolApprovalToolName are the MCP server and
 	// its one tool, as a coder's configuration names them.
@@ -26,6 +28,8 @@ const (
 	ToolApprovalToolName   = "approve"
 	// ToolApprovalCommand is the command of the wrapper that serves it.
 	ToolApprovalCommand = "tool-approval-serve"
+	// ToolApprovalHookCommand is the command of the wrapper a hook asks with.
+	ToolApprovalHookCommand = "tool-approval-ask"
 )
 
 // ToolApprovalWait is how long a turn's tool call waits for the user before it
@@ -33,6 +37,17 @@ const (
 // whole time, so it is far shorter than the wait of an approval that runs
 // later on its own.
 const ToolApprovalWait = 5 * time.Minute
+
+// ToolApprovalHookTimeout is how long a coder has to let the hook run: the
+// wait of the question and the time the command gives a server that went
+// away, so the command always answers first.
+const ToolApprovalHookTimeout = ToolApprovalWait + 2*time.Minute
+
+// ToolApprovalHook is the argv of the hook a turn in workdir asks about one
+// tool call with.
+func ToolApprovalHook(workdir string) []string {
+	return []string{wrapperIn(workdir), ToolApprovalHookCommand}
+}
 
 // ToolApprovalServer is the argv of the MCP server a turn in workdir asks its
 // tool approvals through.

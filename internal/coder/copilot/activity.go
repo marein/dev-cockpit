@@ -20,40 +20,13 @@ import (
 // that as a message would turn whatever stands in it into words nobody said.
 // The event log holds only what really happened, and a turn marks its own end.
 
-// activityEntries is how many recorded messages an activity reading carries by
-// default; what the whole reading may cost is the caller's budget
-// (coder.ActivityBudget in the default reading, zero lifts the cap), the same
-// bounds the claude reader uses so a check pays the same for either coder. The
-// newest message gets the whole budget first, only the older lines carry the
-// per-line cut, see spendBudget; fewer entries leave more room per older line,
-// up to one entry, which is only the newest message.
-const (
-	activityEntries = 30
-	activityLine    = 600
-	// activityTailBytes is how much of an event log is read at all. The log
-	// carries tool payloads and attachments, so a long session grows far past
-	// what the last messages need; the tail is bounded for the same reason the
-	// claude reader bounds it.
-	activityTailBytes = 512 << 10
-)
-
-// activityBounds resolves how many entries a reading keeps and how long one
-// line may be. A budget of zero lifts the cap, and a line bound of zero means
-// uncut.
-func activityBounds(entries, budget int) (keep, line int) {
-	keep = activityEntries
-	if entries > 0 {
-		keep = entries
-	}
-	if budget <= 0 {
-		return keep, 0
-	}
-	line = activityLine
-	if entries > 0 && budget/entries > line {
-		line = budget / entries
-	}
-	return keep, line
-}
+// activityTailBytes is how much of an event log is read at all. The log
+// carries tool payloads and attachments, so a long session grows far past
+// what the last messages need; the tail is bounded for the same reason the
+// claude reader bounds it. What a reading keeps of it and what it may cost is
+// the rule every record reader shares, see coder.ActivityBounds and
+// coder.SpendActivityBudget.
+const activityTailBytes = 512 << 10
 
 // eventLine is the part of one recorded event an activity reading needs.
 // Everything else copilot writes into the log, deltas, assets, usage
@@ -85,6 +58,13 @@ func (p *Coder) SessionActivityStamp(sessionID string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return info.ModTime(), nil
+}
+
+// BellSignal implements coder.BellReader. copilot's beep rings when a turn
+// finishes and when a dialog waits for input; either way the coder has news,
+// and it is read as the former.
+func (p *Coder) BellSignal(string) coder.TurnSignal {
+	return coder.TurnSignalOver
 }
 
 func (r *sessionRepository) activity(sessionID string, entries, budget int) (coder.Activity, error) {
@@ -141,7 +121,7 @@ func (r *sessionRepository) eventsFile(sessionID string) (string, error) {
 // after it), and a turn cut off by the process ending, which a later
 // session.shutdown or session.resume line proves.
 func readActivity(source io.Reader, entries, budget int) (coder.Activity, error) {
-	keep, line := activityBounds(entries, budget)
+	keep, line := coder.ActivityBounds(entries, budget)
 	var lines []string
 	var tools []string
 	trim := func() {
@@ -177,14 +157,14 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 		case "user.message":
 			flushTools()
 			if text := strings.TrimSpace(event.Data.Content); text != "" {
-				lines = append(lines, "user: "+oneLine(text))
+				lines = append(lines, "user: "+coder.OneLine(text))
 				trim()
 			}
 			finished = false
 		case "assistant.message":
 			flushTools()
 			if text := strings.TrimSpace(event.Data.Content); text != "" {
-				lines = append(lines, "coder: "+oneLine(text))
+				lines = append(lines, "coder: "+coder.OneLine(text))
 				trim()
 			}
 		case "tool.execution_start":
@@ -232,51 +212,5 @@ func readActivity(source io.Reader, entries, budget int) (coder.Activity, error)
 		return coder.Activity{}, err
 	}
 	flushTools()
-	return coder.Activity{Text: spendBudget(lines, line, budget), Finished: finished, AwaitingApproval: awaiting, Empty: empty}, nil
-}
-
-// spendBudget spends the budget asymmetrically on the rendered lines, the
-// same rule the claude reader applies: the newest line is the one a check
-// judges against, so it gets the whole budget first and is cut only when it
-// alone exceeds it; the older lines keep the per-line cut and share what is
-// left, newest first, and whatever no longer fits falls off the top, oldest
-// first. A budget of zero or less keeps every line whole.
-func spendBudget(lines []string, lineRunes, budget int) string {
-	if len(lines) == 0 {
-		return ""
-	}
-	if budget <= 0 {
-		return strings.Join(lines, "\n")
-	}
-	newest := truncate(lines[len(lines)-1], budget)
-	budget -= len([]rune(newest))
-	kept := []string{newest}
-	for i := len(lines) - 2; i >= 0; i-- {
-		cut := truncate(lines[i], lineRunes)
-		cost := len([]rune(cut)) + 1
-		if cost > budget {
-			break
-		}
-		kept = append(kept, cut)
-		budget -= cost
-	}
-	for left, right := 0, len(kept)-1; left < right; left, right = left+1, right-1 {
-		kept[left], kept[right] = kept[right], kept[left]
-	}
-	return strings.Join(kept, "\n")
-}
-
-func oneLine(text string) string {
-	return strings.Join(strings.Fields(text), " ")
-}
-
-// truncate cuts a line to max runes, visibly: a cut line says how much of the
-// message is shown and how the rest is reached, never a bare ellipsis. A max
-// of zero or less keeps the line whole.
-func truncate(text string, max int) string {
-	runes := []rune(text)
-	if max <= 0 || len(runes) <= max {
-		return text
-	}
-	return fmt.Sprintf("%s… [cut: %d of %d runes shown, use --full for the whole message]", string(runes[:max]), max, len(runes))
+	return coder.Activity{Text: coder.SpendActivityBudget(lines, line, budget), Finished: finished, AwaitingApproval: awaiting, Empty: empty}, nil
 }

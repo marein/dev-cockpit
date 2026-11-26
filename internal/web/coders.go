@@ -158,6 +158,60 @@ func (s *Server) resolveRunning(rawID string) (*coder.Manager, coder.Running, er
 	return nil, coder.Running{}, firstErr
 }
 
+// startedAs answers the id a running coder took since it was started under
+// key, once its record appeared late (coder.Manager.StartedAs). A page opened
+// before holds that key, so the coder's routes answer to it.
+func (s *Server) startedAs(key string) (string, bool) {
+	for i := range s.coders {
+		if r, ok := s.coders[i].StartedAs(key); ok {
+			return r.Identifier, true
+		}
+	}
+	return "", false
+}
+
+// coderID is the id a request names a coder by, the one it took since when
+// the request holds the key it was started under, see startedAs. A job or a
+// trigger keeps the id the coder's signals carry.
+func (s *Server) coderID(raw string) string {
+	id := strings.TrimSpace(raw)
+	if moved, ok := s.startedAs(id); ok {
+		return moved
+	}
+	return id
+}
+
+// coderAddress serves a coder's routes under the id it took when the request
+// names the key it was started under, see startedAs.
+func (s *Server) coderAddress(c *gin.Context) {
+	if id, ok := s.startedAs(c.Param("id")); ok {
+		for i := range c.Params {
+			if c.Params[i].Key == "id" {
+				c.Params[i].Value = id
+			}
+		}
+	}
+	c.Next()
+}
+
+// coderPageAddress moves a coder's page from the key it was started under to
+// the id it took, see startedAs, so a reload stands at the address the coder
+// keeps once it stops.
+func (s *Server) coderPageAddress(c *gin.Context) {
+	id, ok := s.startedAs(c.Param("id"))
+	if !ok {
+		c.Next()
+		return
+	}
+	target := accessOf(c).Base + "/coders/" + id
+	if q := c.Request.URL.RawQuery; q != "" {
+		target += "?" + q
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Redirect(http.StatusSeeOther, target)
+	c.Abort()
+}
+
 // resolveResumable finds the coder owning the stored session with the given id.
 func (s *Server) resolveResumable(rawID string) (*coder.Manager, coder.Session, error) {
 	var firstErr error

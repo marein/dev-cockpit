@@ -36,7 +36,7 @@ func sendShiftEnterControl(t *testing.T, target Target) {
 }
 
 func TestShiftEnterSendsKittyKeyToExtendedKeysPrograms(t *testing.T) {
-	for _, command := range []string{"claude", "copilot"} {
+	for _, command := range []string{"claude", "copilot", "codex"} {
 		target := &foregroundTarget{fg: tmux.PaneForeground{Command: command, AltScreen: true}}
 		sendShiftEnterControl(t, target)
 		if string(target.raw) != "\x1b[13;2u" || target.key != "" {

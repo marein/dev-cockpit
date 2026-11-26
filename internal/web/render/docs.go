@@ -205,7 +205,13 @@ func DocsTopics() []DocsTopic {
 					Title:    "A new project needs no permission",
 					Tag:      "Coder",
 					TagClass: "bg-secondary-lt",
-					Desc:     `A coder started in a project it has never seen would ask whether it may work on the files there. The cockpit marks the project trusted in the coder's own configuration beforehand, so it begins with the task.`,
+					Desc:     `A coder started in a project it has never seen would ask whether it may work on the files there. The cockpit marks the project trusted in the coder's own configuration beforehand, so it begins with the task. Codex gets the trust on its command line, its <code>config.toml</code> stays untouched.`,
+				},
+				{
+					Title:    "Codex",
+					Tag:      "Coder",
+					TagClass: "bg-secondary-lt",
+					Desc:     `Codex saves a conversation only with its first message. Until then a coder started without a prompt takes no files and cannot be resumed once stopped. From the first message on it is listed under Codex's id: an open page keeps working, a reload lands on the new address, jobs and triggers on it move along. <em>Automatic approval</em> turns the sandbox off too, since inside it Codex cannot reach the cockpit. Codex draws with the 16 colors of the terminal palette and the syntax theme <code>ansi</code>, so a switch between light and dark reaches it at once, code, commands and diffs included. Its models are what <code>codex debug models</code> lists without the hidden ones, read again after a minute. Its agents, TOML files in <code>~/.codex/agents</code>, run only as subagents Codex hands work to, so a Codex coder cannot start as one. A Codex assistant answers block by block, runs without the sandbox as well and asks only for the tools named under Tool approvals. Hooks of your own Codex configuration run in its turns, trusted or not.`,
 				},
 				{
 					Title:    "Stop, resume and delete a coder",
@@ -503,7 +509,7 @@ func DocsTopics() []DocsTopic {
 			Items: []DocsItem{
 				{
 					Title: "Coders",
-					Desc:  `Claude reports finished turns, questions and permission requests through its injected hooks. The same hooks drive the working ring on its icon, never the screen: it runs from the prompt to the end of the turn and stops while claude waits on a permission or a question. Copilot emits a terminal bell. OpenCode reports through a plugin the cockpit keeps in its config directory, which stays silent for coders the cockpit did not start.`,
+					Desc:  `Claude reports finished turns, questions and permission requests through its injected hooks. The same hooks drive the working ring on its icon, never the screen: it runs from the prompt to the end of the turn and stops while claude waits on a permission or a question. Copilot emits a terminal bell. Codex emits one too, switched on by its command line, for a finished turn and for a question; its conversation record tells the two apart and drives the working ring, which stops while a question waits. OpenCode reports through a plugin the cockpit keeps in its config directory, which stays silent for coders the cockpit did not start.`,
 				},
 				{
 					Title: "Shells",

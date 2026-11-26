@@ -70,9 +70,10 @@ func TestNotifyPayloadCarriesBothLists(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	var got struct {
-		Unread    int      `json:"unread"`
-		Targets   []string `json:"targets"`
-		Terminals []string `json:"terminals"`
+		Unread    int               `json:"unread"`
+		Targets   []string          `json:"targets"`
+		Terminals []string          `json:"terminals"`
+		Moved     map[string]string `json:"moved"`
 	}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal %s: %v", data, err)
@@ -85,5 +86,8 @@ func TestNotifyPayloadCarriesBothLists(t *testing.T) {
 	}
 	if len(got.Terminals) != 0 {
 		t.Fatalf("the compose entry reached the terminal list: %s", data)
+	}
+	if got.Moved == nil || len(got.Moved) != 0 {
+		t.Fatalf("the moved keys must be an empty map without a moved coder: %s", data)
 	}
 }

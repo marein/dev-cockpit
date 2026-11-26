@@ -15,6 +15,9 @@ type CoderChoice struct {
 	ID           string
 	Agents       []coder.AgentOption
 	DefaultAgent string
+	// AgentNote stands in the agent field instead of a select for a coder
+	// that starts no session as one of its agents (coder.NoAgentStart).
+	AgentNote    string
 	Model        AssistantModelPick
 	ModelNote    string
 	ModelWarning string
