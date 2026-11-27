@@ -233,7 +233,9 @@ func newCoderCommand(opts *inspectOptions) *cobra.Command {
 			"sequel runs in a session of its own, so its task has to be self contained: the " +
 			"project, what to start, where the report goes. It needs --done-when, a sequel " +
 			"hangs on a steered job, and it expires with that job: when the job is over, so " +
-			"is the sequel.",
+			"is the sequel. A sequel that starts a coder passes it its own --done-when, and its " +
+			"own --then for a further stage: without them that coder runs unsteered and the " +
+			"chain ends there.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
