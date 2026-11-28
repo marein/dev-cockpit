@@ -2,6 +2,7 @@ package approval
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,6 +38,16 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{broker: askpass.New(dir), path: filepath.Join(dir, "approvals.json"), off: map[string]bool{}}
 	f.s = f.service()
 	f.s.SetBroker(f.broker)
+	// An approval leaves the register a moment after its owner heard how it
+	// ended, so a test that ends on that hook keeps its directory until no
+	// settled entry stands in the register any more.
+	t.Cleanup(func() {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if !slices.ContainsFunc(slices.Collect(maps.Values(f.s.load())), func(a Approval) bool { return a.Outcome != nil }) {
+				return
+			}
+		}
+	})
 	return f
 }
 
@@ -92,6 +103,19 @@ func (f *fixture) ending(t *testing.T) ending {
 		f.mu.Unlock()
 		if time.Now().After(deadline) {
 			t.Fatal("the approval never ended")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// gone waits until the register is empty: an approval leaves it once its
+// owner heard how it ended, which is a moment after the end was reported.
+func (f *fixture) gone(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.s.load()) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the register still holds %+v", f.s.load())
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -163,8 +187,9 @@ func TestAnApprovedActionRunsAndEndsDone(t *testing.T) {
 	if ran != 1 || e.approval.Owner != "bot" || e.approval.What != "Delete project shop" || e.outcome != (Outcome{Verdict: Done, Text: "done it", Quiet: true}) {
 		t.Fatalf("the approval ended %+v after %d runs", e, ran)
 	}
-	if len(f.s.load()) != 0 || len(f.broker.Questions()) != 0 {
-		t.Fatal("the approval outlived its decision")
+	f.gone(t)
+	if len(f.broker.Questions()) != 0 {
+		t.Fatal("the question outlived its decision")
 	}
 }
 

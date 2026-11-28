@@ -9,11 +9,13 @@
 // somebody waits for the answer in a request (Await) and hears it there. A
 // kind hands in a Request and nothing else: its key, its line, its rows and
 // its run; this package knows no kind by name. The run lives in this process
-// alone, the entry on disk exists for one reason, so the next process can tell
-// the owners whose question a restart took.
+// alone, the entry on disk exists so the next process can tell the owners what
+// a restart took: a question that still waited, and an end that was settled
+// and that its owner had not heard yet.
 package approval
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -77,8 +79,12 @@ type Run func() (string, error)
 // call's are; Projects, where the action touches any, name the projects
 // whose deletion ends the approval; Run is what happens once the user
 // approves. Remember is what the box under the question does, under the
-// words of RememberLabel; without it the box turns the kind's switch off.
+// words of RememberLabel; without it the box turns the kind's switch off. ID
+// is the id the approval stands under, a fresh one where empty: a kind whose
+// run starts something that keeps a record of its own names that by it, so
+// the next process finds it from the approval, see Config.Started.
 type Request struct {
+	ID            string
 	Owner         string
 	Kind          string
 	Key           string
@@ -114,32 +120,42 @@ type Approval struct {
 	// Awaited marks an approval somebody waits for in a request, see Await:
 	// its end is the caller's answer and never a report.
 	Awaited bool `json:"awaited,omitempty"`
+	// Outcome is how the approval ended, written onto the entry before its
+	// owner hears of it. The entry leaves the register only once the owner
+	// heard, so an end the process still owed when it died stands here for
+	// the next one to tell again, in the same words, see settle and report.
+	Outcome *Outcome `json:"outcome,omitempty"`
 }
 
 // Outcome is how an approval ended: the verdict, the run's outcome or the
 // reason it never ran, and Quiet where the user's own click decided it and
 // the end is no news to them.
 type Outcome struct {
-	Verdict string
-	Text    string
-	Quiet   bool
+	Verdict string `json:"verdict"`
+	Text    string `json:"text,omitempty"`
+	Quiet   bool   `json:"quiet,omitempty"`
 }
 
 // Config wires the service to the rest of the cockpit. Asks reads a kind's
 // switch, StopAsking turns it off when the user approves with "don't ask
 // again", Asker names the assistant the way the dialog and the notification
 // call it, its name and its short id, and Ended hears every end of an
-// approval that waited.
+// approval that waited. Started is asked by Recover about an approved action
+// the last process died over: where its run started something that keeps a
+// record of its own and reports its own end, it answers the outcome the run
+// would have written and true. Without it, and where it answers false, the
+// end stays the one that says how far the run got is not known.
 type Config struct {
 	Path       string
 	Asks       func(kind string) bool
 	StopAsking func(kind string)
 	Asker      func(owner string) (name, id string)
 	Ended      func(Approval, Outcome)
+	Started    func(Approval) (Outcome, bool)
 }
 
-// Service is the one place approvals wait. Every move out of the register
-// goes through take, under one lock, so a decision, a declined owner and a
+// Service is the one place approvals wait. Every end of one goes through
+// settle or take, under one lock, so a decision, a declined owner and a
 // restart racing each other end in one outcome.
 type Service struct {
 	cfg    Config
@@ -229,7 +245,7 @@ func (s *Service) Await(ctx context.Context, req Request, wait time.Duration) (s
 // entry is the approval a request stands on disk as.
 func entry(req Request) Approval {
 	return Approval{
-		ID:        statefile.NewID(),
+		ID:        cmp.Or(req.ID, statefile.NewID()),
 		Owner:     req.Owner,
 		Kind:      req.Kind,
 		Key:       req.Key,
@@ -282,7 +298,8 @@ func ShownValue(value string) (string, bool) {
 // park registers the approval and puts its bridge up under one lock, so a
 // decline that comes after finds both and one that came before finds neither.
 // What the last process left is no action waiting any more, Recover declines
-// it, so it neither blocks the same action nor counts for its owner.
+// it, so it neither blocks the same action nor counts for its owner. Neither
+// does one that is settled and only stands until its owner heard.
 func (s *Service) park(a Approval, req Request, wait time.Duration) (*askpass.Action, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -292,7 +309,7 @@ func (s *Service) park(a Approval, req Request, wait time.Duration) (*askpass.Ac
 	list := s.load()
 	standing := 0
 	for id, other := range list {
-		if slices.Contains(s.leftover, id) {
+		if slices.Contains(s.leftover, id) || other.Outcome != nil {
 			continue
 		}
 		if other.Kind == a.Kind && other.Key == a.Key {
@@ -343,16 +360,22 @@ func (s *Service) await(a Approval, bridge *askpass.Action, req Request) {
 	if decided && decision.Approved && decision.Remember {
 		s.remember(req)
 	}
-	if _, ok := s.take(a.ID); !ok {
-		return
-	}
+	outcome := Outcome{Verdict: Declined, Text: "the approval expired unanswered"}
 	switch {
 	case decided && decision.Approved:
-		s.cfg.Ended(a, execute(req.Run))
+		// What a process that dies in the middle of the run leaves behind:
+		// the action was approved and started, so declined would be wrong,
+		// and nobody is left who knows how far it got.
+		outcome = Outcome{Verdict: Failed, Text: "the cockpit restarted while it ran, so how far it got is not known"}
 	case decided:
-		s.cfg.Ended(a, Outcome{Verdict: Declined, Text: "declined by the user", Quiet: true})
-	default:
-		s.cfg.Ended(a, Outcome{Verdict: Declined, Text: "the approval expired unanswered"})
+		outcome = Outcome{Verdict: Declined, Text: "declined by the user", Quiet: true}
+	}
+	settled, ok := s.settle(a.ID, outcome, true)
+	if ok && decided && decision.Approved {
+		settled, ok = s.settle(a.ID, execute(req.Run), false)
+	}
+	if ok {
+		s.report(settled)
 	}
 }
 
@@ -398,8 +421,8 @@ func (s *Service) DeclineProject(name string) {
 	}
 	s.mu.Unlock()
 	for _, id := range ids {
-		if a, ok := s.take(id); ok {
-			s.cfg.Ended(a, Outcome{Verdict: Declined, Text: "the project was deleted"})
+		if a, ok := s.settle(id, Outcome{Verdict: Declined, Text: "the project was deleted"}, true); ok {
+			s.report(a)
 		}
 	}
 }
@@ -407,22 +430,75 @@ func (s *Service) DeclineProject(name string) {
 // Recover declines the approvals the last process left waiting: their
 // question and their run lived in that process, and nobody can answer them
 // any more. Each owner hears why, except of an awaited one: its caller heard
-// it when the request broke off. An approval asked since the service was
+// it when the request broke off. One that process had settled is reported
+// with the end it wrote down: whether its owner heard it is not known, and
+// that is the owner's to tell apart. An approval asked since the service was
 // built is this process's own and keeps waiting, however late this runs.
+//
+// An end that says the action failed may be the one written before its run,
+// for a process that dies in the middle of it, see await. The run may have
+// started all the same, and one that reports its own end would then end
+// twice, once here as failed and once in its own words. So the kind is asked
+// first, see Config.Started, and where the run started the approval ends the
+// way it would have, and the run's own end is the only one.
 func (s *Service) Recover() {
 	s.mu.Lock()
 	leftover := s.leftover
 	s.leftover = nil
+	list := s.load()
 	s.mu.Unlock()
 	for _, id := range leftover {
-		if a, ok := s.take(id); ok && !a.Awaited {
-			s.cfg.Ended(a, Outcome{Verdict: Declined, Text: "the approval was lost in a restart"})
+		a, ok := list[id]
+		switch {
+		case !ok || a.Awaited:
+		case a.Outcome == nil:
+			a, ok = s.settle(id, Outcome{Verdict: Declined, Text: "the approval was lost in a restart"}, true)
+		case a.Outcome.Verdict == Failed && s.cfg.Started != nil:
+			if outcome, started := s.cfg.Started(a); started {
+				a, ok = s.settle(id, outcome, false)
+			}
+		}
+		switch {
+		case !ok:
+		case a.Awaited:
+			s.take(id)
+		default:
+			s.report(a)
 		}
 	}
 }
 
+// settle writes how an approval ended onto its entry and answers it, false
+// when the entry is no longer there. waiting asks for one that still waits,
+// which is what makes the first end the only one: an approval somebody else
+// settled is refused. An approved run settles twice, before it starts and
+// with its own outcome after, see await. The question goes with the first
+// end, so none ever stands without an approval waiting behind it.
+func (s *Service) settle(id string, outcome Outcome, waiting bool) (Approval, bool) {
+	s.mu.Lock()
+	list := s.load()
+	a, ok := list[id]
+	if ok = ok && (a.Outcome == nil || !waiting); ok {
+		a.Outcome = &outcome
+		list[id] = a
+		s.save(list)
+	}
+	s.mu.Unlock()
+	s.unask(id)
+	return a, ok
+}
+
+// report tells the owner how a settled approval ended and only then lets the
+// entry go. A process that dies between the two leaves the entry with its
+// end, and Recover reports it again: whoever hears it took it by then or
+// takes it now, and knows the one from the other by the approval's id.
+func (s *Service) report(a Approval) {
+	s.cfg.Ended(a, *a.Outcome)
+	s.take(a.ID)
+}
+
 // take moves one approval out of the register and answers it, false when it
-// is no longer there: somebody else settled it first. Its question goes with
+// is no longer there: somebody else took it first. Its question goes with
 // it, so no question ever stands without an approval behind it.
 func (s *Service) take(id string) (Approval, bool) {
 	s.mu.Lock()
@@ -432,6 +508,14 @@ func (s *Service) take(id string) (Approval, bool) {
 		delete(list, id)
 		s.save(list)
 	}
+	s.mu.Unlock()
+	s.unask(id)
+	return a, ok
+}
+
+// unask takes down the question of an approval, if one still stands.
+func (s *Service) unask(id string) {
+	s.mu.Lock()
 	broker := s.broker
 	s.mu.Unlock()
 	if broker != nil {
@@ -439,7 +523,6 @@ func (s *Service) take(id string) (Approval, bool) {
 			bridge.End()
 		}
 	}
-	return a, ok
 }
 
 func (s *Service) load() map[string]Approval {

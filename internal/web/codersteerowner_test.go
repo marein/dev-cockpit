@@ -62,7 +62,7 @@ func steerCreateServer(t *testing.T) (*Server, *assistant.Jobs, string, string) 
 		watcher:    assistant.NewWatcher(conversations, jobs, nil, nil),
 		bus:        eventbus.New(),
 		restorer: restore.New(filepath.Join(t.TempDir(), "terminals.json"),
-			func() bool { return false }, nil, shells, tmux.New(), nil, nil, nil),
+			func() bool { return false }, nil, shells, tmux.New(), nil, nil, nil, nil),
 	}
 	return s, jobs, work, stateDir
 }

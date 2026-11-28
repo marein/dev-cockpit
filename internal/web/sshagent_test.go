@@ -85,6 +85,7 @@ func newAgentFixture(t *testing.T) *agentFixture {
 		settings: store,
 	}
 	s.approvals = s.newApprovals(stateDir)
+	approvalsLetGo(t, stateDir)
 	s.SetAskpass(broker, script)
 	a := sshagent.New(stateDir, sshDir, "", store.Get)
 	a.Start()

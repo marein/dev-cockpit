@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -20,6 +21,16 @@ import (
 // end of a compose run, and on a forge the end of a pipeline and a note on a
 // change request.
 type CockpitEvent struct {
+	// ID names the event at its source, apart from every other event there
+	// ever is: the entry of the notify inbox a coder's signal came in, a
+	// compose run and how it ended, a pipeline and its final status, a review
+	// note, a schedule and the tick that fell due. A source that cannot know
+	// whether the reactor got an event hands it again under the same name, and
+	// a trigger takes it once, see Trigger.hold. The time an event arrived is
+	// no name. A job's end is named by its terminal and when it closed, and a
+	// signal without a record behind it, a bell, by nothing: it is never handed
+	// twice.
+	ID     string `json:"id,omitempty"`
 	Source string `json:"source"`
 	Kind   string `json:"kind"`
 	// Target is what the event is about: the terminal of a job or a coder, the
@@ -35,6 +46,96 @@ type CockpitEvent struct {
 	// Project and Branch are what a forge event is about.
 	Project string `json:"project,omitempty"`
 	Branch  string `json:"branch,omitempty"`
+	// Folded makes this entry a fold: the events a full window, or the one
+	// turn of a one shot, had no room for, counted by their headline, see
+	// fold. Headline and Body then say the same in words.
+	Folded []FoldedEvents `json:"folded,omitempty"`
+	// was is the key a job's terminal was steered under where it took another
+	// id since, see Job.MovedFrom. It is read off the job with the event and
+	// never stored.
+	was string
+}
+
+// FoldedEvents counts the events of one headline that a fold took without
+// their text.
+type FoldedEvents struct {
+	Headline string `json:"headline"`
+	Count    int    `json:"count"`
+}
+
+// folds reports whether this entry is the fold of a window.
+func (ev CockpitEvent) folds() bool { return len(ev.Folded) > 0 }
+
+// count is how many events this entry stands for: itself, or what it folds.
+func (ev CockpitEvent) count() int {
+	if !ev.folds() {
+		return 1
+	}
+	n := 0
+	for _, f := range ev.Folded {
+		n += f.Count
+	}
+	return n
+}
+
+// countEvents is how many events a window or a turn holds, the folded ones
+// counted.
+func countEvents(events []CockpitEvent) int {
+	n := 0
+	for _, ev := range events {
+		n += ev.count()
+	}
+	return n
+}
+
+// fold counts one more event on a fold, under its headline: a coder that
+// reports forty times is one line that says so. The lines are
+// bounded like everything a trigger keeps, so past maxTriggerPendingNotes
+// headlines an event is counted under what its kind is called, of which a
+// trigger takes a handful at most. The fold is written out in words on every
+// change, as an event like any other with a headline and a text: that is what
+// a turn reads of it, and what a binary of the release before reads, which
+// knows no folds and spends the entry as the event it looks like.
+func (ev *CockpitEvent) fold(taken CockpitEvent) {
+	line := func(name string) int {
+		return slices.IndexFunc(ev.Folded, func(f FoldedEvents) bool { return f.Headline == name })
+	}
+	name := truncateRunes(oneLine(taken.Headline), maxFoldedHeadlineRunes)
+	at := line(name)
+	if at < 0 && len(ev.Folded) >= maxTriggerPendingNotes {
+		name = EventLabel(taken.Source, taken.Kind)
+		at = line(name)
+	}
+	if at < 0 {
+		ev.Folded = append(ev.Folded, FoldedEvents{Headline: name})
+		at = len(ev.Folded) - 1
+	}
+	ev.Folded[at].Count++
+
+	total := ev.count()
+	ev.Headline = fmt.Sprintf("%d more event%s arrived than there was room for, counted here without their text", total, plural(total))
+	var b strings.Builder
+	for i, f := range ev.Folded {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		if f.Count == 1 {
+			b.WriteString("- " + f.Headline)
+		} else {
+			fmt.Fprintf(&b, "- %d times: %s", f.Count, f.Headline)
+		}
+	}
+	ev.Body = b.String()
+}
+
+// foldInto counts one more event on the fold of a window or a turn. The fold
+// is the last entry, and is made here where there is none yet.
+func foldInto(events []CockpitEvent, ev CockpitEvent) []CockpitEvent {
+	if n := len(events); n == 0 || !events[n-1].folds() {
+		events = append(events, CockpitEvent{Source: ev.Source, Time: ev.Time})
+	}
+	events[len(events)-1].fold(ev)
+	return events
 }
 
 // maxEventBodyRunes bounds what one event carries into a prompt. A job's
@@ -111,7 +212,13 @@ func (r *Reactor) SetCoderNamer(fn func(terminal string) (name, project string))
 // only where somebody set one on it, the form's select or `--model`: nothing
 // is copied onto one made without, so it follows the owner's Triggers pick at
 // the ring, else the owner's chat, as they stand when it fires, see ModelFor.
+//
+// It runs under the reactor's lock from the moment the trigger is dated: a job
+// that closes after that date finds the trigger stored when its report gets
+// here, so no end falls between the two.
 func (r *Reactor) Add(spec TriggerSpec) (Trigger, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	trigger, err := newTrigger(spec, r.now().UTC())
 	if err != nil {
 		return Trigger{}, err
@@ -133,7 +240,7 @@ func (r *Reactor) Add(spec TriggerSpec) (Trigger, error) {
 		return Trigger{}, fmt.Errorf("This assistant already holds %d standing triggers. Remove one first.", open)
 	}
 	store.Save(trigger)
-	r.seedArrived(trigger)
+	r.seedArrivedLocked(trigger)
 	r.service.changed()
 	return trigger, nil
 }
@@ -199,22 +306,15 @@ func (r *Reactor) Edit(id, by string, spec TriggerSpec) (Trigger, string, error)
 	return next, triggerChanges(trigger, next), nil
 }
 
-// seedArrived takes the ends a barrier already missed. Three coders are
+// seedArrivedLocked takes the ends a barrier already missed. Three coders are
 // started one after another, and the first can be finished before the third
 // exists, so a barrier made afterwards would wait for a report nobody will
 // send again. A job that is closed at this moment therefore counts as arrived
 // right away, with its own report in the window, so the one turn reads about
 // every target. The filter still decides: a job that closed blocked is no
 // arrival for a trigger on job-done, which is why a barrier belongs on
-// job-closed.
-func (r *Reactor) seedArrived(trigger Trigger) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.seedArrivedLocked(trigger)
-}
-
-// seedArrivedLocked is that pass under the reactor's lock, which an edit
-// already holds.
+// job-closed. An end the trigger already took is not taken again, see take.
+// Under the reactor's lock.
 func (r *Reactor) seedArrivedLocked(trigger Trigger) {
 	if !trigger.All || trigger.Source != EventJob {
 		return
@@ -238,8 +338,12 @@ func (r *Reactor) seedArrivedLocked(trigger Trigger) {
 
 // Remove takes one trigger away. by is the assistant asking, empty for the
 // user: the user removes any, an assistant only its own. A reaction of it that
-// runs right now runs to its end, its answer still lands.
+// runs right now runs to its end, its answer still lands. Under the reactor's
+// lock like every other change of a trigger: an edit reads the entry and
+// stores it whole, and one removed in between would stand again.
 func (r *Reactor) Remove(id, by string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	trigger, ok := r.triggers.Find(strings.TrimSpace(id))
 	if !ok {
 		return errors.New("No trigger has that id.")
@@ -297,7 +401,8 @@ func (r *Reactor) Dropped(owner string) {
 // the target as arrived, which is why the event says it was deleted and not
 // that it was finished. A trigger every target of which is gone can never fire
 // again, so the entry goes, and its window is spent on the way out rather than
-// waiting for something that cannot come. Answers what was dropped, which is
+// waiting for something that cannot come; where a reaction of it runs, the
+// entry goes when that ends, see retire. Answers what was dropped, which is
 // the sentence the user reads. That is only ever a trigger that still stood:
 // a spent one, a fired sequel or an expired wait, keeps its entry with its
 // outcome in the spent list, its target merely marked gone, because it is
@@ -347,7 +452,7 @@ func (r *Reactor) TerminalGone(terminal, name, project string) []Trigger {
 			continue
 		}
 		r.fire(fresh.Owner, fresh.ID)
-		store.Delete(fresh.ID)
+		r.retire(fresh.Owner, fresh.ID)
 		moved = true
 		dropped = append(dropped, fresh)
 	}
@@ -355,6 +460,17 @@ func (r *Reactor) TerminalGone(terminal, name, project string) []Trigger {
 		r.service.changed()
 	}
 	return dropped
+}
+
+// retire takes away a trigger every target of which is gone, once nothing of
+// it is on its way any more: a reaction that runs holds the events it reads
+// on the entry, and a window that waits behind it is still to be spent, so
+// the end of that reaction comes back here. Under the reactor's lock.
+func (r *Reactor) retire(owner, id string) {
+	store := r.triggers.Of(owner)
+	if trigger, ok := store.Get(id); ok && trigger.Vanished() && !trigger.Reacting() && len(trigger.Pending) == 0 {
+		store.Delete(id)
+	}
 }
 
 // DroppedNote is what the user reads about the triggers a deleted terminal
@@ -369,11 +485,17 @@ func DroppedNote(dropped []Trigger) string {
 
 // Coder publishes a coder's signal as an event: ended for a turn that is
 // over, asks for a question or a permission. The headline names the coder
-// the way a notification does.
-func (r *Reactor) Coder(terminal, kind string) {
+// the way a notification does. entry is the entry of the notify inbox the
+// signal came in, which names the event, empty for a signal that came in
+// none, a bell.
+func (r *Reactor) Coder(terminal, kind, entry string) {
 	terminal = strings.TrimSpace(terminal)
 	if terminal == "" {
 		return
+	}
+	id := ""
+	if entry != "" {
+		id = "coder " + entry
 	}
 	name, project := "", ""
 	if r.coderName != nil {
@@ -384,6 +506,7 @@ func (r *Reactor) Coder(terminal, kind string) {
 		what = "asks a question"
 	}
 	r.Publish(CockpitEvent{
+		ID:       id,
 		Source:   EventCoder,
 		Kind:     kind,
 		Target:   terminal,
@@ -416,47 +539,34 @@ func (r *Reactor) Publish(ev CockpitEvent) {
 	defer r.mu.Unlock()
 	for _, owner := range owners {
 		for _, trigger := range r.triggers.Of(owner).List() {
-			if !trigger.matches(ev) {
-				continue
+			if trigger.matches(ev) {
+				r.take(trigger, ev)
 			}
-			r.take(trigger, ev)
 		}
+	}
+	if ev.Source == EventJob && ev.Owner != "" {
+		r.settle(ev.Owner, ev.Time)
 	}
 }
 
-// take puts one event into a trigger. Under the reactor's lock.
+// take puts one event into a trigger, see Trigger.hold, and fires the window
+// where it has nothing left to wait for. Under the reactor's lock.
 func (r *Reactor) take(trigger Trigger, ev CockpitEvent) {
 	now := r.now().UTC()
-	fresh, ok := r.triggers.Of(trigger.Owner).Update(trigger.ID, func(s *Trigger) bool {
-		if !s.Open() {
-			return false
-		}
-		if len(s.Pending) >= maxTriggerPendingNotes {
-			// A window that fills up fires with what it holds, and what
-			// arrives after that opens the next one.
-			return false
-		}
-		s.Pending = append(s.Pending, ev)
-		s.mark(ev.Target, func(t *TriggerTarget) { t.Met = true })
-		if ev.Time.After(s.SeenAt) {
-			s.SeenAt = ev.Time
-		}
-		if s.BatchDue.IsZero() {
-			s.BatchDue = now.Add(s.Batch())
-		}
-		s.UpdatedAt = now
-		return true
-	})
-	if !ok {
-		return
+	fresh, ok := r.triggers.Of(trigger.Owner).Update(trigger.ID, func(s *Trigger) bool { return s.hold(ev, now) })
+	if ok {
+		r.fireDue(fresh, now)
 	}
-	// A window that is not in the future has nothing left to wait for, so it
-	// fires here instead of on the next tick: a trigger without a batch
-	// window, and a barrier whose last target arrived long after the window of
-	// its first one closed. A barrier that still misses one is refused by
-	// fire.
-	if !fresh.BatchDue.After(now) {
-		r.fire(fresh.Owner, fresh.ID)
+}
+
+// fireDue fires a window that is not in the future, right after a take
+// instead of on the next tick: a trigger without a batch window, and a
+// barrier whose last target arrived long after the window of its first one
+// closed. A barrier that still misses one is refused by fire. Under the
+// reactor's lock.
+func (r *Reactor) fireDue(trigger Trigger, now time.Time) {
+	if !trigger.BatchDue.After(now) {
+		r.fire(trigger.Owner, trigger.ID)
 	}
 }
 
@@ -470,14 +580,26 @@ func (r *Reactor) take(trigger Trigger, ev CockpitEvent) {
 // arrivals are taken back with the events it spends, so a standing one waits
 // for all of them again.
 //
+// One turn reads at most maxTriggerPendingNotes events whole, and with them
+// the fold of what the window had no room for, see turnOf. The events that
+// waited behind those stay and are the next window, due at once, with their
+// targets arrived: the end of this reaction fires them. A one shot has no
+// next window, so its turn counts them on its fold: whatever the trigger took
+// is in the one turn it gets.
+//
 // One trigger reacts once at a time. While its reaction runs the events stay
 // in the window, whatever the window says, and nothing is refused and nothing
 // is dropped: the end of that reaction fires them, and the batch fold makes
 // them one turn. Two reactions of one trigger would answer the same thread
 // about the same thing twice, out of order, each without knowing of the other.
-// What holds the window open is cleared where the reaction ends (conclude,
-// adopt), so a held window always has an end that reaches it, and the tick is
-// its backstop.
+// What holds the window open is cleared where the reaction ends (conclude),
+// so a held window always has an end that reaches it, and the tick is its
+// backstop.
+//
+// The events a fire spends stay on the trigger, as its turn, until the
+// reaction is concluded: the turn waits for a wake slot before it starts, and
+// a restart in that wait would otherwise leave them nowhere but in the memory
+// of a process that is gone, see adopt.
 func (r *Reactor) fire(owner, id string) {
 	now := r.now().UTC()
 	var events []CockpitEvent
@@ -486,9 +608,7 @@ func (r *Reactor) fire(owner, id string) {
 		if len(s.Pending) == 0 || s.Reacting() || s.Waiting() {
 			return false
 		}
-		events = s.Pending
-		s.Pending = nil
-		s.clearMet()
+		events = s.spend()
 		s.BatchDue = time.Time{}
 		s.UpdatedAt = now
 		switch {
@@ -498,11 +618,20 @@ func (r *Reactor) fire(owner, id string) {
 			s.State = TriggerExpired
 			refused = "the trigger expired"
 		default:
+			var rest []CockpitEvent
+			events, rest = turnOf(events, s.Once)
 			s.Fired++
 			s.LastFiredAt = now
 			s.ReactingSince = now
+			s.Turn = &TriggerTurn{MessageID: statefile.NewID(), Events: events}
 			if s.Once {
 				s.State = TriggerDone
+			} else if len(rest) > 0 {
+				s.Pending = slices.Clone(rest)
+				s.BatchDue = now
+				for _, ev := range rest {
+					s.mark(ev.Target, func(t *TriggerTarget) { t.Met = true })
+				}
 			}
 		}
 		s.NoteAt = now
@@ -520,12 +649,48 @@ func (r *Reactor) fire(owner, id string) {
 	if refused != "" {
 		return
 	}
+	go r.react(trigger)
+}
+
+// turnOf splits a window into what one turn reads and what waits for the
+// next: the oldest maxTriggerPendingNotes events whole, and the fold, which
+// is only names and a count and so rides with the first turn there is rather
+// than behind everything the window still holds. A last turn, a one shot's,
+// leaves nothing to a next one: what it has no room for is counted on its
+// fold, so the turn stays as bounded as any other and no event the trigger
+// took is left out of it.
+func turnOf(window []CockpitEvent, last bool) (turn, rest []CockpitEvent) {
+	whole := window
+	if n := len(window); n > 0 && window[n-1].folds() {
+		whole = window[:n-1]
+	}
+	fold := window[len(whole):]
+	if len(whole) > maxTriggerPendingNotes {
+		whole, rest = whole[:maxTriggerPendingNotes], whole[maxTriggerPendingNotes:]
+	}
+	turn = slices.Concat(whole, fold)
+	if !last {
+		return turn, rest
+	}
+	for _, ev := range rest {
+		turn = foldInto(turn, ev)
+	}
+	return turn, nil
+}
+
+// turnOrigin is the note a reaction of this trigger carries into the thread:
+// what fired it, read off the turn the fire wrote.
+func turnOrigin(trigger Trigger) Note {
+	var events []CockpitEvent
+	if trigger.Turn != nil {
+		events = trigger.Turn.Events
+	}
 	origin := Note{
 		Source:   NoteEvent,
 		Headline: eventsHeadline(events),
 		Trigger:  trigger.ID,
 		Task:     trigger.Task,
-		Count:    len(events),
+		Count:    countEvents(events),
 	}
 	// The name the user gave the trigger is the line it is read by, and this
 	// is the one place that decides it: the notification, the header over the
@@ -548,24 +713,34 @@ func (r *Reactor) fire(owner, id string) {
 			origin.Run = events[0].Target
 		}
 	}
-	// The trigger's own model rides along as it stands at this fire; one that
-	// names none follows the owner's chat model, read when the turn starts.
-	go r.react(owner, origin, eventsBody(events), trigger.Model)
+	return origin
 }
 
-// react spends one reaction: a wake slot, a turn in a session of its own,
-// and what came back concluded. model is the trigger's own, empty for the
-// owner's chat model.
-func (r *Reactor) react(owner string, origin Note, body, model string) {
+// react spends the reaction a fire wrote on the trigger: a wake slot, a turn
+// in a session of its own, and what came back concluded. The model is the
+// trigger's own as it stood at the fire, empty for the owner's, read when the
+// turn starts. Once the turn is in the register the trigger says so: from
+// then on the register answers for it, and a restart never starts it again.
+func (r *Reactor) react(trigger Trigger) {
 	r.service.slots.take()
 	defer r.service.slots.release()
-	run, err := r.service.startReaction(owner, origin, reactionPrompt(origin, body), model)
+	owner, turn, origin := trigger.Owner, trigger.Turn, turnOrigin(trigger)
+	run, err := r.service.startReaction(owner, origin, reactionPrompt(origin, eventsBody(turn.Events)), trigger.Model, turn.MessageID)
 	if err != nil {
 		// A turn that never started is a turn that failed, and it is concluded
 		// like any other: the run it would have been carries the record.
-		r.conclude(&activeRun{rec: RunRecord{Instance: owner, Origin: &origin}}, wakeOutcome{}, err)
+		r.conclude(&activeRun{rec: RunRecord{Instance: owner, MessageID: turn.MessageID, Origin: &origin}}, wakeOutcome{}, err)
 		return
 	}
+	r.mu.Lock()
+	r.triggers.Of(owner).Update(trigger.ID, func(s *Trigger) bool {
+		if s.Turn == nil || s.Turn.MessageID != turn.MessageID {
+			return false
+		}
+		s.Turn.Started = true
+		return true
+	})
+	r.mu.Unlock()
 	outcome, err := r.service.awaitWake(run)
 	r.conclude(run, outcome, err)
 }
@@ -573,8 +748,16 @@ func (r *Reactor) react(owner string, origin Note, body, model string) {
 // adopt takes over the reactions that outlived the server: each is on the
 // machine already, so the slot is taken when it is free and skipped when it is
 // not, and the answer is concluded exactly as it would have been without the
-// restart. A trigger that says a reaction runs while no run is left is
-// cleared, the reaction died with the process.
+// restart.
+//
+// A trigger that says a reaction runs while no run is left holds the events of
+// that reaction on its turn, and none of them is dropped. A turn that never
+// got into the register never ran, the process died while it waited for a
+// slot: it starts now, the one turn those events get. One that was in the
+// register and is gone from it ran and was lost before its answer landed: its
+// events go into the thread as an answer the restart interrupted, under the
+// id that answer was to be pushed under, so one that did land is not written
+// twice.
 func (r *Reactor) adopt(runs []*activeRun) {
 	live := map[string]bool{}
 	for _, a := range runs {
@@ -590,23 +773,29 @@ func (r *Reactor) adopt(runs []*activeRun) {
 			}
 		}(a)
 	}
-	now := r.now().UTC()
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	var lost []Trigger
 	for _, trigger := range r.triggers.All() {
-		if !trigger.Reacting() || live[trigger.ID] {
-			continue
+		switch {
+		case !trigger.Reacting() || live[trigger.ID]:
+		case trigger.Turn != nil && !trigger.Turn.Started:
+			go r.react(trigger)
+		default:
+			lost = append(lost, trigger)
 		}
-		r.triggers.Of(trigger.Owner).Update(trigger.ID, func(s *Trigger) bool {
-			s.ReactingSince = time.Time{}
-			s.Note = "The reaction was lost in a restart."
-			s.NoteAt = now
-			s.Broke = true
-			return true
-		})
-		// A window this reaction held open outlived it on disk, and the run
-		// it waited for is not coming back: it fires now.
-		r.fire(trigger.Owner, trigger.ID)
+	}
+	r.mu.Unlock()
+	for _, trigger := range lost {
+		origin := turnOrigin(trigger)
+		rec := RunRecord{Instance: trigger.Owner, Origin: &origin}
+		if trigger.Turn != nil {
+			rec.MessageID = trigger.Turn.MessageID
+		} else {
+			// The release before kept no turn on the trigger, so what that
+			// reaction read is not known any more. TODO(v2.0.0)
+			origin.Headline, origin.Count = noteName(trigger.Name, "A reaction"), 0
+		}
+		r.conclude(&activeRun{rec: rec, orphaned: true}, wakeOutcome{}, errors.New("The reaction was lost in a restart."))
 	}
 }
 
@@ -647,8 +836,17 @@ func (r *Reactor) conclude(a *activeRun, outcome wakeOutcome, err error) {
 			log.Printf("assistant: the answer of a reaction of %s could not be pushed: %v", rec.Instance, pushErr)
 		}
 	}
+	// Under the reactor's lock like every change of a trigger: an edit reads
+	// the entry and stores it whole, and would put a reaction that ended in
+	// between back on it.
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.triggers.Of(rec.Instance).Update(origin.Trigger, func(s *Trigger) bool {
+		if s.Turn != nil && rec.MessageID != "" && s.Turn.MessageID != rec.MessageID {
+			return false
+		}
 		s.ReactingSince = time.Time{}
+		s.Turn = nil
 		s.Note = truncateRunes(line, maxDoneWhenRunes)
 		s.NoteAt = now
 		s.Broke = err != nil
@@ -658,9 +856,8 @@ func (r *Reactor) conclude(a *activeRun, outcome wakeOutcome, err error) {
 	r.service.changed()
 	// What arrived while this reaction ran waited for it. Now that nothing of
 	// this trigger runs, it is one window and one turn.
-	r.mu.Lock()
 	r.fire(rec.Instance, origin.Trigger)
-	r.mu.Unlock()
+	r.retire(rec.Instance, origin.Trigger)
 }
 
 // pushReaction writes a reaction's answer into the owner's thread: an
@@ -718,10 +915,10 @@ func (s *Service) pushReaction(rec RunRecord, text string, state State, errText 
 
 // eventsHeadline is the line a reaction of one or several events is read by.
 func eventsHeadline(events []CockpitEvent) string {
-	if len(events) == 1 {
+	if len(events) == 1 && !events[0].folds() {
 		return oneLine(events[0].Headline)
 	}
-	return fmt.Sprintf("%d events arrived", len(events))
+	return fmt.Sprintf("%d events arrived", countEvents(events))
 }
 
 // eventsBody is what the reaction reads about the events: the one event's
@@ -862,7 +1059,9 @@ func (r *Reactor) Tick() {
 
 // cronTick fires one due tick and moves the schedule on past now: a tick
 // that was due while the cockpit was down is due once, not once per minute
-// it missed.
+// it missed. The schedule moves in the write that takes the tick, so a
+// process that dies here leaves either a tick that is still due or one that
+// was taken, never a schedule that moved on without it.
 func (r *Reactor) cronTick(trigger Trigger, now time.Time) {
 	due := trigger.NextAt
 	next, err := NextCron(trigger.Spec, now, trigger.Zone())
@@ -876,19 +1075,20 @@ func (r *Reactor) cronTick(trigger Trigger, now time.Time) {
 			s.NextAt = next
 		}
 		s.UpdatedAt = now
+		s.hold(CockpitEvent{
+			ID:       "cron " + s.ID + " " + due.UTC().Format(time.RFC3339),
+			Source:   EventCron,
+			Kind:     CronKindTick,
+			Target:   s.ID,
+			Owner:    s.Owner,
+			Time:     due.UTC(),
+			Headline: "Schedule " + s.Spec + " ticked at " + due.In(s.Zone()).Format("15:04") + " " + s.Timezone,
+		}, now)
 		return true
 	})
-	if !ok {
-		return
+	if ok {
+		r.fireDue(fresh, now)
 	}
-	r.take(fresh, CockpitEvent{
-		Source:   EventCron,
-		Kind:     CronKindTick,
-		Target:   fresh.ID,
-		Owner:    fresh.Owner,
-		Time:     due.UTC(),
-		Headline: "Schedule " + fresh.Spec + " ticked at " + due.In(fresh.Zone()).Format("15:04") + " " + fresh.Timezone,
-	})
 }
 
 // expire ends a trigger whose time is over. Its state and its line say so on
@@ -914,37 +1114,129 @@ func (r *Reactor) expire(trigger Trigger, now time.Time) {
 // Recover picks up what a restart left behind. The triggers are on disk, so
 // nothing has to be rebuilt; what has to be caught up is what happened while
 // nobody was listening. A job that closed in that window is in jobs.json:
-// every job trigger is walked against the closed jobs of its owner that ended
-// after the watermark it last took, and those are published now. A cron tick
-// that fell due and a batch window that closed are the tick's business, so one
+// every job trigger is walked against the closed jobs of its owner, and takes
+// the ends it missed. Only that trigger takes them. Nothing is published: an
+// end is published once, by the report that closed the job, to every trigger
+// and to the plugins, and publishing it again here would hand it a second time
+// to everybody who took it then. Where the last process died before that
+// report landed, the watcher's recovery wrote it a moment ago, and published
+// the end with it for the first time, see Watcher.Recover. A cron tick that
+// fell due and a batch window that closed are the tick's business, so one
 // runs right away. A coder's signal from that window is in the notify inbox,
-// which the inbox poller drains once it runs, and reaches here through it like
-// any other. The reactions that were running are adopted by Service.Recover,
-// which finds them in the register.
+// which the inbox poller drains once it runs, and reaches here through it
+// like any other; so does one the last process was handing over when it died,
+// a second time under the same name. The end of a compose run and of an
+// approval come the same way out of their registers, see
+// docker.Service.Recover and approval.Service.Recover. The reactions that
+// were running are adopted by Service.Recover, which finds them in the
+// register.
 //
 // It must run after Service.Recover, and after the local API is bound: a
 // reaction it starts acts through it.
 func (r *Reactor) Recover() {
-	for _, trigger := range r.triggers.All() {
-		if !trigger.Open() || trigger.Source != EventJob {
-			continue
-		}
-		for _, job := range r.jobs.Of(trigger.Owner).List() {
-			if job.State.Open() || !job.UpdatedAt.After(trigger.SeenAt) {
-				continue
-			}
-			if ev, ok := jobEvent(job); ok {
-				r.Publish(ev)
+	r.mu.Lock()
+	for _, owner := range r.triggers.Owners() {
+		ends, written, _ := r.jobEnds(owner)
+		for _, trigger := range r.triggers.Of(owner).List() {
+			for _, ev := range ends {
+				if trigger.missed(ev) {
+					r.take(trigger, ev)
+				}
 			}
 		}
+		r.settle(owner, written)
 	}
+	r.mu.Unlock()
 	r.Tick()
 }
 
+// PruneTerminals drops the closed jobs of terminals that are not in keep, the
+// startup's sweep of entries whose terminal is gone, see JobStore.PruneTerminals.
+// It runs before Recover, and a job that closed while the process died is only
+// in the store: the job of an end a trigger still misses stays for one more
+// start, whatever its terminal does, so Recover finds it. Returns how many
+// entries were removed.
+func (r *Reactor) PruneTerminals(keep map[string]bool) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	keep = maps.Clone(keep)
+	if keep == nil {
+		keep = map[string]bool{}
+	}
+	for _, owner := range r.triggers.Owners() {
+		ends, _, _ := r.jobEnds(owner)
+		for _, trigger := range r.triggers.Of(owner).List() {
+			for _, ev := range ends {
+				if trigger.missed(ev) {
+					keep[ev.Target] = true
+				}
+			}
+		}
+	}
+	return r.jobs.PruneTerminals(keep)
+}
+
+// jobEnds are the ends of an owner's closed jobs as the store holds them, the
+// oldest first, and when the newest of those entries was written. read says
+// whether the store answered with any job at all: an empty read is a file
+// that is gone or could not be read as well as a store without jobs, and
+// nothing is dropped on it.
+func (r *Reactor) jobEnds(owner string) (ends []CockpitEvent, written time.Time, read bool) {
+	jobs := r.jobs.Of(owner).List()
+	for _, job := range jobs {
+		ev, ok := jobEvent(job)
+		if !ok {
+			continue
+		}
+		ends = append(ends, ev)
+		if job.UpdatedAt.After(written) {
+			written = job.UpdatedAt
+		}
+	}
+	slices.SortStableFunc(ends, func(a, b CockpitEvent) int { return a.Time.Compare(b.Time) })
+	return ends, written, len(jobs) > 0
+}
+
+// settle closes the books of an owner's job triggers after its job ends were
+// handed out, one live or the missed ones of a restart. The ends a trigger
+// took are kept only as long as the store holds their job, so the list is
+// bounded by the store and never by what a trigger lived through; a store
+// that reads empty lets none go, it grows by no end either. And the
+// watermark of the release before is raised to seen on every trigger that
+// still fires, also on one the ends were not for: that release publishes
+// every job written to after any trigger's watermark to all of them, which is
+// how a trigger on job-blocked brought every finished job back on every
+// restart. Under the reactor's lock. TODO(v2.0.0): drop the watermark.
+func (r *Reactor) settle(owner string, seen time.Time) {
+	held, _, read := r.jobEnds(owner)
+	store := r.triggers.Of(owner)
+	for _, trigger := range store.List() {
+		if trigger.Source != EventJob {
+			continue
+		}
+		store.Update(trigger.ID, func(s *Trigger) bool {
+			kept := slices.DeleteFunc(slices.Clone(s.Ends), func(e JobEnd) bool {
+				return read && !slices.ContainsFunc(held, e.is)
+			})
+			raise := s.Open() && seen.After(s.SeenAt)
+			if len(kept) == len(s.Ends) && !raise {
+				return false
+			}
+			s.Ends = kept
+			if raise {
+				s.Since = s.since()
+				s.SeenAt = seen
+			}
+			return true
+		})
+	}
+}
+
 // jobEvent is the end of a closed job read out of the entry alone, the event a
-// check's report published when it closed. It is for the two passes that look
-// at the store instead of at a report: the recovery after a restart, and a
-// barrier made after one of its jobs had already closed.
+// check's report published when it closed, see recordWake. Its time is when
+// the job closed, which with the terminal names the end. Besides the report it
+// is for the two passes that look at the store: the recovery after a restart,
+// and a barrier made after one of its jobs had already closed.
 func jobEvent(job Job) (CockpitEvent, bool) {
 	verdict, ok := jobEndVerdict(job.State)
 	if !ok {
@@ -955,9 +1247,10 @@ func jobEvent(job Job) (CockpitEvent, bool) {
 		Kind:     string(verdict),
 		Target:   job.Terminal,
 		Owner:    job.Owner,
-		Time:     job.UpdatedAt,
+		Time:     job.closedAt(),
 		Headline: "Job " + strings.ToLower(string(verdict)) + ": " + noteName(job.Name, job.Terminal) + inProject(job.Project),
 		Body:     job.Note,
+		was:      job.MovedFrom,
 	}, true
 }
 

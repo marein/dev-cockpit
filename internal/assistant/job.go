@@ -90,6 +90,16 @@ type Job struct {
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// ClosedAt is when the job ended, written once by the close itself.
+	// UpdatedAt cannot say it: a closed job is still written to, the killed
+	// check clearing its spinner, a send noted on it. It names the end among
+	// the ends of its terminal, which is how a trigger knows the ones it took,
+	// see Trigger.Ends.
+	ClosedAt time.Time `json:"closedAt,omitempty"`
+	// MovedFrom is the key the job was steered under, on a job whose terminal
+	// took another id since, see Watcher.TerminalMoved. An end a trigger took
+	// under the key is the end the store holds under the id, see JobEnd.is.
+	MovedFrom string `json:"movedFrom,omitempty"`
 	// Note is the one line the last check left, and NoteAt when that was. A
 	// check without news writes nothing else, so this is where the user sees
 	// that the job is alive.
@@ -116,6 +126,36 @@ type Job struct {
 	// coder that is working from one that is stuck without being able to say so.
 	ActivityDigest string    `json:"activityDigest,omitempty"`
 	ActivityAt     time.Time `json:"activityAt,omitempty"`
+	// Report is the report the job closed with, for as long as the thread of
+	// its owner does not hold it. The close writes it in its own write, because
+	// the job and the thread are two files and a process can die between them:
+	// whoever finds it here writes it into the thread, see Watcher.deliver. It
+	// is one answer at most and goes the moment it landed, so the file every
+	// call reads carries it only across that gap.
+	Report *JobReport `json:"report,omitempty"`
+}
+
+// JobReport is a report on its way into the thread: the message it becomes,
+// under the id it is written as, so one that is written again lands on the
+// message that is already there.
+type JobReport struct {
+	MessageID string  `json:"messageId"`
+	Verdict   Verdict `json:"verdict"`
+	Text      string  `json:"text"`
+	Model     string  `json:"model,omitempty"`
+}
+
+// closedAt is when a closed job ended. An entry the release before ClosedAt
+// closed carries none, and its close is the last note it wrote: a closed job
+// gets no other note. TODO(v2.0.0): read ClosedAt alone.
+func (j Job) closedAt() time.Time {
+	switch {
+	case !j.ClosedAt.IsZero():
+		return j.ClosedAt
+	case !j.NoteAt.IsZero():
+		return j.NoteAt
+	}
+	return j.UpdatedAt
 }
 
 // Checking reports whether a check is running on this job right now.
@@ -287,14 +327,15 @@ func (s *JobStore) Save(w Job) {
 }
 
 // capClosed drops the oldest jobs that are over once there are more than
-// maxClosedJobs of them, and leaves the open ones alone. What decides which
-// ones go is when they were made, not where they sit in the file: an entry a
-// re-steered terminal replaced keeps the position of the job before it, so the
-// file's order is only roughly the age.
+// maxClosedJobs of them, and leaves the open ones alone, and one that still
+// owes its report: that entry is the only place the report stands. What
+// decides which ones go is when they were made, not where they sit in the
+// file: an entry a re-steered terminal replaced keeps the position of the job
+// before it, so the file's order is only roughly the age.
 func capClosed(list []Job) []Job {
 	closed := make([]int, 0, len(list))
 	for i := range list {
-		if !list[i].State.Open() {
+		if !list[i].State.Open() && list[i].Report == nil {
 			closed = append(closed, i)
 		}
 	}
@@ -427,14 +468,17 @@ func (j *Jobs) PruneTerminals(keep map[string]bool) int {
 // pays for it. Open jobs stay whatever their terminal does. A job that ends has
 // to say so to the user, and ending a job whose terminal is gone is the
 // heartbeat's, with a report; dropping it here would be the one ending nobody
-// hears. Returns how many entries were removed.
+// hears. A job that still owes its report stays for the same reason: this
+// runs before the watcher's recovery writes it into the thread, and the job
+// of a terminal that died is exactly the one a process dies over. Returns how
+// many entries were removed.
 func (s *JobStore) PruneTerminals(keep map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
 	kept := list[:0]
 	for _, w := range list {
-		if w.State.Open() || keep[w.Terminal] {
+		if w.State.Open() || keep[w.Terminal] || w.Report != nil {
 			kept = append(kept, w)
 		}
 	}
@@ -793,6 +837,10 @@ func (w *Watcher) Steer(spec Job) (Job, error) {
 		ExpiresAt: now.Add(defaultJobTTL),
 		UpdatedAt: now,
 	}
+	// The entry this job replaces may still owe the report it closed with.
+	if old, ok := w.jobs.Of(owner).Get(terminal); ok {
+		w.deliver(old)
+	}
 	w.jobs.Of(owner).Save(job)
 	w.service.changed()
 	w.announceChange(job.Project)
@@ -897,6 +945,9 @@ func (w *Watcher) TerminalDeleted(terminal string) []Trigger {
 		if job.State.Open() {
 			w.expire(job, "the coder was deleted")
 		}
+		// A job that closed before may still owe its report, which goes with
+		// the entry otherwise.
+		w.deliver(job)
 		w.jobs.Of(job.Owner).Delete(terminal)
 		w.service.killChecks(terminal)
 		w.service.changed()
@@ -939,6 +990,7 @@ func (w *Watcher) NoteAssistantInput(terminal, by string) {
 			job.Silent = 0
 			job.LastWakeAt = time.Time{}
 			job.ExpiresAt = now.Add(defaultJobTTL)
+			job.ClosedAt = time.Time{}
 			job.Note = "Steering again, the coder was sent something."
 			job.NoteAt = now
 			reopened = true
@@ -1290,7 +1342,22 @@ func (w *Watcher) markJob(job Job, seen checkContext, change func(*Job)) Job {
 //
 // The provider session such a dead check left behind is swept by the caller,
 // which owns the coders, see IsCheckSession.
+//
+// First of all it writes the reports the last process still owed: a job it
+// closed and died over before the thread held the report, the oldest first.
+// A check that outlived the restart finds such a job closed and reports
+// nothing of its own.
 func (w *Watcher) Recover(adopted []AdoptedCheck) {
+	var owed []Job
+	for _, job := range w.jobs.All() {
+		if job.Report != nil {
+			owed = append(owed, job)
+		}
+	}
+	slices.SortStableFunc(owed, func(a, b Job) int { return a.closedAt().Compare(b.closedAt()) })
+	for _, job := range owed {
+		w.deliver(job)
+	}
 	carried := map[string]bool{}
 	for _, check := range adopted {
 		carried[check.Terminal] = true
@@ -1300,22 +1367,34 @@ func (w *Watcher) Recover(adopted []AdoptedCheck) {
 		if !job.Checking() || carried[job.Terminal] {
 			continue
 		}
+		// A closed job only gets its spinner cleared, like in conclude: its
+		// note is the report it closed with, which a trigger that missed the
+		// end still reads, and nobody looks at it again.
 		w.mark(job, func(fresh *Job) {
 			fresh.CheckingSince = time.Time{}
+			if !fresh.State.Open() {
+				return
+			}
 			fresh.LastWakeAt = time.Time{}
 			fresh.Note = "The check was interrupted by a restart, looking again."
 			fresh.NoteAt = w.now().UTC()
 		})
-		log.Printf("assistant: a check on %s was interrupted by a restart, checking again", job.Terminal)
 		if job.State.Open() {
+			log.Printf("assistant: a check on %s was interrupted by a restart, checking again", job.Terminal)
 			go w.Handle(job.Terminal)
 		}
 	}
 }
 
 // report closes a job and tells the user, which is the same pair of steps for a
-// finished job, a blocked one and a standstill.
+// finished job, a blocked one and a standstill. The close carries the report,
+// so the second step survives a process that dies between the two, see
+// deliver.
 func (w *Watcher) report(job Job, seen checkContext, outcome wakeOutcome) {
+	owed := &JobReport{MessageID: seen.MessageID, Verdict: outcome.Verdict, Text: outcome.Text, Model: seen.Model}
+	if owed.MessageID == "" {
+		owed.MessageID = statefile.NewID()
+	}
 	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(entry *Job) bool {
 		if !entry.State.Open() {
 			// The user called the job off, or it ran out, while this check was
@@ -1335,14 +1414,39 @@ func (w *Watcher) report(job Job, seen checkContext, outcome wakeOutcome) {
 		entry.Note = oneLine(outcome.Text)
 		entry.NoteAt = w.now().UTC()
 		entry.UpdatedAt = entry.NoteAt
+		entry.ClosedAt = entry.NoteAt
+		entry.Report = owed
 		return true
 	})
 	if !ok {
 		return
 	}
-	w.service.recordWake(fresh, seen.MessageID, outcome.Verdict, outcome.Text, seen.Model)
+	w.deliver(fresh)
 	w.service.changed()
 	w.announceChange(fresh.Project)
+}
+
+// deliver writes the report a job closed with into the thread of its owner
+// and takes it off the job. The job and the thread are two files, so the
+// close keeps the report on the job and this runs behind it: right away, and
+// for a process that died in between by the next one, see Recover. The thread
+// takes a message of one id once, so a report that landed before the process
+// died is neither written nor announced a second time, and the job lets go of
+// it only here, after the thread holds it or its assistant is gone. A job
+// that owes none is left alone.
+func (w *Watcher) deliver(job Job) {
+	owed := job.Report
+	if owed == nil {
+		return
+	}
+	w.service.recordWake(job, owed.MessageID, owed.Verdict, owed.Text, owed.Model)
+	w.jobs.Of(job.Owner).Update(job.Terminal, func(entry *Job) bool {
+		if entry.Report == nil || entry.Report.MessageID != owed.MessageID {
+			return false
+		}
+		entry.Report = nil
+		return true
+	})
 }
 
 // resolveStandstill enforces the one thing a check may not do: leave a job
@@ -1447,9 +1551,9 @@ func (w *Watcher) SweepExpired() {
 // expire ends a job that nobody will check again and says so once. A job that
 // stops quietly breaks the promise the whole feature makes: the user hears about
 // a job without having to look. The report goes the same way a finished one
-// does, so there is no second channel and no second kind of message.
+// does, so there is no second channel and no second kind of message, and the
+// close carries it like a finished one's, see deliver.
 func (w *Watcher) expire(job Job, reason string) {
-	report := ""
 	fresh, ok := w.jobs.Of(job.Owner).Update(job.Terminal, func(entry *Job) bool {
 		if !entry.State.Open() {
 			// Already closed, by another signal or by the user. One report per job.
@@ -1457,11 +1561,12 @@ func (w *Watcher) expire(job Job, reason string) {
 		}
 		// The report is written from the job as the last check left it, so what
 		// that check found is carried into the last word the user gets.
-		report = expiryReport(*entry, reason)
+		entry.Report = &JobReport{MessageID: statefile.NewID(), Verdict: VerdictExpired, Text: expiryReport(*entry, reason)}
 		entry.State = JobExpired
 		entry.Note = "Stopped steering: " + reason + "."
 		entry.NoteAt = w.now().UTC()
 		entry.UpdatedAt = entry.NoteAt
+		entry.ClosedAt = entry.NoteAt
 		return true
 	})
 	if !ok {
@@ -1470,7 +1575,7 @@ func (w *Watcher) expire(job Job, reason string) {
 	// A check that is still running on the expired job is killed like on a
 	// release: nobody is steering any more, so nobody pays for its answer.
 	w.service.killChecks(fresh.Terminal)
-	w.service.recordWake(fresh, "", VerdictExpired, report, "")
+	w.deliver(fresh)
 	w.service.changed()
 	w.announceChange(fresh.Project)
 }

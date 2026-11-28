@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -81,6 +82,11 @@ type ComposeOptions struct {
 	// user and reports into that assistant's thread instead, see the web
 	// layer's composeDone.
 	Owner string
+	// ID is the id the run is registered under where the caller has to know
+	// it before the run exists, a fresh one where empty: an approved run is
+	// named after its approval, so a process that died right behind the start
+	// leaves a run the next one finds from the approval.
+	ID string
 }
 
 // RunView is one compose run as a surface shows it: what it is, whether it is
@@ -224,7 +230,7 @@ func (s *Service) startCompose(opts ComposeOptions) (ComposeRecord, detach.Proce
 		return ComposeRecord{}, detach.Process{}, err
 	}
 	rec := ComposeRecord{
-		ID:      statefile.NewID(),
+		ID:      cmp.Or(opts.ID, statefile.NewID()),
 		Dir:     opts.Dir,
 		Label:   opts.Label,
 		Action:  opts.Action.Label,
@@ -306,6 +312,7 @@ func (s *Service) DisownRun(id string) bool {
 		return false
 	}
 	rec.Owner = ""
+	rec.Owed = false
 	s.runs.Save(rec)
 	return true
 }
@@ -412,12 +419,18 @@ func runView(rec ComposeRecord) RunView {
 // Recover picks up the compose runs of an earlier server. What is still going
 // gets its directory claimed and its busy mark back and is waited out; what
 // finished while nobody was looking reports now, which is the notification the
-// restart would otherwise have swallowed. A run that is over and was reported
-// stays where it is, its output is what somebody still reads. Run it after
-// OnComposeDone is set and before anything can start a run of its own.
+// restart would otherwise have swallowed. So does a run whose end that server
+// wrote down and still owed the report of when it died: whoever hears it
+// heard it already or not at all, and takes it once either way. A run that is
+// over and was reported stays where it is, its output is what somebody still
+// reads. Run it after OnComposeDone is set and before anything can start a
+// run of its own.
 func (s *Service) Recover() {
 	for _, rec := range s.runs.List() {
 		if rec.Finished {
+			if rec.Owed {
+				s.report(rec, s.Reloads())
+			}
 			continue
 		}
 		_, lock, _ := s.runs.paths(rec.ID)
@@ -472,12 +485,12 @@ func (s *Service) await(rec ComposeRecord, proc detach.Process) {
 	s.finish(rec)
 }
 
-// finish reads what a run left behind, passes the word on and writes down how
-// it ended. It is the one completion path: a run this server started and one it
+// finish reads what a run left behind, writes down how it ended and passes the
+// word on. It is the one completion path: a run this server started and one it
 // adopted end here alike.
 func (s *Service) finish(rec ComposeRecord) {
 	reloads := s.Reloads()
-	out, _, result := s.runs.paths(rec.ID)
+	_, _, result := s.runs.paths(rec.ID)
 	// The cancel and a handed over owner are written on the entry by somebody
 	// else, which is not this goroutine's copy of it. The read and the end
 	// stand under the entries lock, so Disown either reaches the entry before
@@ -489,23 +502,46 @@ func (s *Service) finish(rec ComposeRecord) {
 		rec.Owner = latest.Owner
 	}
 	code, exited := detach.Result(result)
-	err := composeOutcome(code, exited, rec)
-	output := tailOf(readTail(out, composeOutputTail), composeOutputTail)
-	run := ComposeRun{ID: rec.ID, Dir: rec.Dir, Label: rec.Label, Action: rec.Action, Intent: rec.Intent, Reloads: reloads, Quiet: rec.Quiet, Owner: rec.Owner, Failed: err != nil, Exited: exited, Exit: code, ByUser: rec.Cancelled && rec.CancelledByUser}
-	s.compose.mu.Lock()
-	done := s.compose.done
-	s.compose.mu.Unlock()
 	s.release(rec.Dir, rec.ID)
 	rec.Finished = true
 	rec.EndedAt = time.Now().UTC()
 	rec.Exited, rec.Exit = exited, code
-	if err != nil {
+	if err := composeOutcome(code, exited, rec); err != nil {
 		rec.Failure = err.Error()
 	}
+	rec.Owed = rec.Owner != ""
 	s.runs.Finish(rec)
 	s.entries.Unlock()
+	s.report(rec, reloads)
+}
+
+// report passes the word of a finished run on, read off its entry alone: the
+// end as it was written down and the tail of the output it left. That is what
+// lets the end of an owned run be reported a second time by the process after
+// this one, in the same words, see ComposeRecord.Owed, which is taken off
+// here once the report came back.
+func (s *Service) report(rec ComposeRecord, reloads uint64) {
+	s.compose.mu.Lock()
+	done := s.compose.done
+	s.compose.mu.Unlock()
 	if done != nil {
+		var err error
+		if rec.Failure != "" {
+			err = errors.New(rec.Failure)
+		}
+		out, _, _ := s.runs.paths(rec.ID)
+		output := tailOf(readTail(out, composeOutputTail), composeOutputTail)
+		run := ComposeRun{ID: rec.ID, Dir: rec.Dir, Label: rec.Label, Action: rec.Action, Intent: rec.Intent, Reloads: reloads, Quiet: rec.Quiet, Owner: rec.Owner, Failed: err != nil, Exited: rec.Exited, Exit: rec.Exit, ByUser: rec.Cancelled && rec.CancelledByUser}
 		done(run, err, output)
+	}
+	if !rec.Owed {
+		return
+	}
+	s.entries.Lock()
+	defer s.entries.Unlock()
+	if latest, ok := s.runs.Get(rec.ID); ok && latest.Owed {
+		latest.Owed = false
+		s.runs.Save(latest)
 	}
 }
 

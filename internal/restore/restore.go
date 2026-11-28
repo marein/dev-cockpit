@@ -65,8 +65,10 @@ type Service struct {
 	notifier *notify.Service
 	jobs     Jobs
 	projects func() []string
-	ready    func(launcher string, timeout time.Duration) bool
-	wait     time.Duration
+	// assistant reports whether an id names an assistant that still lives.
+	assistant func(id string) bool
+	ready     func(launcher string, timeout time.Duration) bool
+	wait      time.Duration
 
 	mu      sync.Mutex
 	last    []Entry // last written entries, skips no-change rewrites
@@ -76,9 +78,11 @@ type Service struct {
 // New wires up the service. path is the snapshot file, enabled reads the
 // setting on every call. projects lists the names of the existing projects,
 // injected as a function so restore needs no import on project: the prune
-// keeps the per project notification targets of exactly these.
-func New(path string, enabled func() bool, coders []*coder.Manager, shells *shell.Shells, t *tmux.Client, notifier *notify.Service, jobs Jobs, projects func() []string) *Service {
-	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier, jobs: jobs, projects: projects, wait: launcherWait}
+// keeps the per project notification targets of exactly these. assistant
+// reports whether an id names an assistant that is not deleted for certain,
+// injected the same way: the prune keeps the notifications of these.
+func New(path string, enabled func() bool, coders []*coder.Manager, shells *shell.Shells, t *tmux.Client, notifier *notify.Service, jobs Jobs, projects func() []string, assistant func(id string) bool) *Service {
+	return &Service{path: path, enabled: enabled, coders: coders, shells: shells, tmux: t, notifier: notifier, jobs: jobs, projects: projects, assistant: assistant, wait: launcherWait}
 }
 
 func (s *Service) SetLauncherReady(ready func(launcher string, timeout time.Duration) bool) {
@@ -266,7 +270,11 @@ func (s *Service) applyTabGroup(e Entry) {
 // nothing can ever move again. Both files are read whole on every look at
 // them, so what is left in them is paid for again and again. The compose, git
 // prompt and worktree targets name a project and not a terminal, so the keep set
-// carries them per existing project.
+// carries them per existing project. An assistant's entries name the assistant,
+// no terminal either: they stay, read or unread, until it is deleted for
+// certain, so an index that cannot be read takes none of them along. The
+// question of an approval or of the ssh agent stands in the memory of one
+// process and none outlives it, so nothing keeps their entries.
 func (s *Service) pruneDeadTargets() {
 	valid := map[string]bool{}
 	for _, m := range s.coders {
@@ -289,7 +297,8 @@ func (s *Service) pruneDeadTargets() {
 		valid[notify.PipelineTarget(name)] = true
 		valid[notify.CommentsTarget(name)] = true
 	}
-	if removed := s.notifier.PruneTargets(valid); removed > 0 {
+	alive := func(targetID string) bool { return valid[targetID] || s.assistant(targetID) }
+	if removed := s.notifier.PruneTargets(alive); removed > 0 {
 		log.Printf("terminal restore: pruned %d notification(s) without a live target", removed)
 	}
 	if s.jobs != nil {

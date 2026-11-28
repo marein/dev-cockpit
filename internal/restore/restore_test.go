@@ -113,7 +113,7 @@ func restoring(t *testing.T, ready func(string, time.Duration) bool) (*Service, 
 	projects := project.NewRepository(t.TempDir(), nil)
 	m := coder.NewManager(config.Config{}, tmux.New(), c, projects)
 	s := New(path, func() bool { return true }, []*coder.Manager{m}, shell.NewShells(config.Config{}, tmux.New(), projects, nil), tmux.New(),
-		notify.NewService(filepath.Join(dir, "notifications.json"), nil), nil, func() []string { return nil })
+		notify.NewService(filepath.Join(dir, "notifications.json"), nil), nil, func() []string { return nil }, func(string) bool { return false })
 	s.SetLauncherReady(ready)
 	return s, path
 }
@@ -231,7 +231,7 @@ func TestThePruneKeepsTheNewsOfProjectsThatAreThere(t *testing.T) {
 	}
 	projects := project.NewRepository(t.TempDir(), nil)
 	s := New(filepath.Join(dir, "terminal-restore.json"), func() bool { return false }, nil, shell.NewShells(config.Config{}, tmux.New(), projects, nil), tmux.New(),
-		notifier, nil, func() []string { return []string{"shop"} })
+		notifier, nil, func() []string { return []string{"shop"} }, func(string) bool { return false })
 	s.pruneDeadTargets()
 	var kept []string
 	for _, n := range notifier.List(0) {
@@ -240,5 +240,131 @@ func TestThePruneKeepsTheNewsOfProjectsThatAreThere(t *testing.T) {
 	slices.Sort(kept)
 	if want := []string{notify.DockerTarget("shop"), notify.PipelineTarget("shop")}; !slices.Equal(kept, want) {
 		t.Fatalf("want %v kept, got %v", want, kept)
+	}
+}
+
+// withTmuxListing stands a tmux in the path that lists exactly these panes.
+func withTmuxListing(t *testing.T, panes ...string) {
+	t.Helper()
+	bin := t.TempDir()
+	listing := filepath.Join(bin, "panes")
+	if err := os.WriteFile(listing, []byte(strings.Join(panes, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = list-panes ]; then cat '" + listing + "'; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
+}
+
+// pruned runs the startup prune over one entry per target, the ones in read
+// marked read first, and answers what is left, newest first.
+func pruned(t *testing.T, s *Service, targets []string, read map[string]bool) []notify.Notification {
+	t.Helper()
+	for _, target := range targets {
+		s.notifier.AddResolved(target, notify.TargetInfo{Name: target})
+		if read[target] {
+			s.notifier.MarkTargetRead(target)
+		}
+	}
+	s.pruneDeadTargets()
+	return s.notifier.List(0)
+}
+
+// The startup prune asks every kind of target whether it still lives, and a
+// restart deletes the news of none that does: a terminal lives while tmux
+// runs it or its coder can resume it, the backup always, what names a project
+// while the project is there, and an assistant until it is deleted. The
+// question of an approval or of the ssh agent stood in the process that is
+// gone, so it is dead at every start. What stays keeps its read state.
+func TestThePruneKeepsEveryTargetThatStillLives(t *testing.T) {
+	const (
+		running   = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+		resumable = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+		shellID   = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+		dead      = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+		helper    = "11111111-1111-4111-8111-111111111111"
+		deleted   = "22222222-2222-4222-8222-222222222222"
+	)
+	withTmuxListing(t,
+		running+"\t1\t1700000000\t0\t0\t\t\tfake\tcoder\t/tmp\t\t\t\t\t\t",
+		shellID+"\t1\t1700000000\t0\t0\tbash\t/tmp\t\t\t\t\t\t\t\t\t",
+	)
+	dir := t.TempDir()
+	projects := project.NewRepository(t.TempDir(), nil)
+	c := launcherCoder{sessions: []coder.Session{{SessionID: resumable, Name: "resumable", CWD: dir}}}
+	m := coder.NewManager(config.Config{}, tmux.New(), c, projects)
+	s := New(filepath.Join(dir, "terminal-restore.json"), func() bool { return false }, []*coder.Manager{m},
+		shell.NewShells(config.Config{}, tmux.New(), projects, nil), tmux.New(),
+		notify.NewService(filepath.Join(dir, "notifications.json"), nil), nil,
+		func() []string { return []string{"shop"} }, func(id string) bool { return id == helper })
+
+	lives := []string{
+		running, resumable, shellID, notify.BackupTarget, helper,
+		notify.DockerTarget("shop"), notify.GitPromptTarget("shop"), notify.WorktreeTarget("shop"),
+		notify.PipelineTarget("shop"), notify.CommentsTarget("shop"),
+	}
+	gone := []string{
+		dead, deleted,
+		notify.DockerTarget("gone"), notify.GitPromptTarget("gone"), notify.WorktreeTarget("gone"),
+		notify.PipelineTarget("gone"), notify.CommentsTarget("gone"),
+		notify.ApprovalTarget("3f2a"), notify.SSHKeyTarget("9b1c"),
+	}
+	read := map[string]bool{}
+	for i, target := range lives {
+		read[target] = i%2 == 0
+	}
+	left := pruned(t, s, append(slices.Clone(lives), gone...), read)
+
+	var kept []string
+	for _, n := range left {
+		kept = append(kept, n.TargetID)
+		if n.Read != read[n.TargetID] {
+			t.Errorf("want %s kept with its read state %v, got %v", n.TargetID, read[n.TargetID], n.Read)
+		}
+	}
+	slices.Reverse(kept)
+	if !slices.Equal(kept, lives) {
+		t.Fatalf("want the news of every target that lives and of no other:\n%v\ngot\n%v", lives, kept)
+	}
+	if s.pruneDeadTargets(); len(s.notifier.List(0)) != len(lives) {
+		t.Fatalf("want a second start to take nothing, got %+v", s.notifier.List(0))
+	}
+}
+
+// An assistant's news survives every restart with its read state, the line
+// that was read and the one that still waits, and goes with the assistant.
+func TestAnAssistantsNewsSurvivesARestartUntilItIsDeleted(t *testing.T) {
+	const helper = "11111111-1111-4111-8111-111111111111"
+	withTmuxListing(t)
+	dir := t.TempDir()
+	projects := project.NewRepository(t.TempDir(), nil)
+	path := filepath.Join(dir, "notifications.json")
+	lives := true
+	start := func() *notify.Service {
+		notifier := notify.NewService(path, nil)
+		New(filepath.Join(dir, "terminal-restore.json"), func() bool { return false }, nil,
+			shell.NewShells(config.Config{}, tmux.New(), projects, nil), tmux.New(), notifier, nil,
+			func() []string { return nil }, func(id string) bool { return lives && id == helper }).RunStartup()
+		return notifier
+	}
+	notifier := start()
+	notifier.AddResolved(helper, notify.TargetInfo{Title: "Job done."})
+	notifier.MarkTargetRead(helper)
+	notifier.AddResolved(helper, notify.TargetInfo{Title: "Answer ready."})
+	before := notifier.List(0)
+	if len(before) != 2 || before[0].Read || !before[1].Read {
+		t.Fatalf("want an unread line over a read one, got %+v", before)
+	}
+	for restart := range 2 {
+		notifier = start()
+		if got := notifier.List(0); !slices.Equal(got, before) || notifier.UnreadCount() != 1 {
+			t.Fatalf("restart %d: want both lines as they stood, got %+v", restart, got)
+		}
+	}
+	lives = false
+	if got := start().List(0); len(got) != 0 {
+		t.Fatalf("want the news of a deleted assistant gone at the next start, got %+v", got)
 	}
 }

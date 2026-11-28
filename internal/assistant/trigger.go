@@ -1,6 +1,8 @@
 package assistant
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -42,6 +44,22 @@ const (
 	maxTriggerTaskRunes    = maxTaskRunes
 	maxTriggersPerOwner    = 50
 	maxTriggerPendingNotes = 20
+)
+
+// The bounds of what a trigger keeps of the events it took. One turn reads
+// maxTriggerPendingNotes of them whole. The window holds one more turn's
+// worth behind those, so a burst of reports is read whole by the turn after;
+// what arrives at a window that full is folded: counted under its headline,
+// without its text, see Trigger.hold. So is what the one turn of a one shot
+// has no room for, see turnOf. A fold names maxTriggerPendingNotes
+// headlines and counts every further one under what its kind is called, so
+// the window is bounded on disk and in the prompt whatever arrives, and no
+// event leaves it uncounted. maxTriggerTakenKeys is how many events of the
+// sources that keep no record of their own a trigger remembers having taken.
+const (
+	maxTriggerWindowNotes  = 2 * maxTriggerPendingNotes
+	maxFoldedHeadlineRunes = 200
+	maxTriggerTakenKeys    = 100
 )
 
 // MaxTriggerNameRunes is how long a trigger's name may be. It is the 32 a
@@ -155,10 +173,37 @@ type Trigger struct {
 	// it: a tick that was due while the cockpit was down is due when it comes
 	// back, once.
 	NextAt time.Time `json:"nextAt,omitempty"`
-	// SeenAt is the watermark of a job trigger: the newest job end it took. A
-	// job that closed while the cockpit was down is in jobs.json, and the
-	// startup pass fires it from there, see Reactor.Recover.
+	// SeenAt is the watermark the release before Ends recovered by: no job
+	// written to after it is published again. It is kept for a binary rolled
+	// back to that release, which reads nothing else, and raised past every
+	// end that is settled for this trigger, taken or not its kind, so that
+	// binary publishes none of them again. TODO(v2.0.0): drop with settle.
 	SeenAt time.Time `json:"seenAt,omitempty"`
+	// Since and Ends are a job trigger's account of the job ends it took, so a
+	// restart hands it the ones it missed and no other, see Reactor.Recover.
+	// Since is where the account begins: an end at or before it is none of
+	// the trigger's, it closed before the trigger was made. Ends are the ends
+	// it took, each written in the same write that puts the event into the
+	// window. A watermark alone cannot say it: two jobs close at almost the
+	// same time and the later end is taken first. An end whose job the store
+	// let go leaves the list, see settle.
+	Since time.Time `json:"since,omitempty"`
+	Ends  []JobEnd  `json:"ends,omitempty"`
+	// Taken is the account of every other source: the events this trigger
+	// took, the newest maxTriggerTakenKeys of them, each as the key of the
+	// identity its source gave it and written in the same write that takes the
+	// event. A source that cannot tell whether the reactor got an event before
+	// the process died hands it again, and the trigger that holds its key
+	// passes it over. No store stands behind these events the way the jobs
+	// stand behind Ends, so the bound is a number: a source hands again what
+	// was on its way when the process died, never what is that many events
+	// old.
+	Taken []string `json:"taken,omitempty"`
+	// TakenFolded is how many of the newest keys of Taken belong to events
+	// the fold of the window counts. The fold keeps no event apart, so this
+	// is what says that one of them still waits there, see waits. It goes
+	// with the fold, on the fire that spends it.
+	TakenFolded int `json:"takenFolded,omitempty"`
 	// Pending are the events waiting in the open batch window, BatchDue when
 	// that window closes. Both on disk, so a window survives a restart.
 	Pending  []CockpitEvent `json:"pending,omitempty"`
@@ -177,6 +222,180 @@ type Trigger struct {
 	// session of its own. A restart leaves it standing; the recovery clears
 	// it where no run is left.
 	ReactingSince time.Time `json:"reactingSince,omitempty"`
+	// Turn is the reaction that runs, from the fire that bought it to its
+	// conclusion: the events it reads, which left the window with that fire.
+	// On disk, so a restart finds them whatever became of the turn, see
+	// Reactor.adopt.
+	Turn *TriggerTurn `json:"turn,omitempty"`
+}
+
+// TriggerTurn is one reaction on its way. MessageID is the id its answer is
+// pushed into the thread under, so an answer lands once however often it is
+// concluded. Started says the turn got into the register of runs: before
+// that it waits for a wake slot and nothing but this entry knows of it.
+type TriggerTurn struct {
+	MessageID string         `json:"messageId"`
+	Events    []CockpitEvent `json:"events"`
+	Started   bool           `json:"started,omitempty"`
+}
+
+// JobEnd names one end of a job: its terminal and when it closed. The time
+// tells the ends of one terminal apart, a terminal steered again and a blocked
+// job taken up again both end once more. Folded says the fold of the window
+// counts this end, which is the only place that still knows it waits there,
+// see Trigger.TakenFolded.
+type JobEnd struct {
+	Terminal string    `json:"terminal"`
+	ClosedAt time.Time `json:"closedAt"`
+	Folded   bool      `json:"folded,omitempty"`
+}
+
+// is reports whether this is the end a job event stands for. A terminal that
+// took another id since the end was taken is still that terminal: the end
+// stands on the account under the key and in the store under the id, and the
+// two files are never written as one, so neither is renamed after the other.
+func (e JobEnd) is(ev CockpitEvent) bool {
+	return (e.Terminal == ev.Target || e.Terminal == ev.was) && e.ClosedAt.Equal(ev.Time)
+}
+
+// since is where this trigger's account of job ends begins. A trigger the
+// release before Ends wrote carries none, and its watermark is the answer:
+// that release took nothing past it. TODO(v2.0.0): read Since alone.
+func (s Trigger) since() time.Time {
+	if s.Since.IsZero() {
+		return s.SeenAt
+	}
+	return s.Since
+}
+
+// took reports whether this trigger already took that event: the end of a job
+// by its account of ends, an event of another source by the key of its
+// identity. An event its source gave no identity was never taken before.
+func (s Trigger) took(ev CockpitEvent) bool {
+	if ev.Source == EventJob {
+		return slices.ContainsFunc(s.Ends, func(e JobEnd) bool { return e.is(ev) })
+	}
+	return ev.ID != "" && slices.Contains(s.Taken, eventKey(ev.ID))
+}
+
+// eventKey is what an account keeps of an event's identity: a digest, so an
+// entry is the same few bytes whatever a source names its events by.
+func eventKey(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return base64.RawURLEncoding.EncodeToString(sum[:12])
+}
+
+// hold takes one event into this trigger's window and onto its account, and
+// reports whether the entry moved. It is the whole of a take that has to be
+// one write, so it runs inside the store's update and nowhere else: the
+// window, the account and the arrival of a target are on disk together or not
+// at all.
+//
+// An event is taken once. The same one comes several ways, a job's end from
+// the report that closed it, from the recovery reading the store and from the
+// seed of a barrier, an event of another source from a source that hands it
+// again after a crash, and the caller's copy of the trigger can be older than
+// what another of them wrote a moment ago. So the question is asked here,
+// inside the write, of the account that is written with every event and of
+// nothing else: an event that never got onto it is taken whenever it comes.
+//
+// No event is refused for want of room, whatever its source. The window keeps
+// maxTriggerWindowNotes events whole, and one that arrives past that is
+// folded into the last entry of the window, see fold. Once a fold stands,
+// everything after it is folded too, so the fold stays the last entry and the
+// events in front of it stay in the order they came.
+func (s *Trigger) hold(ev CockpitEvent, now time.Time) bool {
+	if !s.Open() {
+		return false
+	}
+	if s.took(ev) {
+		// It is not taken again, and where it still waits in the window its
+		// target has arrived: a barrier named that terminal after the event
+		// was taken.
+		return s.waits(ev) && s.mark(ev.Target, func(t *TriggerTarget) { t.Met = true })
+	}
+	folded := len(s.Pending) >= maxTriggerWindowNotes
+	if folded {
+		s.Pending = foldInto(s.Pending, ev)
+	} else {
+		s.Pending = append(s.Pending, ev)
+	}
+	s.mark(ev.Target, func(t *TriggerTarget) { t.Met = true })
+	switch {
+	case ev.Source == EventJob:
+		// The account is written with the event, in one write, so there is no
+		// moment in which the trigger holds one without the other. Since is
+		// pinned before the watermark moves: on a trigger of the release
+		// before, the watermark still is it.
+		s.Since = s.since()
+		s.Ends = append(s.Ends, JobEnd{Terminal: ev.Target, ClosedAt: ev.Time, Folded: folded})
+	case ev.ID != "":
+		s.Taken = append(s.Taken, eventKey(ev.ID))
+		if over := len(s.Taken) - maxTriggerTakenKeys; over > 0 {
+			s.Taken = slices.Clone(s.Taken[over:])
+		}
+		if folded {
+			s.TakenFolded++
+		}
+	}
+	if ev.Time.After(s.SeenAt) {
+		s.SeenAt = ev.Time
+	}
+	if s.BatchDue.IsZero() {
+		s.BatchDue = now.Add(s.Batch())
+	}
+	s.UpdatedAt = now
+	return true
+}
+
+// waits reports whether an event this trigger took still waits in its window:
+// whole, or counted by the fold. The fold is only names and a count, so for
+// what it counts the account answers: a window that folds takes nothing whole
+// until it is spent, which makes the events of the fold the last ones the
+// account took.
+func (s Trigger) waits(ev CockpitEvent) bool {
+	if ev.Source == EventJob {
+		if slices.ContainsFunc(s.Ends, func(e JobEnd) bool { return e.Folded && e.is(ev) }) {
+			return true
+		}
+	} else if at := slices.Index(s.Taken, eventKey(ev.ID)); at >= 0 && at >= len(s.Taken)-s.TakenFolded {
+		return true
+	}
+	return slices.ContainsFunc(s.Pending, func(p CockpitEvent) bool {
+		switch {
+		case p.folds():
+			return false
+		case ev.Source != EventJob:
+			return p.ID == ev.ID
+		}
+		return JobEnd{Terminal: p.Target, ClosedAt: p.Time}.is(ev)
+	})
+}
+
+// spend empties the window for a fire: the events go, and with them the
+// arrivals of a barrier's targets, so a standing one waits for every target
+// again, and what the account said of the fold. A gone target stays gone.
+func (s *Trigger) spend() []CockpitEvent {
+	events := s.Pending
+	s.Pending = nil
+	s.TakenFolded = 0
+	for i := range s.Ends {
+		s.Ends[i].Folded = false
+	}
+	for i := range s.Targets {
+		s.Targets[i].Met = false
+	}
+	return events
+}
+
+// Held is how many events the window holds, the folded ones counted.
+func (s Trigger) Held() int { return countEvents(s.Pending) }
+
+// missed reports whether a job end the store holds is one this trigger is
+// still owed: it fires on it, the job closed after the account began, and the
+// trigger never took it.
+func (s Trigger) missed(ev CockpitEvent) bool {
+	return s.matches(ev) && ev.Time.After(s.since()) && !s.took(ev)
 }
 
 // Reacting reports whether a reaction of this trigger runs right now.
@@ -260,14 +479,6 @@ func (s *Trigger) mark(terminal string, set func(*TriggerTarget)) bool {
 		return s.Targets[i] != before
 	}
 	return false
-}
-
-// clearMet takes the arrivals of a spent window back, so a standing barrier
-// waits for every target again. A gone target stays gone.
-func (s *Trigger) clearMet() {
-	for i := range s.Targets {
-		s.Targets[i].Met = false
-	}
 }
 
 // matches reports whether an event fires this trigger. A job event belongs to
@@ -726,6 +937,7 @@ func newTrigger(spec TriggerSpec, now time.Time) (Trigger, error) {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		SeenAt:       now,
+		Since:        now,
 	}
 	// A create names every field there is: what it left empty is the default
 	// the entry was seeded with, which is the same answer an unnamed field

@@ -7,12 +7,15 @@ import (
 
 	"github.com/marein/dev-cockpit/internal/approval"
 	"github.com/marein/dev-cockpit/internal/plaintext"
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // ApprovalReport is the end of an action the assistant asked for and the user
-// was asked about, as the web layer hands it here: the action's one line, how
-// it ended, and the event its kind publishes for that end, if any.
+// was asked about, as the web layer hands it here: the approval's id, the
+// action's one line, how it ended, and the event its kind publishes for that
+// end, if any.
 type ApprovalReport struct {
+	ID      string
 	Owner   string
 	What    string
 	Outcome approval.Outcome
@@ -51,7 +54,9 @@ type approvalNoteData struct {
 // writes a run's end, and publishes the event the report names for the
 // verdict. It rings the user unless the outcome is quiet, the user's own
 // click that went as decided. Returns the message id, empty when the owner is
-// gone.
+// gone. An end that is reported again, see approval.Service.Recover, leaves
+// the note that stands and publishes its event under the same name, the way
+// RecordCompose does.
 func (s *Service) RecordApproval(report ApprovalReport) string {
 	text := strings.TrimSuffix(render("approval_note.md.tmpl", approvalNoteData{
 		Verdict: report.Outcome.Verdict,
@@ -63,13 +68,23 @@ func (s *Service) RecordApproval(report ApprovalReport) string {
 		Verdict:  report.Outcome.Verdict,
 		Name:     strings.TrimSpace(report.What),
 	}
-	id, now := s.recordNote(report.Owner, note, text, report.Outcome.Quiet)
+	noteID := ""
+	if report.ID != "" {
+		noteID = statefile.DerivedID(nil, "approval", report.ID)
+	}
+	id, now := s.recordNote(report.Owner, noteID, note, text, report.Outcome.Quiet)
 	if id == "" {
 		log.Printf("assistant: the assistant that asked for %q is gone, dropping its report", report.What)
 		return ""
 	}
 	if kind, ok := report.Event.Kinds[report.Outcome.Verdict]; ok {
+		id := ""
+		if report.ID != "" {
+			// An approval ends once, so it and how it ended name the event.
+			id = "approval " + report.ID + " " + kind
+		}
 		s.publishEvent(CockpitEvent{
+			ID:       id,
 			Source:   report.Event.Source,
 			Kind:     kind,
 			Owner:    report.Owner,

@@ -48,10 +48,12 @@ func (s *Service) notesPath() string {
 }
 
 // OnReviewNote sets what hears of a note on the change request of a branch
-// the poller keeps, once per note, also across a restart: one somebody other
-// than the account of the host's token wrote after the poller first read the
-// review threads of that change request. The poller reads them while
-// somebody hears of them.
+// the poller keeps, per note, also across a restart: one somebody other than
+// the account of the host's token wrote after the poller first read the
+// review threads of that change request. fn hears of a note while the record
+// does not hold it yet and holds it on disk when it returns, see noteNotes:
+// it hears of one again where the record never got to move, and tells it by
+// its id. The poller reads the threads while somebody hears of them.
 func (s *Service) OnReviewNote(fn func(ReviewNote)) {
 	s.reviewMu.Lock()
 	defer s.reviewMu.Unlock()
@@ -65,25 +67,31 @@ func (s *Service) hearsNotes() bool {
 }
 
 // noteNotes keeps in the record of w's project the notes a read of the
-// review threads of change found, and publishes those the record did not
-// hold yet that self did not write, oldest first, once the record holds
-// them: a file it cannot read or write publishes nothing, so no note is ever
-// published twice. A change request the record does not hold is read for the
-// first time, and its notes were written before anybody watched. A partial
-// read forgets no note it did not reach.
+// review threads of change found, and hands on those the record did not hold
+// yet that self did not write, oldest first. Each is handed on before the
+// record holds it, and the record takes it in once that came back, one note
+// at a time: a process that dies in between finds the record without it,
+// reads the note again at its next start and hands it again, and never more
+// than the one it stood at, however many a read found. A file it cannot read
+// hands nothing on, and after one it cannot write the rest waits for the
+// next read. A change request the record does not hold is read for the first
+// time, and its notes were written before anybody watched. A partial read
+// forgets no note it did not reach. The lock stands over all of it, so two
+// reads of one note hand it once.
 func (s *Service) noteNotes(w Watch, change Change, review Review, self string) {
 	now := s.poll.now()
 	s.notesMu.Lock()
+	defer s.notesMu.Unlock()
 	var f notesFile
 	if err := statefile.Read(s.notesPath(), &f); err != nil {
-		s.notesMu.Unlock()
 		log.Printf("forge: %v", err)
 		return
 	}
+	s.reviewMu.Lock()
+	hear := s.onNote
+	s.reviewMu.Unlock()
 	records := f.Projects[w.Project]
-	at := slices.IndexFunc(records, func(r notesRecord) bool {
-		return r.Host == w.Binding.Host.ID && r.Path == w.Binding.Path && r.Change == change.Number
-	})
+	at := slices.IndexFunc(records, func(r notesRecord) bool { return r.of(w, change.Number) })
 	seen := map[string]bool{}
 	if at >= 0 {
 		for _, id := range records[at].Notes {
@@ -94,10 +102,11 @@ func (s *Service) noteNotes(w Watch, change Change, review Review, self string) 
 	var fresh []ReviewNote
 	for _, t := range slices.Concat(review.Diff, review.General) {
 		for _, n := range t.Notes {
-			ids = append(ids, n.ID)
-			if at >= 0 && !seen[n.ID] && (self == "" || !strings.EqualFold(n.Author, self)) {
+			if hear != nil && at >= 0 && !seen[n.ID] && (self == "" || !strings.EqualFold(n.Author, self)) {
 				fresh = append(fresh, ReviewNote{Watch: w, Change: change, Thread: t, Note: n})
+				continue
 			}
+			ids = append(ids, n.ID)
 		}
 	}
 	if review.Partial && at >= 0 {
@@ -105,12 +114,35 @@ func (s *Service) noteNotes(w Watch, change Change, review Review, self string) 
 	}
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
-	if at >= 0 && slices.Equal(ids, records[at].Notes) && now.Sub(records[at].At) < notesKept/2 {
-		s.notesMu.Unlock()
+	if len(fresh) == 0 {
+		if at < 0 || !slices.Equal(ids, records[at].Notes) || now.Sub(records[at].At) >= notesKept/2 {
+			s.keepNotes(&f, w, change.Number, ids, now)
+		}
 		return
 	}
-	record := notesRecord{Host: w.Binding.Host.ID, Path: w.Binding.Path, Change: change.Number, Notes: ids, At: now}
-	if at >= 0 {
+	slices.SortStableFunc(fresh, func(a, b ReviewNote) int { return a.Note.Created.Compare(b.Note.Created) })
+	for _, n := range fresh {
+		hear(n)
+		ids = append(ids, n.Note.ID)
+		if !s.keepNotes(&f, w, change.Number, ids, now) {
+			return
+		}
+	}
+}
+
+// of reports whether r is the record of the change request with that number
+// where w is bound.
+func (r notesRecord) of(w Watch, change int) bool {
+	return r.Host == w.Binding.Host.ID && r.Path == w.Binding.Path && r.Change == change
+}
+
+// keepNotes writes f with the record of that change request of w's project
+// holding ids as of now, and without the records nothing moved for longer
+// than notesKept. It reports whether the file took it. Under the notes' lock.
+func (s *Service) keepNotes(f *notesFile, w Watch, change int, ids []string, now time.Time) bool {
+	record := notesRecord{Host: w.Binding.Host.ID, Path: w.Binding.Path, Change: change, Notes: slices.Compact(slices.Sorted(slices.Values(ids))), At: now}
+	records := f.Projects[w.Project]
+	if at := slices.IndexFunc(records, func(r notesRecord) bool { return r.of(w, change) }); at >= 0 {
 		records[at] = record
 	} else {
 		records = append(records, record)
@@ -127,22 +159,11 @@ func (s *Service) noteNotes(w Watch, change Change, review Review, self string) 
 		}
 		f.Projects[project] = list
 	}
-	if err := s.write(s.notesPath(), f); err != nil {
-		s.notesMu.Unlock()
+	if err := s.write(s.notesPath(), *f); err != nil {
 		log.Printf("forge: the review notes could not be saved: %v", err)
-		return
+		return false
 	}
-	s.notesMu.Unlock()
-	s.reviewMu.Lock()
-	hear := s.onNote
-	s.reviewMu.Unlock()
-	if hear == nil {
-		return
-	}
-	slices.SortStableFunc(fresh, func(a, b ReviewNote) int { return a.Note.Created.Compare(b.Note.Created) })
-	for _, n := range fresh {
-		hear(n)
-	}
+	return true
 }
 
 // forgetNotes takes away the record of a project that is gone, so one made

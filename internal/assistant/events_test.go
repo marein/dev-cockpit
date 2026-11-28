@@ -969,12 +969,12 @@ func TestACoderNewsTriggerTakesEveryKind(t *testing.T) {
 	f.create(t)
 	f.reactor.SetCoderNamer(func(terminal string) (string, string) { return "either-way", "demo" })
 	f.trigger(t, TriggerSpec{Event: "coder-news", Task: "look at it", BatchSet: true})
-	f.reactor.Coder("term-1", CoderKindEnded)
+	f.reactor.Coder("term-1", CoderKindEnded, "")
 	ended := f.waitPushed(t, 1)
 	if ended.Origin.Headline != "Coder ended its turn: either-way in demo" {
 		t.Fatalf("want the end named as an end, got %q", ended.Origin.Headline)
 	}
-	f.reactor.Coder("term-1", CoderKindAsks)
+	f.reactor.Coder("term-1", CoderKindAsks, "")
 	asked := f.waitPushed(t, 2)
 	if asked.Origin.Headline != "Coder asks a question: either-way in demo" {
 		t.Fatalf("want the question named as a question, got %q", asked.Origin.Headline)
@@ -1115,18 +1115,21 @@ func TestADeletedCoderClosesItsJobAndDropsWhatOnlyItCouldFire(t *testing.T) {
 	if got := DroppedNote(dropped); got != "1 trigger dropped" {
 		t.Fatalf("want the one sentence about what fell, got %q, %+v", got, dropped)
 	}
-	if _, ok := f.reactor.Get(onDoomed.ID); ok {
-		t.Fatal("a trigger whose only terminal is gone still stands")
-	}
 	if _, ok := f.reactor.Get(anybody.ID); !ok {
 		t.Fatal("a trigger without targets must not be touched")
 	}
 
-	// It fired once for the deletion, in the words of the deletion.
+	// It fired once for the deletion, in the words of the deletion, and it
+	// goes with the end of that reaction: until then it holds what the
+	// reaction reads.
 	answer := f.waitPushed(t, 1)
 	if !strings.Contains(answer.Origin.Headline, "Coder deleted: doomed in demo") {
 		t.Fatalf("want the deletion as the event, got %+v", answer.Origin)
 	}
+	waitFor(t, "the trigger whose only terminal is gone to go", func() bool {
+		_, ok := f.reactor.Get(onDoomed.ID)
+		return !ok
+	})
 
 	// The barrier keeps standing on its live terminal, with the deleted one
 	// counted and its end in the window.
@@ -1228,12 +1231,12 @@ func TestAStoredSingleTargetReadsAsAListOfOne(t *testing.T) {
 	if read[0].Target != "" || read[0].TargetName != "" {
 		t.Fatalf("the old fields must not stay behind: %+v", read[0])
 	}
-	f.reactor.Coder("term-elsewhere", CoderKindAsks)
+	f.reactor.Coder("term-elsewhere", CoderKindAsks, "")
 	time.Sleep(100 * time.Millisecond)
 	if turns := len(f.reactionTurns()); turns != 0 {
 		t.Fatalf("it must still be about its own terminal, got %d turns", turns)
 	}
-	f.reactor.Coder("term-old", CoderKindAsks)
+	f.reactor.Coder("term-old", CoderKindAsks, "")
 	f.waitPushed(t, 1)
 }
 
@@ -1749,7 +1752,7 @@ func TestTheNextReactionTakesTheNewTask(t *testing.T) {
 	f.create(t)
 	trigger := f.trigger(t, TriggerSpec{Event: "coder-news", Task: "the first task", BatchSet: true})
 	f.edit(t, trigger.ID, TriggerSpec{Task: "the second task"})
-	f.reactor.Coder("term-1", CoderKindEnded)
+	f.reactor.Coder("term-1", CoderKindEnded, "")
 	f.waitPushed(t, 1)
 	prompt := ""
 	for _, req := range f.reactionTurns() {
@@ -1914,7 +1917,7 @@ func TestAnEditRefusesWhatItCannotChange(t *testing.T) {
 	// A one shot that fired is spent, and so is one that expired: they are
 	// refused with a sentence instead of quietly coming back to life.
 	once := f.trigger(t, TriggerSpec{Event: "coder-news", Task: "once only", Once: true, BatchSet: true})
-	f.reactor.Coder("term-1", CoderKindEnded)
+	f.reactor.Coder("term-1", CoderKindEnded, "")
 	f.waitPushed(t, 1)
 	if _, _, err := f.reactor.Edit(once.ID, f.owner.ID, TriggerSpec{Task: "again"}); err == nil {
 		t.Fatal("a trigger that is done must not be changed")
@@ -1956,7 +1959,7 @@ func TestAnEditSurvivesARestart(t *testing.T) {
 	f := newEventFixtureIn(t, dir, &fakeRunner{answer: eventAnswer})
 	owner := f.create(t)
 	trigger := f.trigger(t, TriggerSpec{Event: "coder-news", Task: "the old task"})
-	f.reactor.Coder("term-1", CoderKindEnded)
+	f.reactor.Coder("term-1", CoderKindEnded, "")
 	waitFor(t, "the event in the window", func() bool {
 		held, _ := f.reactor.Get(trigger.ID)
 		return len(held.Pending) == 1
@@ -1980,7 +1983,7 @@ func TestOnPublishSeesEveryEvent(t *testing.T) {
 	f := newEventFixture(t)
 	var seen []CockpitEvent
 	f.reactor.OnPublish(func(ev CockpitEvent) { seen = append(seen, ev) })
-	f.reactor.Coder("term-1", CoderKindAsks)
+	f.reactor.Coder("term-1", CoderKindAsks, "")
 	f.reactor.Publish(CockpitEvent{Source: EventCompose, Kind: ComposeKindDone, Headline: "up", Body: strings.Repeat("x", maxEventBodyRunes+10)})
 	if len(seen) != 2 || seen[0].Source != EventCoder || seen[0].Kind != CoderKindAsks || seen[1].Source != EventCompose {
 		t.Fatalf("OnPublish saw %+v", seen)

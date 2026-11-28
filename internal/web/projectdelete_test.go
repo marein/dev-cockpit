@@ -128,8 +128,9 @@ func deletionServer(t *testing.T, stateDir string, projects *project.Repository)
 		shares:       share.NewStore(stateDir),
 	}
 	s.restorer = restore.New(filepath.Join(stateDir, "terminal-restore.json"), func() bool { return false },
-		nil, shells, tmux.New(), notifier, nil, func() []string { return nil })
+		nil, shells, tmux.New(), notifier, nil, func() []string { return nil }, nil)
 	s.approvals = s.newApprovals(stateDir)
+	approvalsLetGo(t, stateDir)
 	return s
 }
 
@@ -315,7 +316,7 @@ func newDeleteFixture(t *testing.T) *composeFixture {
 	s.shares = share.NewStore(f.stateDir)
 	s.deletes = newProjectDeletes(f.stateDir)
 	s.restorer = restore.New(filepath.Join(f.stateDir, "terminal-restore.json"), func() bool { return false },
-		nil, s.shells, tmux.New(), s.notifier, nil, func() []string { return nil })
+		nil, s.shells, tmux.New(), s.notifier, nil, func() []string { return nil }, nil)
 	f.router.POST("/projects/delete", s.handleDeletes(s.projectDeleteKind(), "project", s.handleProjectDelete))
 	return f
 }

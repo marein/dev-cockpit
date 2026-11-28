@@ -38,7 +38,7 @@ type endsFile struct {
 }
 
 // endRecord is the branch and where it was bound, the pipeline it stood at
-// and its status, the final statuses of that pipeline already published,
+// and its status, the final statuses of that pipeline already handed on,
 // and when any of it last moved.
 type endRecord struct {
 	Branch   string    `json:"branch"`
@@ -54,13 +54,18 @@ func (s *Service) endsPath() string {
 	return filepath.Join(s.dir, "pipelines.json")
 }
 
-// OnPipelineEnd sets what hears of a pipeline end, once per pipeline and
-// final status of the branch the poller keeps of a project, also across a
-// restart.
-func (s *Service) OnPipelineEnd(fn func(PipelineEnd)) {
+// OnPipelineEnd sets what hears of a pipeline end, per pipeline and final
+// status of the branch the poller keeps of a project, also across a restart.
+// The two listeners want opposite things of a process that dies in the
+// middle, see noteEnd. take hears of an end while the record does not hold
+// it yet and holds it on disk when it returns: it hears of one again where
+// the record never got to move, and tells it by its pipeline and status.
+// told hears of it after, once, or not at all where the process dies right
+// there, and never twice.
+func (s *Service) OnPipelineEnd(take, told func(PipelineEnd)) {
 	s.endsMu.Lock()
 	defer s.endsMu.Unlock()
-	s.onEnd = fn
+	s.takeEnd, s.toldEnd = take, told
 }
 
 // pipelineKey names a pipeline apart from every other of its repository: by
@@ -110,22 +115,38 @@ func (r endRecord) next(w Watch, st BranchStatus, now time.Time) (endRecord, boo
 }
 
 // noteEnd keeps in the record of w's project what a read of the branch the
-// poller keeps there answered, and publishes the end of a pipeline this
-// read is the first to see once the record holds it: a file it cannot read
-// or write publishes nothing, so no end is ever published twice.
+// poller keeps there answered. The end of a pipeline this read is the first
+// to see is handed to whoever takes it before the record holds it, and the
+// record moves once that came back: a process that dies in between finds the
+// record where it stood, reads the same end again at its next start, as long
+// as the forge still tells it, and hands it again. Everybody else hears of
+// the end once the record holds it.
 func (s *Service) noteEnd(w Watch, st BranchStatus) {
+	if told := s.keepEnd(w, st); told != nil {
+		told(PipelineEnd{Watch: w, Status: st})
+	}
+}
+
+// keepEnd is the part of noteEnd under the lock, which stands over the hand
+// over and the write, so two reads of one end hand it once. It answers who
+// is told of an end the record now holds, nil without one: a file it cannot
+// read hands nothing on, and one it cannot write tells nobody, the next read
+// hands the end to the one that takes it again.
+func (s *Service) keepEnd(w Watch, st BranchStatus) func(PipelineEnd) {
 	now := s.poll.now()
 	s.endsMu.Lock()
+	defer s.endsMu.Unlock()
 	var f endsFile
 	if err := statefile.Read(s.endsPath(), &f); err != nil {
-		s.endsMu.Unlock()
 		log.Printf("forge: %v", err)
-		return
+		return nil
 	}
 	next, moved, ended := f.Projects[w.Project].next(w, st, now)
 	if !moved {
-		s.endsMu.Unlock()
-		return
+		return nil
+	}
+	if ended != "" && s.takeEnd != nil {
+		s.takeEnd(PipelineEnd{Watch: w, Status: st})
 	}
 	if f.Projects == nil {
 		f.Projects = map[string]endRecord{}
@@ -137,15 +158,13 @@ func (s *Service) noteEnd(w Watch, st BranchStatus) {
 	}
 	f.Projects[w.Project] = next
 	if err := s.write(s.endsPath(), f); err != nil {
-		s.endsMu.Unlock()
 		log.Printf("forge: the pipeline ends could not be saved: %v", err)
-		return
+		return nil
 	}
-	onEnd := s.onEnd
-	s.endsMu.Unlock()
-	if ended != "" && onEnd != nil {
-		onEnd(PipelineEnd{Watch: w, Status: st})
+	if ended == "" {
+		return nil
 	}
+	return s.toldEnd
 }
 
 // forgetEnds takes away the record of a project that is gone, so one made

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -117,6 +119,24 @@ func (f *composeFixture) waitApprovalNotes(t *testing.T, owner string, n int) []
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// approvalsLetGo keeps a test's state directory until its register of
+// approvals holds no settled entry any more: an approval leaves the register a
+// moment after its note landed, and a test that ends on that note would have
+// the directory removed under that write.
+func approvalsLetGo(t *testing.T, stateDir string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			var register map[string]approval.Approval
+			raw, _ := os.ReadFile(filepath.Join(stateDir, "approvals.json"))
+			_ = json.Unmarshal(raw, &register)
+			if !slices.ContainsFunc(slices.Collect(maps.Values(register)), func(a approval.Approval) bool { return a.Outcome != nil }) {
+				return
+			}
+		}
+	})
 }
 
 // waitNews waits for the target's unread entry, which the broker's change
@@ -240,8 +260,19 @@ func TestADeniedOrUnansweredComposeRunsNothing(t *testing.T) {
 	if runs := f.composeRuns(); len(runs) != 0 {
 		t.Fatalf("a declined command ran: %+v", runs)
 	}
-	if got, _ := f.s.assistants.Events().Get(trigger.ID); len(got.Pending) != 2 || got.Pending[0].Kind != assistant.ComposeKindDeclined {
+	got, _ := f.s.assistants.Events().Get(trigger.ID)
+	if len(got.Pending) != 2 || got.Pending[0].Kind != assistant.ComposeKindDeclined {
 		t.Fatalf("the compose-declined events read %+v", got.Pending)
+	}
+	// Each is named by its approval, so one handed again is the same event
+	// and the other approval's is another.
+	for _, ev := range got.Pending {
+		if !strings.HasPrefix(ev.ID, "approval ") || !strings.HasSuffix(ev.ID, " "+assistant.ComposeKindDeclined) {
+			t.Fatalf("the event of a declined approval is named %q", ev.ID)
+		}
+	}
+	if got.Pending[0].ID == got.Pending[1].ID {
+		t.Fatalf("two approvals name their events alike, %q", got.Pending[0].ID)
 	}
 	f.waitNoQuestion(t)
 }
@@ -580,6 +611,127 @@ func TestAWaitingApprovalIsDeclinedAfterARestart(t *testing.T) {
 	}
 	if !exists(f.dir) {
 		t.Fatal("the restart deleted the project")
+	}
+}
+
+// An approval the last process had settled stands in approvals.json with its
+// end, and the next process tells that end, not a decline of its own: the
+// approved command that could not start reads as failed and fires
+// compose-failed. A process that dies before it let the entry go leaves it
+// for the one after, which tells it again into the note that stands.
+func TestASettledApprovalIsToldWithItsOwnEndAfterARestart(t *testing.T) {
+	f := newComposeFixture(t)
+	trigger, err := f.s.assistants.Events().Add(assistant.TriggerSpec{Owner: f.owner, Event: "compose-failed", Task: "say so", Batch: time.Hour, BatchSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := `{"a1b2c3d4":{"id":"a1b2c3d4","owner":"` + f.owner + `","kind":"` + approvalComposeActions + `","key":"shop\ndown-volumes","what":"Compose down with volumes in shop","createdAt":"2026-11-20T10:00:00Z","outcome":{"verdict":"failed","text":"no reachable Docker host"}}}`
+	for range 2 {
+		if err := os.WriteFile(filepath.Join(f.stateDir, "approvals.json"), []byte(entry), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		restarted := &Server{assistants: f.s.assistants, settings: f.s.settings}
+		restarted.approvals = restarted.newApprovals(f.stateDir)
+		restarted.RecoverApprovals()
+
+		notes := f.waitApprovalNotes(t, f.owner, 1)
+		if len(notes) != 1 || notes[0].Note.Verdict != approval.Failed || !strings.Contains(notes[0].Content, "Approved, and it failed: no reachable Docker host") {
+			t.Fatalf("the thread holds %d notes, the first reads %+v\n%s", len(notes), notes[0].Note, notes[0].Content)
+		}
+		if got, _ := f.s.assistants.Events().Get(trigger.ID); len(got.Pending) != 1 || got.Pending[0].ID != "approval a1b2c3d4 "+assistant.ComposeKindFailed {
+			t.Fatalf("want the end once in the window, got %+v", got.Pending)
+		}
+		var left map[string]any
+		raw, _ := os.ReadFile(filepath.Join(f.stateDir, "approvals.json"))
+		if err := json.Unmarshal(raw, &left); err != nil || len(left) != 0 {
+			t.Fatalf("the restart left %s", raw)
+		}
+	}
+}
+
+// An approved compose command starts a run that reports its own end, named
+// after its approval. A process that dies behind that start and before the
+// approval's own end is written leaves the approval failed, how far it got
+// unknown, and the run in the register. The next process finds the run from
+// the approval and tells the approval the way it would have ended, approved
+// with the run it started: no compose-failed fires, the run's own end is the
+// one event of it, however often the start is told. Where the register holds
+// no such run nobody knows how far it got, and the one end is the failed one
+// that says so.
+func TestAnApprovedRunCutByARestartEndsOnce(t *testing.T) {
+	f := newComposeFixture(t)
+	window := func(event string) func() []string {
+		trigger, err := f.s.assistants.Events().Add(assistant.TriggerSpec{Owner: f.owner, Event: event, Task: "say so", Batch: time.Hour, BatchSet: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return func() []string {
+			got, _ := f.s.assistants.Events().Get(trigger.ID)
+			var ids []string
+			for _, ev := range got.Pending {
+				ids = append(ids, ev.ID)
+			}
+			return ids
+		}
+	}
+	failed, done := window("compose-failed"), window("compose-done")
+
+	f.compose(t, "down-volumes", true)
+	q := f.waitQuestion(t)
+	live, _ := askpass.ApprovalID(q.Key)
+	f.decide(t, q, true, false)
+	f.waitApprovalNotes(t, f.owner, 1)
+	if runs := f.composeRuns(); len(runs) != 1 || runs[0].ID != composeApprovalRun(live) {
+		t.Fatalf("want the approved run named after its approval %s, got %+v", live, runs)
+	}
+	f.waitNoteOf(t, composeApprovalRun(live))
+	approvalsLetGo(t, f.stateDir)
+
+	entry := func(id string) string {
+		return `{"` + id + `":{"id":"` + id + `","owner":"` + f.owner + `","kind":"` + approvalComposeActions + `","key":"shop\\n\\ndown-volumes","what":"Compose down with volumes in shop","title":"Compose down with volumes","createdAt":"2026-11-27T10:00:00Z","outcome":{"verdict":"failed","text":"the cockpit restarted while it ran, so how far it got is not known"}}}`
+	}
+	restart := func(id string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(f.stateDir, "approvals.json"), []byte(entry(id)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		restarted := &Server{assistants: f.s.assistants, settings: f.s.settings, docker: f.s.docker}
+		restarted.approvals = restarted.newApprovals(f.stateDir)
+		restarted.RecoverApprovals()
+		if raw, _ := os.ReadFile(filepath.Join(f.stateDir, "approvals.json")); strings.TrimSpace(string(raw)) != "{}" {
+			t.Fatalf("the restart left %s", raw)
+		}
+	}
+
+	p, _ := f.s.projects.FindByName("shop")
+	stack, _ := f.s.findStack(p, "")
+	action, _ := docker.ActionByID(f.s.composeActions(), "down-volumes")
+	run, err := f.s.startCompose(p, stack, action, f.owner, composeApprovalRun("a1b2c3d4"))
+	if err != nil || run != composeApprovalRun("a1b2c3d4") {
+		t.Fatalf("the run of the approval started as %q: %v", run, err)
+	}
+	f.waitNoteOf(t, run)
+	for range 2 {
+		restart("a1b2c3d4")
+		notes := f.waitApprovalNotes(t, f.owner, 2)
+		if len(notes) != 2 || notes[1].Note.Verdict != approval.Done || notes[1].Note.Headline != "Approved: Compose down with volumes in shop" || !strings.Contains(notes[1].Content, "Run "+run+" started") {
+			t.Fatalf("want the approval told as approved with the run it started, got %d notes, the last %+v\n%s", len(notes), notes[len(notes)-1].Note, notes[len(notes)-1].Content)
+		}
+		if got := failed(); len(got) != 0 {
+			t.Fatalf("a run that went through fired compose-failed: %v", got)
+		}
+		if got, want := done(), []string{"compose " + composeApprovalRun(live) + " " + assistant.ComposeKindDone, "compose " + run + " " + assistant.ComposeKindDone}; !slices.Equal(got, want) {
+			t.Fatalf("want the end of each run once, %v, got %v", want, got)
+		}
+	}
+
+	restart("e5f6a7b8")
+	notes := f.waitApprovalNotes(t, f.owner, 3)
+	if notes[2].Note.Verdict != approval.Failed || !strings.Contains(notes[2].Content, "how far it got is not known") {
+		t.Fatalf("want an approval whose run nobody finds told as failed, got %+v\n%s", notes[2].Note, notes[2].Content)
+	}
+	if got, want := failed(), []string{"approval e5f6a7b8 " + assistant.ComposeKindFailed}; !slices.Equal(got, want) || len(done()) != 2 {
+		t.Fatalf("want the one end that says nobody knows, %v, got %v beside %v", want, got, done())
 	}
 }
 

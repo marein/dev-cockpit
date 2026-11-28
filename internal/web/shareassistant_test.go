@@ -45,6 +45,7 @@ func newSharedAssistant(t *testing.T) *sharedAssistant {
 	s.watcher = assistant.NewWatcher(assistants, assistant.NewJobs(assistant.NewStore(stateDir)), nil, nil)
 	s.docker = docker.NewService(s.cfg.StateDir, func() string { return "" })
 	s.approvals = s.newApprovals(s.cfg.StateDir)
+	approvalsLetGo(t, s.cfg.StateDir)
 	s.lineComments = linecomment.New(stateDir)
 	root, err := s.projects.EnsureRoot()
 	if err != nil {

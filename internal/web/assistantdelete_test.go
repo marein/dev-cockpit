@@ -81,6 +81,7 @@ func TestASelfDeleteDoesNotWaitForTheCommandThatAsked(t *testing.T) {
 	s.settings = settings.New(filepath.Join(stateDir, "settings.json"))
 	setApprovalAsks(s.settings, approvalAssistantDelete, false)
 	s.approvals = s.newApprovals(stateDir)
+	approvalsLetGo(t, stateDir)
 	if _, err := assistants.Send(own.ID, "delete yourself", nil); err != nil {
 		t.Fatal(err)
 	}

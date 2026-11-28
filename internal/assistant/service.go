@@ -86,6 +86,7 @@ type Service struct {
 
 	onChange  func()
 	onDone    func(instanceID string)
+	onReport  func(instanceID, messageID string)
 	onRetitle func(id string)
 	render    func(string) (string, error)
 	agent     []string
@@ -139,6 +140,12 @@ func (s *Service) SetHooks(onChange func(), onDone func(instanceID string)) {
 	s.onChange = onChange
 	s.onDone = onDone
 }
+
+// OnReport registers who rings for the report of a job, the completion
+// notification of a message that can be handed twice: it hears the id of the
+// message with it, and tells by the id whether it rang for it before. Runs
+// outside the service lock.
+func (s *Service) OnReport(fn func(instanceID, messageID string)) { s.onReport = fn }
 
 // OnRetitle registers who hears that an assistant's title changed, by a
 // rename or by the first prompt that names it. Runs outside the service lock.

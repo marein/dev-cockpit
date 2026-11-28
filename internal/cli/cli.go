@@ -401,10 +401,11 @@ func runServe(opts serveOptions) error {
 	}
 	pushService.Start(notifier)
 
-	// The registry is built before the startup pass, which prunes the jobs of
-	// terminals that are gone the same way it prunes their notifications. It
-	// reaches every assistant's jobs, because a terminal that is gone is gone
-	// for whoever was steering it.
+	// The registry reaches every assistant's jobs, because a terminal is
+	// steered by whoever steers it. The startup pass prunes the jobs of
+	// terminals that are gone the same way it prunes their notifications, and
+	// does so through the reactor, which keeps a job whose end a trigger still
+	// misses until the recovery below handed it out.
 	jobs := assistant.NewJobs(assistant.NewStore(cfg.StateDir))
 
 	// The agent stands before the startup restore, whose sessions get their
@@ -417,7 +418,7 @@ func runServe(opts serveOptions) error {
 	restorer := restore.New(
 		filepath.Join(cfg.StateDir, "terminal-restore.json"),
 		func() bool { return settingsStore.Get(restore.SettingKey) == "on" },
-		coders, shells, tmuxClient, notifier, jobs,
+		coders, shells, tmuxClient, notifier, conversations.Events(),
 		func() []string {
 			var names []string
 			for _, p := range projectRepo.List() {
@@ -425,6 +426,7 @@ func runServe(opts serveOptions) error {
 			}
 			return names
 		},
+		func(id string) bool { return !conversations.Gone(id) },
 	)
 	restorer.SetLauncherReady(func(name string, timeout time.Duration) bool {
 		return name != ollama.Executable || launcher.WaitReachable(timeout)
@@ -521,6 +523,7 @@ func runServe(opts serveOptions) error {
 	// lists. Neither hook may run while the service holds its lock, both are
 	// called after it is released.
 	conversations.SetHooks(srv.PublishConversations, notifier.Add)
+	conversations.OnReport(notifier.AddOnce)
 	srv.SetPostScriptFailed(func(name string, run project.PostScriptRun) {
 		info := notify.TargetInfo{Name: name, Project: name, URL: "/projects#project-" + name, Failed: true}
 		info.Title, info.Detail = postScriptNews(name, run)
@@ -547,12 +550,12 @@ func runServe(opts serveOptions) error {
 		info := resolveTarget(terminal)
 		return info.Name, info.Project
 	})
-	notifier.SetEvent(func(targetID, hook string) {
+	notifier.SetEvent(func(targetID, hook, entry string) {
 		kind := assistant.CoderKindEnded
 		if hook == "Notification" {
 			kind = assistant.CoderKindAsks
 		}
-		events.Coder(targetID, kind)
+		events.Coder(targetID, kind, entry)
 	})
 	// A coder somebody steers has an assistant looking at it, so its own news
 	// stays quiet and that assistant's report is what the user hears. Whose
@@ -617,11 +620,14 @@ func runServe(opts serveOptions) error {
 	srv.SetForge(forgeService)
 	// The end of a pipeline of a bound project's checked out branch is an
 	// event the assistants may react to, once per pipeline and final status,
-	// and a failed one is news.
-	forgeService.OnPipelineEnd(pipelineEnded(events.Pipeline, notifier))
+	// and a failed one is news. The assistants hear of it first and hold it
+	// on disk before the forge's record of it moves, so a process that dies
+	// in between hands it again and none is lost; the news comes after.
+	forgeService.OnPipelineEnd(pipelineEnded(events.Pipeline), pipelineFailed(notifier))
 	// The review threads of that branch's change request stand among the
 	// project's line comment threads, kept in step by the poller, and a new
-	// note somebody else wrote is an event, once per note.
+	// note somebody else wrote is an event, once per note, handed over the
+	// same way.
 	forgeService.OnReview(srv.ForgeReview, srv.ForgeKept)
 	forgeService.OnReviewNote(func(n forge.ReviewNote) { events.ReviewComment(reviewReport(n)) })
 	backups.SetRestored(keepForgeOverrides(forgeService, projectRepo))
@@ -647,13 +653,16 @@ func runServe(opts serveOptions) error {
 	// The compose runs of the previous process are detached the same way and
 	// keep going too. This puts their busy marks and their directory claims
 	// back, and reports the ones that finished while nobody was there to hear
-	// it. It runs before anything can start a run of its own.
+	// it, and the ends of an assistant's runs that process had written down
+	// and still owed the report of. It runs before anything can start a run of
+	// its own.
 	dockerService.Recover()
 	// An approval waited on a question the last process held; nobody can
-	// answer it now, so each is declined and its assistant reads why. Which
-	// ones those are was read when the server was built, before the local API
-	// served: an approval a surviving turn asked for since is this process's
-	// own and keeps waiting.
+	// answer it now, so each is declined and its assistant reads why, and one
+	// that process had settled without its assistant hearing of it is told
+	// with the end it wrote down. Which ones those are was read when the
+	// server was built, before the local API served: an approval a surviving
+	// turn asked for since is this process's own and keeps waiting.
 	srv.RecoverApprovals()
 	// A job is looked at even when nothing reports: a coder that stopped, that
 	// ran out of room to think in or that waits on a question sends nothing at

@@ -67,8 +67,9 @@ type ComposeRecord struct {
 	// CancelledByUser says that cancel was the user's own click, so its end
 	// rings nobody, see ComposeRun.ByUser.
 	CancelledByUser bool `json:"cancelledByUser,omitempty"`
-	// Finished and everything below it are written once, when the run is over
-	// and has been reported. An entry carrying it is never taken up again.
+	// Finished and everything below it are written once, when the run is
+	// over, before its end is reported. An entry carrying it is never taken up
+	// again.
 	Finished bool      `json:"finished,omitempty"`
 	EndedAt  time.Time `json:"endedAt,omitempty"`
 	// Exited says the run wrote an exit code at all; Exit is that code. A run
@@ -76,6 +77,13 @@ type ComposeRecord struct {
 	Exited  bool   `json:"exited,omitempty"`
 	Exit    int    `json:"exit,omitempty"`
 	Failure string `json:"failure,omitempty"`
+	// Owed says the end of an owned run is written down while its report has
+	// not come back yet. It is set in the write that finishes the run and
+	// taken off once the report returned, so a process that dies in between
+	// reports that end again at its next start, see Recover. A run of the
+	// user's never carries it, its end rings the project once or, where the
+	// process dies right there, not at all.
+	Owed bool `json:"owed,omitempty"`
 }
 
 // runStore persists the register. One file, read through on every call like

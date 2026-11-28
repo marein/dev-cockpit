@@ -163,6 +163,11 @@ func composeNote(report ComposeReport) string {
 // (ByUser) rings nobody, it is news only to the thread. The project's docker
 // notification stays off for it, the thread's is the one. Returns the message
 // id, empty when the owner is gone.
+//
+// The docker layer reports an end again that it could not write down as
+// reported before the process died. The note is then in the thread already
+// and stays the one, and the event goes out under the same name, so a trigger
+// that took it passes it over and one that did not takes it now.
 func (s *Service) RecordCompose(report ComposeReport) string {
 	text := composeNote(report)
 	note := Note{
@@ -173,12 +178,20 @@ func (s *Service) RecordCompose(report ComposeReport) string {
 		Project:  strings.TrimSpace(report.Project),
 		Run:      report.Run,
 	}
-	id, now := s.recordNote(report.Owner, note, text, report.ByUser)
+	eventID, noteID := "", ""
+	if report.Run != "" {
+		// A run ends once, so the run and how it ended name the event, and
+		// the run alone its note.
+		eventID = "compose " + report.Run + " " + report.Kind()
+		noteID = statefile.DerivedID(nil, "compose", report.Run)
+	}
+	id, now := s.recordNote(report.Owner, noteID, note, text, report.ByUser)
 	if id == "" {
 		log.Printf("assistant: the assistant of compose run %s is gone, dropping its report", report.Run)
 		return ""
 	}
 	s.publishEvent(CockpitEvent{
+		ID:       eventID,
 		Source:   EventCompose,
 		Kind:     report.Kind(),
 		Target:   report.Run,
@@ -196,16 +209,30 @@ func (s *Service) RecordCompose(report ComposeReport) string {
 // action the assistant waited on in the background writes, a compose run and
 // an approval alike. Returns the message id and its stamp, an empty id
 // when the owner is gone.
-func (s *Service) recordNote(owner string, note Note, text string, byUser bool) (string, time.Time) {
+//
+// id is the id the note is written under, derived from what ended, empty for
+// a fresh one. An end that is reported a second time finds its note standing
+// under that id and writes, announces and rings nothing: the answer is the
+// note that stands, with the stamp it was written at.
+func (s *Service) recordNote(owner, id string, note Note, text string, byUser bool) (string, time.Time) {
 	s.mu.Lock()
 	c, ok := s.store.Load(owner)
 	if !ok {
 		s.mu.Unlock()
 		return "", time.Time{}
 	}
+	if id == "" {
+		id = statefile.NewID()
+	}
+	for _, existing := range c.Messages {
+		if existing.ID == id {
+			s.mu.Unlock()
+			return existing.ID, existing.CreatedAt
+		}
+	}
 	now := s.now().UTC()
 	message := Message{
-		ID:        statefile.NewID(),
+		ID:        id,
 		Role:      RoleCockpit,
 		Content:   text,
 		CreatedAt: now,

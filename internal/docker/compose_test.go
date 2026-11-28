@@ -1,8 +1,11 @@
 package docker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +115,23 @@ func newTestService(t *testing.T, stateDir string) (*Service, chan outcome) {
 	service.OnComposeDone(func(run ComposeRun, err error, output string) {
 		done <- outcome{run: run, err: err, output: output}
 	})
+	reported(t, service)
 	return service, done
+}
+
+// reported keeps a test's state directory until no run in it owes its report
+// any more: the end of an owned run is written down as reported a moment
+// after the completion callback returned, and a test that ends at the
+// callback would have the directory removed under that write.
+func reported(t *testing.T, service *Service) {
+	t.Helper()
+	t.Cleanup(func() {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			if !slices.ContainsFunc(service.runs.List(), func(rec ComposeRecord) bool { return rec.Owed }) {
+				return
+			}
+		}
+	})
 }
 
 func waitDone(t *testing.T, done chan outcome) outcome {
@@ -491,4 +510,209 @@ func TestLastComposeRunAnswersPerProject(t *testing.T) {
 	if again, ok := service.LastComposeRun("one"); !ok || again.Action != "Compose down" {
 		t.Fatalf("project one answered %+v, %v after its second run", again, ok)
 	}
+}
+
+// process is one server over a state directory whose completion callback
+// writes what it hears into heard and then, where dies says so, dies there:
+// the goroutine that reports ends in the callback, which is what a kill after
+// the end was written down and before the report came back leaves behind.
+func process(t *testing.T, stateDir string, heard chan outcome, dies bool, inside func(*Service, ComposeRun)) *Service {
+	t.Helper()
+	service := NewService(stateDir, func() string { return "" })
+	service.setState(State{Available: true, Host: "tcp://fake:1"})
+	service.OnComposeDone(func(run ComposeRun, err error, output string) {
+		if inside != nil {
+			inside(service, run)
+		}
+		heard <- outcome{run: run, err: err, output: output}
+		if dies {
+			runtime.Goexit()
+		}
+	})
+	if !dies {
+		reported(t, service)
+	}
+	return service
+}
+
+// recovered runs the recovery of a server to its end, also where the server
+// dies in it.
+func recovered(t *testing.T, service *Service) {
+	t.Helper()
+	over := make(chan struct{})
+	go func() {
+		defer close(over)
+		service.Recover()
+	}()
+	select {
+	case <-over:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the recovery never came back")
+	}
+}
+
+// ended registers a run the way a server that is gone left it, with what its
+// hold process wrote when it ended: an exit code, or none for a run that was
+// killed.
+func ended(t *testing.T, stateDir string, rec ComposeRecord, result string) {
+	t.Helper()
+	store := newRunStore(stateDir)
+	_, _, path, err := store.Files(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "" {
+		if err := os.WriteFile(path, []byte(result+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, _, _ := store.paths(rec.ID)
+	if err := os.WriteFile(out, []byte("compose says hi\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store.Save(rec)
+}
+
+// The end of a run an assistant started is owed from the write that finishes
+// it until its report came back, and the end of a run of the user's never.
+func TestTheEndOfAnOwnedRunIsOwedUntilItsReportCameBack(t *testing.T) {
+	fakeDockerCLI(t, 0, "")
+	for _, owner := range []string{"bot", ""} {
+		heard := make(chan outcome, 1)
+		var during ComposeRecord
+		service := process(t, t.TempDir(), heard, false, func(s *Service, run ComposeRun) { during, _ = s.runs.Get(run.ID) })
+		id, err := service.RunCompose(ComposeOptions{Dir: t.TempDir(), Label: "proj", Action: upAction(), Owner: owner})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitDone(t, heard)
+		if !during.Finished || during.Owed != (owner != "") {
+			t.Fatalf("while the report of a run of %q was on its way its entry read %+v", owner, during)
+		}
+		waitFor(t, "the report to be written down", func() bool {
+			rec, _ := service.runs.Get(id)
+			return !rec.Owed
+		})
+	}
+}
+
+// A server that dies between the end of an owned run and the return of its
+// report leaves that end owed, and the next one reports it again in the same
+// words: the same run, the same way it ended, the same output. That holds for
+// every way a run ends, for one that ended while a server was there and for
+// one that ended while none was. The start after that reports nothing.
+func TestAnEndTheLastServerStillOwedIsReportedAgain(t *testing.T) {
+	for _, c := range []struct {
+		name, result, failure string
+		rec                   ComposeRecord
+	}{
+		{name: "went through", result: "0"},
+		{name: "failed", result: "1", failure: "exit status 1"},
+		{name: "timed out", result: "124", failure: "timed out after 2m0s", rec: ComposeRecord{Timeout: 2 * time.Minute}},
+		{name: "killed", failure: "the run ended without a result"},
+		{name: "cancelled by the user", failure: "the run was cancelled", rec: ComposeRecord{Cancelled: true, CancelledByUser: true}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			rec := c.rec
+			rec.ID, rec.Dir, rec.Label, rec.Action, rec.Intent, rec.Owner = "run-1", t.TempDir(), "proj", "Compose up", "start", "bot"
+			ended(t, stateDir, rec, c.result)
+
+			heard := make(chan outcome, 4)
+			recovered(t, process(t, stateDir, heard, true, nil))
+			first := waitDone(t, heard)
+			if first.run.ID != "run-1" || first.run.Owner != "bot" || first.run.Failed != (c.failure != "") || first.run.ByUser != rec.CancelledByUser {
+				t.Fatalf("the end was reported as %+v", first.run)
+			}
+			if (first.err == nil) != (c.failure == "") || (first.err != nil && first.err.Error() != c.failure) {
+				t.Fatalf("want the failure %q, got %v", c.failure, first.err)
+			}
+			if left, _ := newRunStore(stateDir).Get("run-1"); !left.Finished || !left.Owed {
+				t.Fatalf("the server that died left %+v", left)
+			}
+
+			next := process(t, stateDir, heard, false, nil)
+			recovered(t, next)
+			again := waitDone(t, heard)
+			if again.run != first.run || again.output != first.output || fmt.Sprint(again.err) != fmt.Sprint(first.err) {
+				t.Fatalf("the end was reported again as %+v %v %q, first as %+v %v %q", again.run, again.err, again.output, first.run, first.err, first.output)
+			}
+			if left, _ := next.runs.Get("run-1"); !left.Finished || left.Owed {
+				t.Fatalf("the report that came back left %+v", left)
+			}
+			recovered(t, process(t, stateDir, heard, false, nil))
+			if len(heard) != 0 {
+				t.Fatalf("a reported end was reported once more: %+v", <-heard)
+			}
+		})
+	}
+}
+
+// The same for a run a server waited out itself: it dies in the report, the
+// next one reports the end again.
+func TestAnEndAServerWaitedForAndStillOwedIsReportedAgain(t *testing.T) {
+	fakeDockerCLI(t, 1, "")
+	stateDir := t.TempDir()
+	heard := make(chan outcome, 4)
+	id, err := process(t, stateDir, heard, true, nil).RunCompose(ComposeOptions{Dir: t.TempDir(), Label: "proj", Action: downAction(), Owner: "bot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := waitDone(t, heard)
+	recovered(t, process(t, stateDir, heard, false, nil))
+	again := waitDone(t, heard)
+	if first.run.ID != id || !first.run.Failed || again.run != first.run || again.output != first.output || !strings.Contains(again.output, "compose says hi") {
+		t.Fatalf("the end was reported as %+v %q, then as %+v %q", first.run, first.output, again.run, again.output)
+	}
+}
+
+// A run of the user's rings its project, which nothing tells apart from a
+// second ring, so its end is reported once whatever happens to the server in
+// the middle of it. So is the end of a run that was handed to the user after
+// its owner was found gone, and one a release before this account wrote down.
+func TestAnEndNobodyOwesIsReportedOnce(t *testing.T) {
+	disown := func(s *Service, run ComposeRun) {
+		if !s.DisownRun(run.ID) {
+			t.Error("the run was not handed to the user")
+		}
+	}
+	for _, c := range []struct {
+		name   string
+		owner  string
+		inside func(*Service, ComposeRun)
+	}{
+		{name: "a run of the user's"},
+		{name: "a run handed to the user", owner: "bot", inside: disown},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			ended(t, stateDir, ComposeRecord{ID: "run-1", Dir: t.TempDir(), Label: "proj", Action: "Compose up", Owner: c.owner}, "0")
+			heard := make(chan outcome, 4)
+			recovered(t, process(t, stateDir, heard, true, c.inside))
+			waitDone(t, heard)
+			recovered(t, process(t, stateDir, heard, false, nil))
+			if len(heard) != 0 {
+				t.Fatalf("the end was reported again: %+v", <-heard)
+			}
+			if left, _ := newRunStore(stateDir).Get("run-1"); !left.Finished || left.Owed || left.Owner != "" {
+				t.Fatalf("the entry reads %+v", left)
+			}
+		})
+	}
+	t.Run("a run the release before finished", func(t *testing.T) {
+		stateDir := t.TempDir()
+		index, _ := runPaths(stateDir)
+		if err := os.MkdirAll(filepath.Dir(index), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		entry := `[{"id":"run-1","dir":"/srv/shop","label":"shop","action":"Compose up","argv":["docker","compose","up","-d"],"timeout":120000000000,"owner":"bot","pid":4711,"startedAt":"2026-11-20T10:00:00Z","finished":true,"endedAt":"2026-11-20T10:00:05Z","exited":true}]`
+		if err := os.WriteFile(index, []byte(entry), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		heard := make(chan outcome, 1)
+		recovered(t, process(t, stateDir, heard, false, nil))
+		if len(heard) != 0 {
+			t.Fatalf("an end of the release before was reported again: %+v", <-heard)
+		}
+	})
 }

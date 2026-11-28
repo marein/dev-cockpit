@@ -62,7 +62,7 @@ func TestANewNoteIsReportedInTheForgesWords(t *testing.T) {
 		Note:   thread.Notes[1],
 	}
 	want := assistant.ReviewReport{
-		Project: "shop", Branch: "feature", Forge: "GitLab", Address: "gitlab.example.com/team/shop",
+		Note: "33", Project: "shop", Branch: "feature", Forge: "GitLab", Address: "gitlab.example.com/team/shop",
 		Change: assistant.ChangeRequest{Noun: "merge request", Ref: "!4", Title: "Fix the login", State: "open", Draft: true, Target: "main", URL: "https://gitlab.example.com/team/shop/-/merge_requests/4"},
 		Author: "alice", Body: "Yes, bb.", URL: "https://gitlab.example.com/team/shop/-/merge_requests/4#note_33",
 		Path: "src/login.go", Line: 4, Side: "new", Outdated: true, Reply: true, Opener: "root", Resolved: true, Thread: "d1", Resolvable: true,
@@ -89,7 +89,9 @@ func TestANewNoteIsReportedInTheForgesWords(t *testing.T) {
 }
 
 // Every end of a pipeline reaches the assistants, and a failed one alone is
-// the project's news, leading to the editor opened on the pipeline.
+// the project's news, leading to the editor opened on the pipeline. The two
+// are apart, the way the forge hands an end on: the assistants take it, and
+// the news comes once the forge's record holds it.
 func TestAFailedPipelineAloneIsNews(t *testing.T) {
 	kind := forge.Kind{ID: "gitlab", Label: "GitLab", ChangeNoun: "merge request", ChangeMark: "!"}
 	end := forge.PipelineEnd{
@@ -101,10 +103,12 @@ func TestAFailedPipelineAloneIsNews(t *testing.T) {
 	}
 	notifier := notify.NewService(filepath.Join(t.TempDir(), "notifications.json"), nil)
 	var published []string
-	ended := pipelineEnded(func(r assistant.PipelineReport) { published = append(published, r.Kind) }, notifier)
+	ended := pipelineEnded(func(r assistant.PipelineReport) { published = append(published, r.Kind) })
+	failed := pipelineFailed(notifier)
 	for _, status := range []forge.Status{forge.Success, forge.Canceled, forge.Skipped, forge.Manual} {
 		end.Status.Pipeline.Status = status
 		ended(end)
+		failed(end)
 	}
 	if list := notifier.List(0); len(list) != 0 {
 		t.Fatalf("an end that did not fail is news: %+v", list)
@@ -112,6 +116,10 @@ func TestAFailedPipelineAloneIsNews(t *testing.T) {
 	end.Status.Pipeline.Status = forge.Failed
 	end.Status.Pipeline.Jobs = []forge.Job{{Name: "unit", Status: forge.Failed}, {Name: "flaky", Status: forge.Failed, AllowFailure: true}}
 	ended(end)
+	if list := notifier.List(0); len(list) != 0 {
+		t.Fatalf("an end the assistants took is news before the forge told it: %+v", list)
+	}
+	failed(end)
 	want := []string{assistant.PipelineKindSucceeded, assistant.PipelineKindCanceled, assistant.PipelineKindSkipped, assistant.PipelineKindFailed}
 	if !reflect.DeepEqual(published, want) {
 		t.Fatalf("the assistants heard %v, want %v", published, want)

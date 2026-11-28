@@ -19,8 +19,10 @@ import (
 // thread, which Opener began, empty for an author the forge no longer
 // names, and Resolved whether the thread is. Thread is the forge's id of the
 // thread, which the writes on a thread take, "" for a note the forge keeps
-// alone, and Resolvable says the forge resolves it too.
+// alone, and Resolvable says the forge resolves it too. Note is the forge's
+// id of the note, which names the event.
 type ReviewReport struct {
+	Note       string
 	Project    string
 	Branch     string
 	Forge      string
@@ -147,7 +149,15 @@ func reviewBody(report ReviewReport) string {
 // ReviewComment publishes a note on a change request as an event. It is
 // everybody's, a trigger of any assistant on the project takes it.
 func (r *Reactor) ReviewComment(report ReviewReport) {
+	id := ""
+	if report.Note != "" {
+		// A forge numbers its notes within a change request at least, so the
+		// note, its change request and the repository name the event, for the
+		// project the poller read it for.
+		id = "review " + report.Note + " " + report.Change.Ref + " " + report.Address + " " + report.Project
+	}
 	r.Publish(CockpitEvent{
+		ID:       id,
 		Source:   EventForge,
 		Kind:     ReviewKindComment,
 		Project:  report.Project,

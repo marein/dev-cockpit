@@ -109,6 +109,7 @@ func newJobFixture(t *testing.T, verdict string) *jobFixture {
 	svc, store, _ := newTestService(t, runner)
 	news := make(chan string, 8)
 	svc.SetHooks(func() {}, func(conversationID string) { news <- conversationID })
+	svc.OnReport(func(conversationID, _ string) { news <- conversationID })
 	fixture := &jobFixture{
 		svc: svc, store: store, runner: runner,
 		news: news,
@@ -619,7 +620,7 @@ func TestAReportIsDroppedWhenItsAssistantIsGone(t *testing.T) {
 	}
 
 	gone := Job{Owner: "44444444-4444-4444-8444-444444444444", Terminal: "term-1", Name: "readme-task"}
-	if id := f.svc.recordWake(gone, "", VerdictDone, "the job is finished", ""); id != "" {
+	if id := f.svc.recordWake(gone, statefile.NewID(), VerdictDone, "the job is finished", ""); id != "" {
 		t.Fatalf("want no message written, got %q", id)
 	}
 	fresh, _ := f.svc.Get(other.ID)
@@ -1500,7 +1501,7 @@ func TestACheckSurvivesARestart(t *testing.T) {
 	// The restart: a new service and a new watcher over the same state.
 	restarted, _, _, _ := newTestServiceIn(t, dir, runner)
 	news := make(chan string, 4)
-	restarted.SetHooks(func() {}, func(conversationID string) { news <- conversationID })
+	restarted.OnReport(func(conversationID, _ string) { news <- conversationID })
 	watcher := NewWatcher(restarted, jobs, &fakeSessions{}, nil)
 
 	adopted := restarted.Recover()

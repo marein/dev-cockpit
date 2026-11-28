@@ -29,7 +29,7 @@ func TestPublishTerminalsFromOutsideIsTheOrdinaryTerminalsEvent(t *testing.T) {
 	s := &Server{
 		bus: eventbus.New(),
 		restorer: restore.New(filepath.Join(t.TempDir(), "terminals.json"),
-			func() bool { return false }, nil, shells, tmux.New(), nil, nil, nil),
+			func() bool { return false }, nil, shells, tmux.New(), nil, nil, nil, nil),
 	}
 	events, cancel := s.bus.Subscribe()
 	defer cancel()

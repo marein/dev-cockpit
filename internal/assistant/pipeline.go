@@ -116,10 +116,26 @@ func pipelineBody(report PipelineReport) string {
 	return strings.TrimSuffix(render("pipeline_event.md.tmpl", data), "\n")
 }
 
+// pipelineEventID names the end of a pipeline: the status it ended in and the
+// pipeline, by the forge's own number of it, else by the commit it ran on,
+// in its repository, for the project the poller read it for. The forge
+// service tells one pipeline's final status from another by the same parts.
+func pipelineEventID(report PipelineReport) string {
+	pipeline := "#" + report.ID
+	if report.ID == "" {
+		pipeline = "@" + report.Head
+	}
+	if len(pipeline) == 1 {
+		return ""
+	}
+	return "pipeline " + report.Kind + " " + pipeline + " " + report.Address + " " + report.Project
+}
+
 // Pipeline publishes the end of a pipeline as an event. It is everybody's,
 // a trigger of any assistant on the project takes it.
 func (r *Reactor) Pipeline(report PipelineReport) {
 	r.Publish(CockpitEvent{
+		ID:       pipelineEventID(report),
 		Source:   EventForge,
 		Kind:     report.Kind,
 		Project:  report.Project,

@@ -3,20 +3,23 @@ package forge
 import (
 	"context"
 	"os"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
-// endsOf has f hear of the pipeline ends its service publishes, and answers
-// what it heard so far, by status.
+// endsOf has f take the pipeline ends its service hands on, and answers
+// what it took so far, by status.
 func (f *pollFixture) endsOf() func() []Status {
 	var heard []Status
 	f.s.OnPipelineEnd(func(end PipelineEnd) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		heard = append(heard, end.Status.Pipeline.Status)
-	})
+	}, nil)
 	return func() []Status {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -24,6 +27,17 @@ func (f *pollFixture) endsOf() func() []Status {
 		heard = nil
 		return out
 	}
+}
+
+// ended reads the final statuses the record on disk holds of a project's
+// pipeline as handed on.
+func (f *pollFixture) ended(project string) []Status {
+	f.t.Helper()
+	var file endsFile
+	if err := statefile.Read(f.s.endsPath(), &file); err != nil {
+		f.t.Fatal(err)
+	}
+	return file.Projects[project].Ended
 }
 
 // restart is a new process on the same state directory, which knows
@@ -235,4 +249,145 @@ func TestPipelineEndsPublishNothingFromAFileTheyCannotRead(t *testing.T) {
 	f.pipeline("a1", "12", Success)
 	f.round(w)
 	f.expect(heard)
+}
+
+// The one that takes a pipeline's end hears of it while the record does not
+// hold it yet, so a process that dies there reads it again, and everybody
+// else is told once the record holds it.
+func TestAPipelineEndIsTakenBeforeItsRecordMovesAndToldAfter(t *testing.T) {
+	f := newPollFixture(t)
+	w := f.watch("app", "feature", "a1")
+	f.pipeline("a1", "12", Running)
+	f.round(w)
+	var order []string
+	f.s.OnPipelineEnd(func(end PipelineEnd) {
+		if held := f.ended("app"); len(held) != 0 {
+			t.Errorf("the record held %q before the end was taken", held)
+		}
+		order = append(order, "taken "+string(end.Status.Pipeline.Status))
+	}, func(end PipelineEnd) {
+		if held := f.ended("app"); !slices.Equal(held, []Status{Failed}) {
+			t.Errorf("the record held %q when the end was told", held)
+		}
+		order = append(order, "told "+string(end.Status.Pipeline.Status))
+	})
+	f.pipeline("a1", "12", Failed)
+	f.pass(pollFast)
+	f.round(w)
+	if want := []string{"taken failed", "told failed"}; !slices.Equal(order, want) {
+		t.Fatalf("the end was heard as %q, want %q", order, want)
+	}
+}
+
+// A process that dies while an end of any kind is taken leaves the record
+// where it stood: the next one reads the end again and hands it again, tells
+// it once its record holds it, and the one after that hears nothing. Nobody
+// was told by the process that died.
+func TestAPipelineEndIsHandedAgainUntilItsRecordMoved(t *testing.T) {
+	for _, status := range []Status{Success, Failed, Canceled, Skipped} {
+		t.Run(string(status), func(t *testing.T) {
+			f := newPollFixture(t)
+			w := f.watch("app", "feature", "a1")
+			f.pipeline("a1", "12", Running)
+			f.round(w)
+			var taken, told []Status
+			hear := func(dies bool) {
+				f.s.OnPipelineEnd(func(end PipelineEnd) {
+					taken = append(taken, end.Status.Pipeline.Status)
+					if dies {
+						runtime.Goexit()
+					}
+				}, func(end PipelineEnd) { told = append(told, end.Status.Pipeline.Status) })
+			}
+			hear(true)
+			f.pipeline("a1", "12", status)
+			f.pass(pollFast)
+			f.round(w)
+			if !slices.Equal(taken, []Status{status}) || len(told) != 0 || len(f.ended("app")) != 0 {
+				t.Fatalf("the process that died took %q, told %q and left %q in the record", taken, told, f.ended("app"))
+			}
+			f.restart()
+			hear(false)
+			f.round(w)
+			if !slices.Equal(taken, []Status{status, status}) || !slices.Equal(told, []Status{status}) || !slices.Equal(f.ended("app"), []Status{status}) {
+				t.Fatalf("the next process took %q, told %q and left %q in the record", taken, told, f.ended("app"))
+			}
+			f.restart()
+			hear(false)
+			f.round(w)
+			if len(taken) != 2 || len(told) != 1 {
+				t.Fatalf("a process after the record moved took %q and told %q", taken, told)
+			}
+		})
+	}
+}
+
+// An end whose record cannot be written is handed to the one that takes it
+// with every read, which tells an end handed again by its name, and told to
+// nobody else until the record holds it, then once.
+func TestAPipelineEndWhoseRecordCannotMoveIsToldOnceItDoes(t *testing.T) {
+	f := newPollFixture(t)
+	w := f.watch("app", "feature", "a1")
+	f.pipeline("a1", "12", Running)
+	f.round(w)
+	taken, told := 0, 0
+	f.s.OnPipelineEnd(func(PipelineEnd) { taken++ }, func(PipelineEnd) { told++ })
+	if err := os.Mkdir(f.s.endsPath()+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.pipeline("a1", "12", Failed)
+	for range 2 {
+		f.pass(pollSlow)
+		f.round(w)
+	}
+	if taken != 2 || told != 0 || len(f.ended("app")) != 0 {
+		t.Fatalf("with a record that cannot move the end was taken %d times and told %d times, the record holds %q", taken, told, f.ended("app"))
+	}
+	if err := os.Remove(f.s.endsPath() + ".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		f.pass(pollSlow)
+		f.round(w)
+	}
+	if taken != 3 || told != 1 {
+		t.Fatalf("once the record moved the end was taken %d times and told %d times in all, want 3 and 1", taken, told)
+	}
+}
+
+// Two reads that see one end, the poller's and the one behind forge-show,
+// hand it on once: the second waits until the record of the first moved.
+func TestTwoReadsOfOneEndHandItOnOnce(t *testing.T) {
+	f := newPollFixture(t)
+	w := f.watch("app", "feature", "a1")
+	f.pipeline("a1", "12", Running)
+	f.round(w)
+	taken, told := 0, 0
+	second := make(chan struct{})
+	f.s.OnPipelineEnd(func(PipelineEnd) {
+		if taken++; taken == 1 {
+			go func() {
+				defer close(second)
+				if _, err := f.s.Status(context.Background(), w, true); err != nil {
+					t.Error(err)
+				}
+			}()
+			for reads := f.reads(); f.reads() == reads; time.Sleep(time.Millisecond) {
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}, func(PipelineEnd) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		told++
+	})
+	f.pipeline("a1", "12", Failed)
+	f.pass(pollFast)
+	f.round(w)
+	<-second
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if taken != 1 || told != 1 {
+		t.Fatalf("two reads of one end handed it on %d times and told it %d times", taken, told)
+	}
 }

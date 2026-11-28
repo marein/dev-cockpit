@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/marein/dev-cockpit/internal/statefile"
 )
 
 // noteStub reads status like pollStub, the review threads of each change
@@ -305,5 +308,104 @@ func TestReviewNotesPublishNothingFromAFileTheyCannotRead(t *testing.T) {
 	f.round(lib)
 	f.stub.set(4, Review{Diff: []Thread{onLine("t1", note("n1", "alice", 1), note("n2", "bob", 2), note("n3", "carol", 3), note("n4", "dave", 4))}})
 	f.round(w)
+	f.expect()
+}
+
+// held reads the ids of the notes the record on disk holds of change request
+// 4 of a project.
+func (f *notesFixture) held(project string) []string {
+	f.t.Helper()
+	var file notesFile
+	if err := statefile.Read(f.s.notesPath(), &file); err != nil {
+		f.t.Fatal(err)
+	}
+	for _, r := range file.Projects[project] {
+		if r.Change == 4 {
+			return r.Notes
+		}
+	}
+	return nil
+}
+
+// threeNotes has change request 4 of f's branch read once with one note, and
+// then stand with three more of somebody else and one of the token's own
+// account between them.
+func (f *notesFixture) threeNotes() Watch {
+	w := f.watch("app", "feature", "a1")
+	f.change("a1", 4)
+	f.stub.set(4, Review{Diff: []Thread{onLine("t1", note("n1", "alice", 1))}})
+	f.round(w)
+	f.stub.set(4, Review{Diff: []Thread{onLine("t1", note("n1", "alice", 1), note("n2", "bob", 2), note("n3", "me", 3), note("n4", "carol", 4), note("n5", "dave", 5))}})
+	return w
+}
+
+// A note is handed on while the record does not hold it yet, and the record
+// takes it in before the next one is handed on: a process that dies anywhere
+// reads again the one note it stood at and those behind it, never one the
+// record took in. A note of the token's own account goes into the record
+// without a word.
+func TestANoteIsHandedOnBeforeItsRecordHoldsIt(t *testing.T) {
+	f := newNotesFixture(t)
+	w := f.threeNotes()
+	var before [][]string
+	f.s.OnReviewNote(func(n ReviewNote) {
+		before = append(before, append([]string{n.Note.ID + ":"}, f.held("app")...))
+	})
+	f.again(w)
+	want := [][]string{{"n2:", "n1"}, {"n4:", "n1", "n2", "n3"}, {"n5:", "n1", "n2", "n3", "n4"}}
+	if !slices.EqualFunc(before, want, func(a, b []string) bool { return slices.Equal(a, b) }) {
+		t.Fatalf("the notes were handed on over the records %q, want %q", before, want)
+	}
+	if held := f.held("app"); !slices.Equal(held, []string{"n1", "n2", "n3", "n4", "n5"}) {
+		t.Fatalf("the record holds %q in the end", held)
+	}
+}
+
+// A process that dies while a note is taken leaves the record without it:
+// the next one hands that note and the ones behind it again, none before it
+// and none of the token's own account, and the one after that hears nothing.
+func TestANoteIsHandedAgainUntilItsRecordHoldsIt(t *testing.T) {
+	f := newNotesFixture(t)
+	w := f.threeNotes()
+	f.s.OnReviewNote(func(n ReviewNote) {
+		f.nmu.Lock()
+		f.notes = append(f.notes, n)
+		f.nmu.Unlock()
+		if n.Note.ID == "n4" {
+			runtime.Goexit()
+		}
+	})
+	f.again(w)
+	f.expect("n2", "n4")
+	if held := f.held("app"); !slices.Equal(held, []string{"n1", "n2", "n3"}) {
+		t.Fatalf("the process that died left %q in the record", held)
+	}
+	f.restart()
+	f.round(w)
+	f.expect("n4", "n5")
+	f.restart()
+	f.round(w)
+	f.expect()
+}
+
+// After a record that cannot be written the rest of the notes waits: the
+// next read hands the one note again that the record did not take in, and
+// the ones behind it once the record moves.
+func TestNotesWaitBehindARecordThatCannotMove(t *testing.T) {
+	f := newNotesFixture(t)
+	w := f.threeNotes()
+	if err := os.Mkdir(f.s.notesPath()+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.again(w)
+	f.expect("n2")
+	f.again(w)
+	f.expect("n2")
+	if err := os.Remove(f.s.notesPath() + ".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	f.again(w)
+	f.expect("n2", "n4", "n5")
+	f.again(w)
 	f.expect()
 }

@@ -120,8 +120,7 @@ func (f *pollFixture) pass(d time.Duration) {
 
 // round looks at the watches once and waits for the reads it started.
 func (f *pollFixture) round(ws ...Watch) {
-	f.start(ws...)
-	f.s.poll.reads.Wait()
+	f.s.PollOnce(context.Background(), func(context.Context, func(Binding) bool) ([]Watch, error) { return ws, nil })
 }
 
 func (f *pollFixture) start(ws ...Watch) {

@@ -54,8 +54,9 @@ type Service struct {
 
 	mu sync.Mutex
 
-	endsMu sync.Mutex
-	onEnd  func(PipelineEnd)
+	endsMu  sync.Mutex
+	takeEnd func(PipelineEnd)
+	toldEnd func(PipelineEnd)
 
 	reviewMu    sync.Mutex
 	onReview    func(ReviewRead)

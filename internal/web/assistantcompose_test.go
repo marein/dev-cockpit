@@ -515,6 +515,44 @@ func TestAnOwnedRunEndingAfterItsOwnerIsGoneRingsTheProject(t *testing.T) {
 	}
 }
 
+// The docker layer reports the end of an owned run a second time when the
+// last process died before it could write down that the report came back.
+// The second report finds the note in the thread: it writes no second one,
+// the run stays its owner's and the project is not rung, and a trigger that
+// took the end passes it over.
+func TestTheEndOfAnOwnedRunReportedAgainStaysOneNoteInItsThread(t *testing.T) {
+	f := newComposeFixture(t)
+	trigger, err := f.s.assistants.Events().Add(assistant.TriggerSpec{Owner: f.owner, Event: "compose-ended", Task: "say so", Batch: time.Hour, BatchSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, answer := f.compose(t, "up", true)
+	id := answer["run"].(string)
+	f.waitNoteOf(t, id)
+
+	f.s.composeDone(docker.ComposeRun{ID: id, Dir: f.dir, Label: "shop", Action: "Compose up", Owner: f.owner, Exited: true}, nil, "compose says hi")
+
+	current, _ := f.s.assistants.Get(f.owner)
+	notes := 0
+	for _, m := range current.Messages {
+		if m.IsNote() && m.Note.Source == assistant.NoteCompose && m.Note.Run == id {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("want the one note of the run, got %d", notes)
+	}
+	if view := f.run(t, id); view.Owner != f.owner {
+		t.Fatalf("the second report handed the run to the user: %+v", view)
+	}
+	if f.notifier.UnreadTargets()[notify.DockerTarget("shop")] {
+		t.Fatal("the second report rang the project")
+	}
+	if got, _ := f.s.assistants.Events().Get(trigger.ID); len(got.Pending) != 1 || got.Pending[0].ID != "compose "+id+" "+assistant.ComposeKindDone {
+		t.Fatalf("want the end once in the window, got %+v", got.Pending)
+	}
+}
+
 // Restoring a backup writes the settings the approvals and the compose
 // commands stand on, so an import and a merge are the user's act and refused
 // over the local socket like every other settings save.
@@ -561,6 +599,9 @@ func TestTheUsersCancelOfARunningRunRingsNobody(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if got, _ := f.s.assistants.Events().Get(trigger.ID); len(got.Pending) == 1 {
+			if want := "compose " + byUser + " " + assistant.ComposeKindFailed; got.Pending[0].ID != want {
+				t.Fatalf("the event of the run is named %q, want %q", got.Pending[0].ID, want)
+			}
 			break
 		}
 		if time.Now().After(deadline) {

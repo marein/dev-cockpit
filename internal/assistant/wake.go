@@ -96,17 +96,17 @@ func (s *Service) startWake(spec wakeSpec) (*activeRun, error) {
 // is spent: a provider session of its own, the wake slot, the register. The
 // reaction sees the owner's instruction file, the memory and the workspace
 // files, and nothing of the conversation; what its answer means for the thread
-// is the reactor's decision, and the id that answer is pushed under is
-// reserved here so a restart pushes it once. model is the trigger's own,
-// empty for one that follows the owner's Triggers pick, else the owner's
-// chat, see ModelFor.
-func (s *Service) startReaction(owner string, origin Note, prompt, model string) (*activeRun, error) {
+// is the reactor's decision, and messageID is the id that answer is pushed
+// under, reserved by the fire so a restart pushes it once. model is the
+// trigger's own, empty for one that follows the owner's Triggers pick, else
+// the owner's chat, see ModelFor.
+func (s *Service) startReaction(owner string, origin Note, prompt, model, messageID string) (*activeRun, error) {
 	if strings.TrimSpace(prompt) == "" {
 		return nil, errors.New("A reaction needs a prompt.")
 	}
 	return s.startOwnSession(owner, prompt, reactionSessionName, model, RunRecord{
 		Kind:      RunReaction,
-		MessageID: statefile.NewID(),
+		MessageID: messageID,
 		Origin:    &origin,
 		// A model the trigger names is the one ModelFor answers with, so this
 		// is where it is written down that the pick stands on the trigger.
@@ -223,9 +223,13 @@ func (s *Service) killChecks(terminal string) {
 // looking at, a report would arrive in a thread that never asked for it, with
 // nothing in that thread to make sense of it.
 //
-// The id comes from the check's register entry, so concluding the same check
-// twice writes one message and not two. A report that belongs to no check (a job
-// that ran out) gets a fresh one.
+// The id is the one the close wrote on the job with the report, the check's
+// own out of its register entry where a check concluded, so a report that is
+// written again, by the process that found it on the job after the last one
+// died, lands on the message that is already there: one message, one
+// announcement and one event, see Watcher.deliver. The thread and the news
+// are two files as well, and the process may have died between them, so such
+// a report is rung for again, under its id: whoever rings holds it once.
 func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text, model string) string {
 	s.mu.Lock()
 	c, ok := s.store.Load(job.Owner)
@@ -234,12 +238,12 @@ func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text, m
 		log.Printf("assistant: the assistant of the job on %s is gone, dropping its report", job.Terminal)
 		return ""
 	}
-	if messageID == "" {
-		messageID = statefile.NewID()
-	}
 	for _, existing := range c.Messages {
 		if existing.ID == messageID {
 			s.mu.Unlock()
+			if s.onReport != nil {
+				s.onReport(c.ID, messageID)
+			}
 			return messageID
 		}
 	}
@@ -279,20 +283,17 @@ func (s *Service) recordWake(job Job, messageID string, verdict Verdict, text, m
 	// without touching a chat answer that may be streaming at the same time.
 	s.hub.publish(c.ID, StreamEvent{Kind: FrameMessage, MessageID: message.ID})
 	s.changed()
-	if s.onDone != nil {
-		s.onDone(c.ID)
+	if s.onReport != nil {
+		s.onReport(c.ID, message.ID)
 	}
 	// The report is also an event: a trigger on this job's end fires on it, in
-	// the owner's own thread.
-	s.publishEvent(CockpitEvent{
-		Source:   EventJob,
-		Kind:     string(verdict),
-		Target:   job.Terminal,
-		Owner:    job.Owner,
-		Time:     now,
-		Headline: "Job " + strings.ToLower(string(verdict)) + ": " + noteName(name, job.Terminal) + inProject(project),
-		Body:     text,
-	})
+	// the owner's own thread. It is the event the recovery reads out of the
+	// entry, under the same time, so an end is one end whichever way it comes;
+	// only the body is the whole report here and the entry's one line there.
+	if ev, ok := jobEvent(job); ok {
+		ev.Body = text
+		s.publishEvent(ev)
+	}
 	return message.ID
 }
 

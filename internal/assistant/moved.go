@@ -49,6 +49,7 @@ func (s *JobStore) move(from, to string) (Job, bool) {
 		return Job{}, false
 	}
 	list[at].Terminal = to
+	list[at].MovedFrom = from
 	s.write(list)
 	return list[at], true
 }

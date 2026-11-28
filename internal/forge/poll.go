@@ -231,6 +231,14 @@ func (s *Service) Run(ctx context.Context, watches func(ctx context.Context, pol
 	}
 }
 
+// PollOnce is one round of Run that waits: it looks at the branches watches
+// names once and comes back when the reads it started are over, with
+// whatever they handed on.
+func (s *Service) PollOnce(ctx context.Context, watches func(ctx context.Context, polled func(Binding) bool) ([]Watch, error)) {
+	s.pollRound(ctx, watches)
+	s.poll.reads.Wait()
+}
+
 // pollRound looks at the branches watches names once: it starts a read of
 // each one due, new or moved, and forgets the ones no longer named. Without
 // a token on any host watches is not asked, nothing would be read. A read

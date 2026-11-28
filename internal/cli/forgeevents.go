@@ -61,6 +61,7 @@ func changeRequest(k forge.Kind, c forge.Change) assistant.ChangeRequest {
 func reviewReport(n forge.ReviewNote) assistant.ReviewReport {
 	w, t := n.Watch, n.Thread
 	report := assistant.ReviewReport{
+		Note:     n.Note.ID,
 		Project:  w.Project,
 		Branch:   w.Branch,
 		Forge:    w.Binding.Host.Kind.Label,
@@ -84,17 +85,25 @@ func reviewReport(n forge.ReviewNote) assistant.ReviewReport {
 	return report
 }
 
-// pipelineEnded hands every end of a pipeline to the assistants and a failed
-// one to notifier as the project's news, which leads to the editor's git
-// sheet: that shows the pipeline with its jobs and the logs of the failed ones.
-func pipelineEnded(publish func(assistant.PipelineReport), notifier *notify.Service) func(forge.PipelineEnd) {
+// pipelineEnded hands every end of a pipeline to the assistants. The forge
+// hands an end again where a process died before its record of the end
+// moved, and the assistants take it once by the name the report gives it.
+func pipelineEnded(publish func(assistant.PipelineReport)) func(forge.PipelineEnd) {
+	return func(end forge.PipelineEnd) {
+		if report, ok := pipelineReport(end); ok {
+			publish(report)
+		}
+	}
+}
+
+// pipelineFailed makes a failed pipeline the project's news with notifier,
+// which leads to the editor's git sheet: that shows the pipeline with its
+// jobs and the logs of the failed ones. News cannot tell an end handed again
+// from a second one, so the forge tells it once its record holds the end.
+func pipelineFailed(notifier *notify.Service) func(forge.PipelineEnd) {
 	return func(end forge.PipelineEnd) {
 		report, ok := pipelineReport(end)
-		if !ok {
-			return
-		}
-		publish(report)
-		if report.Kind != assistant.PipelineKindFailed {
+		if !ok || report.Kind != assistant.PipelineKindFailed {
 			return
 		}
 		info := notify.TargetInfo{Name: report.Project, Project: report.Project, URL: "/projects/" + url.PathEscape(report.Project) + "/editor?view=pipeline", Failed: true}

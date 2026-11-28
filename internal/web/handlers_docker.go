@@ -19,6 +19,7 @@ import (
 	"github.com/marein/dev-cockpit/internal/eventbus"
 	"github.com/marein/dev-cockpit/internal/notify"
 	"github.com/marein/dev-cockpit/internal/project"
+	"github.com/marein/dev-cockpit/internal/statefile"
 	"github.com/marein/dev-cockpit/internal/web/render"
 )
 
@@ -266,7 +267,7 @@ func (s *Server) handleDockerCompose(c *gin.Context) {
 	if owner != "" && action.Confirm && s.askApproval(c, s.composeApproval(owner, p, stack, action)) {
 		return
 	}
-	id, err := s.startCompose(p, stack, action, owner)
+	id, err := s.startCompose(p, stack, action, owner, "")
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -278,14 +279,16 @@ func (s *Server) handleDockerCompose(c *gin.Context) {
 }
 
 // startCompose starts one compose command on one stack, owned by an
-// assistant where owner names one.
-func (s *Server) startCompose(p project.Project, stack docker.Stack, action docker.Action, owner string) (string, error) {
+// assistant where owner names one, under the id run names, a fresh one where
+// it is empty.
+func (s *Server) startCompose(p project.Project, stack docker.Stack, action docker.Action, owner, run string) (string, error) {
 	id, err := s.docker.RunCompose(docker.ComposeOptions{
 		Dir:    stack.Dir,
 		Root:   p.Path,
 		Label:  p.Name,
 		Action: action,
 		Owner:  owner,
+		ID:     run,
 	})
 	if err != nil {
 		return "", err
@@ -294,11 +297,40 @@ func (s *Server) startCompose(p project.Project, stack docker.Stack, action dock
 	return id, nil
 }
 
+// composeApprovalRun is the id of the run an approved compose command starts,
+// named after its approval: the run is one write and the approval's end
+// another, and a process that dies between them leaves a run only this name
+// leads back to, see composeApprovalStarted.
+func composeApprovalRun(id string) string {
+	return statefile.DerivedID(nil, "compose-approval", id)
+}
+
+// composeApprovalStarted answers how the approval of a compose command ended
+// whose process died over its run: with the run it started, where the
+// register of runs holds that run. The run reports its own end, so the
+// approval ends the way it would have, as approved, and publishes nothing.
+// False where no such run is registered: nobody knows then how far it got.
+func (s *Server) composeApprovalStarted(a approval.Approval) (approval.Outcome, bool) {
+	if a.Kind != approvalComposeActions || s.docker == nil {
+		return approval.Outcome{}, false
+	}
+	run, ok := s.docker.ComposeRunByID(composeApprovalRun(a.ID))
+	if !ok {
+		return approval.Outcome{}, false
+	}
+	stack := ""
+	if key := strings.Split(a.Key, "\n"); len(key) == 3 {
+		stack = key[1]
+	}
+	return approval.Outcome{Verdict: approval.Done, Text: assistant.ComposeStarted(run.ID, run.Action, run.Project, stack), Quiet: true}, true
+}
+
 // composeApproval is the approval a confirm compose command of an assistant
 // waits for. The same command on the same stack waits once. Its run resolves
 // the project, the stack and the command again by name, the settings may have
 // moved in the half hour the question may stand.
 func (s *Server) composeApproval(owner string, p project.Project, stack docker.Stack, action docker.Action) approval.Request {
+	id := statefile.NewID()
 	what := action.Label + " in " + p.Name
 	where := "project root"
 	if stack.Label != "" {
@@ -317,6 +349,7 @@ func (s *Server) composeApproval(owner string, p project.Project, stack docker.S
 	}
 	name, label, actionID := p.Name, stack.Label, action.ID
 	return approval.Request{
+		ID:       id,
 		Owner:    owner,
 		Kind:     approvalComposeActions,
 		Key:      strings.Join([]string{name, label, actionID}, "\n"),
@@ -339,7 +372,7 @@ func (s *Server) composeApproval(owner string, p project.Project, stack docker.S
 			if !ok {
 				return "", errors.New("the compose command no longer exists")
 			}
-			run, err := s.startCompose(p, stack, action, owner)
+			run, err := s.startCompose(p, stack, action, owner, composeApprovalRun(id))
 			if err != nil {
 				return "", err
 			}

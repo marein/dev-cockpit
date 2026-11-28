@@ -30,6 +30,7 @@ func promptNewsServer(t *testing.T) (*Server, *askpass.Broker, string) {
 		bus:      eventbus.New(),
 	}
 	s.approvals = s.newApprovals(dir)
+	approvalsLetGo(t, dir)
 	return s, broker, askpass.SocketPath(dir)
 }
 

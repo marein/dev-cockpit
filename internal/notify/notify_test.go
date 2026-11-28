@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -352,11 +354,63 @@ func TestAFailureAndASuccessInsideTheWindowNeverMix(t *testing.T) {
 	}
 }
 
+// News rung under a key is rung once, however often it is handed: by the
+// process that died right behind the ring and the one that found the report
+// still owed, long after the quiet window and after the entry was read. A
+// ring the process died before is the first under its key and rings, and so
+// does other news of the same target.
+func TestNewsRungUnderAKeyRingsOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notifications.json")
+	clock := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	start := func() (*Service, func() []Event) {
+		s := NewService(path, nil)
+		s.now = func() time.Time { return clock }
+		return s, collect(t, s)
+	}
+	rings := func(events []Event) int {
+		n := 0
+		for _, ev := range events {
+			if ev.Added != nil {
+				n++
+			}
+		}
+		return n
+	}
+
+	s, published := start()
+	s.AddOnce("helper", "report-1")
+	if got := s.List(0); len(got) != 1 || got[0].Key != "report-1" || got[0].Read || rings(published()) != 1 {
+		t.Fatalf("want one unread entry under its key and one ring, got %+v", got)
+	}
+
+	clock = clock.Add(time.Hour)
+	s, published = start()
+	s.AddOnce("helper", "report-1")
+	if got := s.List(0); len(got) != 1 || rings(published()) != 0 {
+		t.Fatalf("want the next process to ring nobody for news that rang, got %+v", got)
+	}
+	s.MarkAllRead()
+	s.AddOnce("helper", "report-1")
+	if got := s.List(0); len(got) != 1 || !got[0].Read || len(published()) != 1 {
+		t.Fatalf("want news that was read to stay read and rung once, got %+v", got)
+	}
+
+	s.AddOnce("helper", "report-2")
+	if got := s.List(0); len(got) != 2 || got[0].Key != "report-2" || got[0].Read || rings(published()) != 1 {
+		t.Fatalf("want the news the last process died before rung by this one, got %+v", got)
+	}
+	clock = clock.Add(time.Minute)
+	s.Add("helper")
+	s.Add("helper")
+	if got := s.List(0); len(got) != 2 || got[0].Key != "" || rings(published()) != 1 {
+		t.Fatalf("want news without a key to follow the quiet window alone, got %+v", got)
+	}
+}
+
 // A compose target names a project, and a git question's does too. The
-// restore pass puts the targets of every existing project into the keep set,
-// so the prune is a plain membership check: what belongs to a project that
-// still exists stays, what belongs to a deleted one goes with it, like a dead
-// terminal's entries do.
+// restore pass answers for the targets of every existing project, so what
+// belongs to a project that still exists stays, what belongs to a deleted one
+// goes with it, like a dead terminal's entries do.
 func TestPruneDropsTheTargetsOfDeletedProjects(t *testing.T) {
 	s := testService(t)
 	s.Add(DockerTarget("alive"))
@@ -367,7 +421,7 @@ func TestPruneDropsTheTargetsOfDeletedProjects(t *testing.T) {
 		DockerTarget("alive"):    true,
 		GitPromptTarget("alive"): true,
 	}
-	if removed := s.PruneTargets(keep); removed != 2 {
+	if removed := s.PruneTargets(func(targetID string) bool { return keep[targetID] }); removed != 2 {
 		t.Fatalf("the prune removed %d entries", removed)
 	}
 	list := s.List(0)
@@ -412,7 +466,7 @@ func TestEveryInboxHookReachesTheListenerWithItsWriteTime(t *testing.T) {
 	write("1792071315017168193-11.json", `{"terminal":"term-1","event":{"session_id":"cleared-2","hook_event_name":"SessionStart","source":"resume"}}`, written.Add(3*time.Second))
 	write("1792071315017168194-11.json", `{"terminal":"term-1","event":{"session_id":"cleared-2","hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission"}}`, written.Add(8*time.Second))
 	write("1792071315017-22-0.json", `{"session_id":"term-2","hook_event_name":"Stop","message":""}`, written.Add(20*time.Second))
-	s.drainInbox(dir, "claude")
+	s.DrainInbox(dir, "claude")
 
 	if len(heard) != 6 {
 		t.Fatalf("want every hook heard, got %+v", heard)
@@ -438,6 +492,210 @@ func TestEveryInboxHookReachesTheListenerWithItsWriteTime(t *testing.T) {
 	}
 	if len(targetsWithNews) != 2 || !targetsWithNews["term-1"] || !targetsWithNews["term-2"] {
 		t.Fatalf("only Stop and Notification are news, each under its terminal, got %v", targetsWithNews)
+	}
+}
+
+// A signal that came in an inbox file reaches the event listener with that
+// file's name in its coder's inbox, the same on every read of the same file
+// and another for every other file, whenever it is read. A bell came in no
+// file and carries none.
+func TestAnInboxFileNamesItsSignal(t *testing.T) {
+	s := testService(t)
+	var heard []string
+	s.SetEvent(func(targetID, kind, entry string) { heard = append(heard, targetID+" "+kind+" "+entry) })
+	dir := t.TempDir()
+	drop := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stop := `{"terminal":"term-1","event":{"session_id":"s","hook_event_name":"Stop"}}`
+	drop("1792071315017168190-11.json", stop)
+	drop("1792071315017168191-11.json", `{"terminal":"term-1","event":{"session_id":"s","hook_event_name":"Notification","message":"Claude needs your permission"}}`)
+	drop("1792071315017168192-11.json", `{"terminal":"term-1","event":{"session_id":"s","hook_event_name":"PreToolUse"}}`)
+	s.DrainInbox(dir, "claude")
+	drop("1792071315017168190-11.json", stop)
+	s.DrainInbox(dir, "claude")
+	s.DrainInbox(dir, "opencode")
+	s.Event("term-2", "Bell")
+
+	want := []string{
+		"term-1 Stop claude/1792071315017168190-11",
+		"term-1 Notification claude/1792071315017168191-11",
+		"term-1 Stop claude/1792071315017168190-11",
+		"term-2 Bell ",
+	}
+	if !slices.Equal(heard, want) {
+		t.Fatalf("want the signals named\n%q\ngot\n%q", want, heard)
+	}
+}
+
+// inboxBooks is what the processes of a test heard of an inbox, one after
+// another: each is a service of its own over the notification file they all
+// share, see process.
+type inboxBooks struct {
+	path                  string
+	silent                bool
+	events, hooks, rings  []string
+	standing              []bool
+	added, unreadAtAnyEnd int
+}
+
+// process is one process draining the inbox once. die names the listener in
+// which it dies, which ends the drain right there, the way a kill does.
+func (b *inboxBooks) process(t *testing.T, dir, die string) {
+	t.Helper()
+	s := NewService(b.path, nil)
+	s.SetSilent(func(string) bool { return b.silent })
+	file := func(entry string) string { return filepath.Join(dir, strings.TrimPrefix(entry, "claude/")+".json") }
+	last := ""
+	s.SetEvent(func(targetID, kind, entry string) {
+		last = entry
+		_, err := os.Stat(file(entry))
+		b.standing = append(b.standing, err == nil)
+		b.events = append(b.events, entry)
+		if die == "event" {
+			runtime.Goexit()
+		}
+	})
+	s.SetHook(func(targetID string, ev HookEvent) {
+		b.hooks = append(b.hooks, last)
+		if die == "hook" {
+			runtime.Goexit()
+		}
+	})
+	s.SetSignal(func(targetID string) {
+		b.rings = append(b.rings, last)
+		if die == "signal" {
+			runtime.Goexit()
+		}
+	})
+	published := collect(t, s)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.DrainInbox(dir, "claude")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the drain never came back")
+	}
+	for _, ev := range published() {
+		if ev.Added != nil {
+			b.added++
+		}
+	}
+	b.unreadAtAnyEnd += s.UnreadCount()
+}
+
+// The event listener hears a signal while its file still lies in the inbox,
+// and the file goes only after it returned. So wherever the process dies, the
+// signal reaches that listener at least once: one that died before the file
+// went finds it again at the next start and hands it under the same name. The
+// notification, the signal listener and the hook listener hear a file after
+// it went, once, or not at all where the process died right there, and never
+// twice: a signal handed again rings nobody a second time.
+func TestAnInboxFileGoesOnlyAfterTheEventListenerHeardIt(t *testing.T) {
+	const entry = "claude/1792071315017168190-11"
+	for _, c := range []struct {
+		die           string
+		events, rings int
+	}{
+		{die: "", events: 1, rings: 1},
+		{die: "event", events: 2, rings: 1},
+		{die: "hook", events: 1, rings: 0},
+		{die: "signal", events: 1, rings: 1},
+	} {
+		t.Run("dies in "+c.die, func(t *testing.T) {
+			dir := t.TempDir()
+			books := &inboxBooks{path: filepath.Join(t.TempDir(), "notifications.json")}
+			file := filepath.Join(dir, "1792071315017168190-11.json")
+			if err := os.WriteFile(file, []byte(`{"terminal":"term-1","event":{"session_id":"s","hook_event_name":"Stop"}}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			books.process(t, dir, c.die)
+			if _, err := os.Stat(file); (err == nil) != (c.die == "event") {
+				t.Fatalf("the file stands after the process died in %q: %v", c.die, err == nil)
+			}
+			// The next two starts: the first hands what was left, the second
+			// finds nothing.
+			books.process(t, dir, "")
+			books.process(t, dir, "")
+
+			if want := slices.Repeat([]string{entry}, c.events); !slices.Equal(books.events, want) {
+				t.Fatalf("want the event listener to hear %q, got %q", want, books.events)
+			}
+			if slices.Contains(books.standing, false) {
+				t.Fatalf("the event listener heard a signal whose file was gone: %v", books.standing)
+			}
+			if len(books.rings) != c.rings || len(books.hooks) > 1 {
+				t.Fatalf("want %d rings and at most one hook, got rings %q and hooks %q", c.rings, books.rings, books.hooks)
+			}
+			list := NewService(books.path, nil).List(0)
+			if len(list) != c.rings || books.added != c.rings {
+				t.Fatalf("want %d notifications, got %d in the list and %d announced", c.rings, len(list), books.added)
+			}
+			if _, err := os.Stat(file); err == nil {
+				t.Fatal("the file outlived the start after")
+			}
+		})
+	}
+}
+
+// A signal written while no server ran lies in the inbox when the next one
+// starts, and the first pass of its poller hands it.
+func TestASignalWrittenWhileNoServerRanIsHandedAtTheStart(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "1792071315017168190-11.json"), []byte(`{"terminal":"term-1","event":{"session_id":"s","hook_event_name":"Notification","message":"Claude needs your permission"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := testService(t)
+	heard := make(chan string, 1)
+	ended := make(chan struct{})
+	s.SetEvent(func(targetID, kind, entry string) { heard <- targetID + " " + kind + " " + entry })
+	// The pass goes on after the event listener and writes the notification
+	// into a directory the test takes away when it returns. The signal
+	// listener hears a file last, so the test waits for it.
+	s.SetSignal(func(string) { close(ended) })
+	go s.RunInbox(dir, "claude", time.Hour)
+	select {
+	case got := <-heard:
+		if got != "term-1 Notification claude/1792071315017168190-11" {
+			t.Fatalf("the start handed %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the start never handed the signal")
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pass over the signal never ended")
+	}
+}
+
+// A coder somebody steers stays quiet whichever way its signal is handed: at
+// once, at the next start, or a second time after the process died with the
+// file still in the inbox. The entry is written read, once, and nothing rings.
+func TestASteeredCodersSignalStaysQuietWhenItIsHandedAgain(t *testing.T) {
+	dir := t.TempDir()
+	books := &inboxBooks{path: filepath.Join(t.TempDir(), "notifications.json"), silent: true}
+	if err := os.WriteFile(filepath.Join(dir, "1792071315017168190-11.json"), []byte(`{"terminal":"steered","event":{"session_id":"s","hook_event_name":"Stop"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	books.process(t, dir, "event")
+	books.process(t, dir, "")
+	books.process(t, dir, "")
+
+	if len(books.events) != 2 || len(books.rings) != 1 {
+		t.Fatalf("want the signal handed twice and heard once by everybody else, got %q and %q", books.events, books.rings)
+	}
+	list := NewService(books.path, nil).List(0)
+	if len(list) != 1 || !list[0].Silent || !list[0].Read {
+		t.Fatalf("want one entry, written read, got %+v", list)
+	}
+	if books.added != 0 || books.unreadAtAnyEnd != 0 {
+		t.Fatalf("a steered coder rang: %d announced, %d unread", books.added, books.unreadAtAnyEnd)
 	}
 }
 

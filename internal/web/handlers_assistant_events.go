@@ -100,7 +100,7 @@ func (s *Server) assistantTriggersJSON(c *gin.Context, owner string, all bool) {
 			"nextAt":       machineTime(trigger.NextAt),
 			"expiresAt":    machineTime(trigger.ExpiresAt),
 			"batchSeconds": trigger.BatchSeconds,
-			"pending":      len(trigger.Pending),
+			"pending":      trigger.Held(),
 			"reacting":     trigger.Reacting(),
 			"note":         trigger.Note,
 		})
@@ -778,7 +778,7 @@ func (s *Server) assistantTriggerView(trigger assistant.Trigger, owners bool) re
 		Next:     triggerNextText(trigger),
 		Until:    machineTime(trigger.ExpiresAt),
 		Note:     trigger.Note,
-		Pending:  len(trigger.Pending),
+		Pending:  trigger.Held(),
 		Reacting: activity.Mark(trigger.ReactingSince),
 		Broke:    trigger.Broke,
 	}

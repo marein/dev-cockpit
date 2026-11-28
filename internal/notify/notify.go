@@ -9,6 +9,7 @@
 package notify
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,9 @@ type Notification struct {
 	// it failed, so every surface can draw it red. An entry of an older build
 	// carries none and reads as plain news.
 	Failed bool `json:"failed,omitempty"`
+	// Key names the news an entry was rung for, where whoever rings cannot
+	// tell whether it already did, see AddOnce.
+	Key string `json:"key,omitempty"`
 }
 
 // BackupTarget is the well known target id for finished backup jobs. It is
@@ -209,9 +213,9 @@ type Service struct {
 	hook func(targetID string, ev HookEvent)
 	// silent decides whether a target's news is written quietly, see SetSilent.
 	silent func(targetID string) bool
-	// event hears a signal together with the raw hook name it arrived under,
-	// see SetEvent.
-	event func(targetID, kind string)
+	// event hears a signal together with the raw hook name it arrived under
+	// and the inbox entry it came in, see SetEvent.
+	event func(targetID, kind, entry string)
 
 	mu   sync.Mutex
 	subs map[chan Event]struct{}
@@ -249,17 +253,25 @@ func (s *Service) SetHook(listen func(targetID string, ev HookEvent)) { s.hook =
 // coder that wants attention, the raw names the coders' own hooks use. The
 // assistant's triggers listen here. Like the signal listener it is the raw
 // fact and nothing else: this service still classifies nothing, it passes the
-// name on as it came. A bell has no name, see the caller in main. Set it
-// before the pollers start.
-func (s *Service) SetEvent(listen func(targetID, kind string)) { s.event = listen }
+// name on as it came. A bell has no name, see the caller in main. entry names
+// the file of the inbox the signal came in, the coder's inbox and the file's
+// own name in it, so the listener can tell one signal from every other; it is
+// empty for a signal no file stands behind, a bell. The listener holds what
+// it takes of a signal by the time it returns: the file is kept until then
+// and gone right after, and a signal whose file outlived the process is
+// handed again under the same name, see DrainInbox. Set it before the pollers
+// start.
+func (s *Service) SetEvent(listen func(targetID, kind, entry string)) { s.event = listen }
 
-// Event is one signal with its hook name: the notification for the person,
-// the raw fact for the signal listener, and the named fact for the event
-// listener.
+// Event is one signal with its hook name that came in no inbox file: the
+// notification for the person, the raw fact for the signal listener, and the
+// named fact for the event listener. Nothing stands behind it that could be
+// handed again, so each of them hears it once, and a process that dies here
+// takes it along.
 func (s *Service) Event(targetID, kind string) {
 	s.Signal(targetID)
 	if s.event != nil {
-		s.event(targetID, kind)
+		s.event(targetID, kind, "")
 	}
 }
 
@@ -300,9 +312,26 @@ func (s *Service) Add(targetID string) {
 	s.AddResolved(targetID, info)
 }
 
+// AddOnce is Add for news that may be rung for a second time: a process that
+// died right behind the ring left nothing that says it rang, so the next one
+// rings again. key names the news, the id of the message it is about, and
+// news an entry already carries the key of has rung: nothing is written and
+// nobody hears it twice.
+func (s *Service) AddOnce(targetID, key string) {
+	info := TargetInfo{}
+	if s.resolver != nil {
+		info = s.resolver(targetID)
+	}
+	s.add(targetID, info, key)
+}
+
 // AddResolved is Add for news whose words exist only in the moment it
 // happens, a failed run nothing keeps for a resolver to look up.
 func (s *Service) AddResolved(targetID string, info TargetInfo) {
+	s.add(targetID, info, "")
+}
+
+func (s *Service) add(targetID string, info TargetInfo, key string) {
 	name := info.Name
 	if name == "" {
 		name = shortID(targetID)
@@ -324,11 +353,15 @@ func (s *Service) AddResolved(targetID string, info TargetInfo) {
 		Read:       silent,
 		Silent:     silent,
 		Failed:     info.Failed,
+		Key:        key,
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
+	if key != "" && slices.ContainsFunc(list, func(existing Notification) bool { return existing.Key == key }) {
+		return
+	}
 	if !silent && !info.Urgent {
 		for _, existing := range list {
 			if !existing.Read && existing.TargetID == targetID && s.now().UTC().Sub(existing.CreatedAt) < dedupeWindow && (existing.Failed || !info.Failed) {
@@ -429,19 +462,21 @@ func (s *Service) MarkTargetRead(targetID string) int {
 	return s.mark(func(n *Notification) bool { return n.TargetID == targetID })
 }
 
-// PruneTargets drops stored notifications whose target id is not in keep.
-// The startup terminal restore calls it with everything that still resolves:
-// the live and resumable terminals, the backup target, and the docker and git
-// prompt targets of every project that still exists. What is not in the set
-// would link nowhere forever, a dead terminal's entry and a deleted project's
-// compose run alike. Returns how many entries were removed.
-func (s *Service) PruneTargets(keep map[string]bool) int {
+// PruneTargets drops the stored notifications whose target alive does not
+// answer for. The startup terminal restore calls it with everything that
+// still resolves: the live and resumable terminals, the backup target, the
+// docker and git prompt targets of every project that still exists, and the
+// assistants that are not deleted. What it does not answer for would link
+// nowhere forever, a dead terminal's entry and a deleted project's compose
+// run alike. An entry that stays keeps its read state. Returns how many
+// entries were removed.
+func (s *Service) PruneTargets(alive func(targetID string) bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.load()
 	kept := list[:0]
 	for _, n := range list {
-		if keep[n.TargetID] {
+		if alive(n.TargetID) {
 			kept = append(kept, n)
 		}
 	}

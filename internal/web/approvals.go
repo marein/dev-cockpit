@@ -35,6 +35,7 @@ func (s *Server) newApprovals(stateDir string) *approval.Service {
 		StopAsking: func(kind string) { setApprovalAsks(s.settings, kind, false) },
 		Asker:      func(owner string) (string, string) { return s.assistantLabel(owner), coder.ShortID(owner) },
 		Ended:      s.approvalEnded,
+		Started:    s.composeApprovalStarted,
 	})
 }
 
@@ -71,7 +72,7 @@ func (s *Server) approvalEnded(a approval.Approval, outcome approval.Outcome) {
 	if s.assistants == nil {
 		return
 	}
-	report := assistant.ApprovalReport{Owner: a.Owner, What: a.What, Outcome: outcome}
+	report := assistant.ApprovalReport{ID: a.ID, Owner: a.Owner, What: a.What, Outcome: outcome}
 	for _, kind := range approvalKinds {
 		if kind.ID == a.Kind {
 			report.Event = kind.Event
